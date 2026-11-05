@@ -38,16 +38,18 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
 {
     private readonly Action<TreeNodeViewModel> _delete;
     private readonly Action<TreeNodeViewModel> _rename;
+    private readonly Action<TreeNodeViewModel> _addFolder;
     private readonly IReadOnlyList<StoredScript> _scripts;
 
     private TreeNodeViewModel(string id, TreeNodeViewModel? parent, IReadOnlyList<StoredScript> scripts,
-        Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename)
+        Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
     {
         Id = id;
         Parent = parent;
         _scripts = scripts;
         _delete = delete;
         _rename = rename;
+        _addFolder = addFolder;
     }
 
     public string Id { get; }
@@ -116,25 +118,46 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     [RelayCommand]
     private void CancelRename() => IsRenaming = false;
 
-    public static TreeNodeViewModel FromCollection(Collection collection, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename)
+    /// <summary>Opens the name for editing, as the rename button does.</summary>
+    public void StartRename()
     {
-        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete, rename) { Name = collection.Name, SpecUrl = collection.SpecUrl };
+        if (!IsContainer)
+            return;
+
+        RenameText = Name;
+        IsRenaming = true;
+    }
+
+    /// <summary>Adds a folder inside this one. Only folders and collections can hold folders.</summary>
+    [RelayCommand]
+    private void NewFolder()
+    {
+        if (IsContainer)
+            _addFolder(this);
+    }
+
+    public static TreeNodeViewModel FromCollection(Collection collection, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
+    {
+        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete, rename, addFolder) { Name = collection.Name, SpecUrl = collection.SpecUrl };
         node.Variables.Load(collection.Variables);
         foreach (var item in collection.Items)
-            node.Children.Add(FromItem(item, node, delete, rename));
+            node.Children.Add(FromItem(item, node, delete, rename, addFolder));
         return node;
     }
 
-    private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename)
+    private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
     {
-        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename) { Name = item.Name, Request = item.Request };
+        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename, addFolder) { Name = item.Name, Request = item.Request };
         foreach (var child in item.Children)
-            node.Children.Add(FromItem(child, node, delete, rename));
+            node.Children.Add(FromItem(child, node, delete, rename, addFolder));
         return node;
     }
 
-    public static TreeNodeViewModel ForNewRequest(ApiRequest request, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename) =>
-        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename) { Name = request.Name, Request = request };
+    public static TreeNodeViewModel ForNewRequest(ApiRequest request, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder) =>
+        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename, addFolder) { Name = request.Name, Request = request };
+
+    public static TreeNodeViewModel ForNewFolder(string name, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder) =>
+        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename, addFolder) { Name = name };
 
     public Collection ToCollection() => new()
     {
