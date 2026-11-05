@@ -72,12 +72,16 @@
                            Text="Save a request or import from Postman to get started."
                            IsVisible="{Binding !Collections.Count}" />
                 <TreeView x:Name="CollectionsTree" ItemsSource="{Binding Collections}" SelectedItem="{Binding SelectedNode}"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           AutomationProperties.Name="Collection tree">
                   <TreeView.Styles>
                     <Style Selector="TreeViewItem" x:DataType="vm:TreeNodeViewModel">
                       <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                     </Style>
                     <!-- Drop hints while dragging: a line above or below, or a highlight for a folder that will take the item. -->
+                    <Style Selector="TreeViewItem /template/ ContentPresenter#PART_HeaderPresenter">
+                      <Setter Property="HorizontalAlignment" Value="Stretch" />
+                    </Style>
                     <Style Selector="TreeViewItem.drop-before">
                       <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
                       <Setter Property="BorderThickness" Value="0,2,0,0" />
@@ -145,6 +149,72 @@
 
       <GridSplitter Grid.Column="1" Width="8" ResizeDirection="Columns" />
 
+      <!-- Variables page -->
+      <Border Grid.Column="2" Classes="card" Padding="24,20" Margin="0,46,12,12" IsVisible="{Binding IsVariablesPageOpen}">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,20">
+            <StackPanel Grid.Column="0" Spacing="4">
+              <TextBlock Text="Variables" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                         Text="Each collection's variables fill in {{name}} in its requests. An environment's values override them." />
+            </StackPanel>
+            <Button Grid.Column="1" Classes="primary" Content="Done" Margin="16,0,0,0" VerticalAlignment="Top"
+                    Command="{Binding CloseVariablesPageCommand}" AutomationProperties.Name="Done" />
+          </Grid>
+          <Grid ColumnDefinitions="240,24,*">
+            <ListBox Grid.Column="0" ItemsSource="{Binding Collections}" SelectedItem="{Binding EditingVariablesCollection}"
+                     AutomationProperties.Name="Collection list">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:TreeNodeViewModel">
+                  <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Name}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Panel Grid.Column="2">
+              <TextBlock Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Center"
+                         Text="Choose a collection to edit its variables." IsVisible="{Binding !HasEditingVariablesCollection}" />
+              <ScrollViewer IsVisible="{Binding HasEditingVariablesCollection}">
+                <StackPanel Spacing="0">
+                  <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0" Text="Values in" />
+                    <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding EditableEnvironments}"
+                              SelectedItem="{Binding VariablesEnvironment}" AutomationProperties.Name="Environment for these values">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:EnvironmentViewModel">
+                          <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                  </Grid>
+                  <TextBlock Classes="muted" Margin="0,0,0,8" TextWrapping="Wrap"
+                             Text="Each value in this environment. An empty value uses the default."
+                             IsVisible="{Binding HasVariablesEnvironment}" />
+                  <TextBlock Classes="muted" Margin="0,0,0,8" TextWrapping="Wrap"
+                             Text="Add an environment on the Environments page to set values for it."
+                             IsVisible="{Binding !HasVariablesEnvironment}" />
+                  <ItemsControl ItemsSource="{Binding VariableOverrides}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:VariableOverrideRowViewModel">
+                        <Grid ColumnDefinitions="200,*,Auto" Margin="0,0,0,8">
+                          <TextBlock Grid.Column="0" Text="{Binding Key}" VerticalAlignment="Center" Margin="0,0,12,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Key}" />
+                          <TextBox Grid.Column="1" Text="{Binding Value}" PasswordChar="{Binding ValueMask}"
+                                   PlaceholderText="{Binding Placeholder}" AutomationProperties.Name="Value" />
+                          <Button Grid.Column="2" Classes="ghost" Margin="8,0,0,0" Content="{Binding MoveLabel}" Command="{Binding MoveCommand}"
+                                  ToolTip.Tip="Take this variable out of the collection and keep it in this environment"
+                                  AutomationProperties.Name="Move variable to environment" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Classes="muted" Margin="0,24,0,8" TextWrapping="Wrap" Text="Variable names and defaults for this collection" />
+                  <views:KeyValueEditor DataContext="{Binding EditingVariablesCollection.Variables}" />
+                </StackPanel>
+              </ScrollViewer>
+            </Panel>
+          </Grid>
+        </DockPanel>
+      </Border>
+
       <!-- Environments page -->
       <Border Grid.Column="2" Classes="card" Padding="24,20" Margin="0,46,12,12" IsVisible="{Binding IsEnvironmentsPageOpen}">
         <DockPanel>
@@ -201,7 +271,7 @@
       </Border>
 
       <!-- Request and response -->
-      <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsEnvironmentsPageOpen}">
+      <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsSidePageOpen}">
         <Border Grid.Row="0" Classes="card" Padding="20,16,20,6">
         <DockPanel>
           <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">

@@ -72,6 +72,31 @@ public class OpenApiTests
     }
 
     [Fact]
+    public void Path_parameters_become_empty_collection_variables()
+    {
+        var json = Spec.Replace("\"summary\": \"Delete a pet\",",
+            "\"summary\": \"Delete a pet\", \"parameters\": [ { \"name\": \"petId\", \"in\": \"path\", \"required\": true, \"schema\": { \"type\": \"integer\" } } ],");
+        var collection = Import(json).Collection;
+
+        var variable = Assert.Single(collection.Variables, v => v.Key == "petId");
+        Assert.Equal("", variable.Value);
+        Assert.Equal("{{baseUrl}}/pets/{{petId}}", collection.Items.Single(i => i.Name == "pets").Children.Single(c => c.Name == "Delete a pet").Request!.Url);
+    }
+
+    [Fact]
+    public void Path_parameters_do_not_overwrite_values_already_typed()
+    {
+        var json = Spec.Replace("\"summary\": \"Delete a pet\",",
+            "\"summary\": \"Delete a pet\", \"parameters\": [ { \"name\": \"petId\", \"in\": \"path\", \"required\": true, \"schema\": { \"type\": \"integer\" } } ],");
+        var first = Import(json).Collection;
+        var typed = first with { Variables = first.Variables.Select(v => v.Key == "petId" ? v with { Value = "42" } : v).ToList() };
+
+        var again = Import(json, typed).Collection;
+
+        Assert.Equal("42", again.Variables.Single(v => v.Key == "petId").Value);
+    }
+
+    [Fact]
     public void Tag_groups_become_folders_around_the_tag_folders()
     {
         var json = Spec.Replace("\"components\": {",

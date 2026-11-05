@@ -95,8 +95,8 @@ public static class OpenApiImporter
         var variables = collection.Variables.ToList();
         AddVariable(variables, BaseUrlVariable, baseUrl, secret: false);
         foreach (var operation in operations)
-            foreach (var variable in operation.AuthVariables)
-                AddVariable(variables, variable.Key, variable.Value, variable.IsSecret);
+            foreach (var variable in operation.Variables)
+                AddVariable(variables, variable);
 
         var byKey = operations.ToDictionary(o => o.Key);
         var matched = new HashSet<string>();
@@ -256,14 +256,14 @@ public static class OpenApiImporter
                     continue;
                 }
 
-                operations.Add(ReadOperation(reader, key, method, path.Name, source, schemes, globalSecurity));
+                operations.Add(ReadOperation(reader, key, method, path.Name, pathItem, source, schemes, globalSecurity));
             }
         }
 
         return operations;
     }
 
-    private static Operation ReadOperation(Reader reader, string key, string method, string path, JsonElement source, JsonElement schemes, JsonElement globalSecurity)
+    private static Operation ReadOperation(Reader reader, string key, string method, string path, JsonElement pathItem, JsonElement source, JsonElement schemes, JsonElement globalSecurity)
     {
         var summary = Text(source, "summary");
         var operationId = Text(source, "operationId");
@@ -284,7 +284,10 @@ public static class OpenApiImporter
         if (HasQueryOrHeaderParameters(reader, source))
             reader.OperationsWithUnaddedParameters++;
 
+        // Each path parameter gets a Variable, left empty for the user to fill in per Environment.
         var variables = new List<KeyValue>();
+        foreach (var parameter in PathParameterNames(reader, pathItem, source))
+            AddVariable(variables, new KeyValue(parameter, ""));
         var auth = ReadAuth(reader, source, schemes, globalSecurity, variables);
         var body = ReadBody(reader, source);
 
@@ -300,6 +303,24 @@ public static class OpenApiImporter
         };
 
         return new Operation(key, name, folders, request, variables);
+    }
+
+    /// <summary>The names of the path parameters an operation uses, from its own list and the path's shared list.</summary>
+    private static IEnumerable<string> PathParameterNames(Reader reader, JsonElement pathItem, JsonElement source)
+    {
+        foreach (var list in new[] { reader.Get(pathItem, "parameters"), reader.Get(source, "parameters") })
+        {
+            if (list.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var parameter in list.EnumerateArray())
+            {
+                var resolved = reader.Deref(parameter);
+                var name = Text(resolved, "name");
+                if (Text(resolved, "in") == "path" && name.Length > 0)
+                    yield return name;
+            }
+        }
     }
 
     private static bool HasQueryOrHeaderParameters(Reader reader, JsonElement source)
@@ -599,7 +620,7 @@ public static class OpenApiImporter
     private static JsonElement Child(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
 
-    private sealed record Operation(string Key, string Name, IReadOnlyList<string> Folders, ApiRequest Request, List<KeyValue> AuthVariables);
+    private sealed record Operation(string Key, string Name, IReadOnlyList<string> Folders, ApiRequest Request, List<KeyValue> Variables);
 
     /// <summary>Follows references inside the same document, and records the rest as not followed.</summary>
     private sealed class Reader(JsonElement root)

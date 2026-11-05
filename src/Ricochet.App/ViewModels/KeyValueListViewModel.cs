@@ -49,6 +49,41 @@ public sealed partial class KeyValueListViewModel(bool allowSecrets = false) : O
         }
     }
 
+    /// <summary>Sets the value for a key, adding its row if needed. An empty value removes the row, so the key falls back to its default.</summary>
+    public void Set(string key, string value, bool secret)
+    {
+        var row = Items.FirstOrDefault(r => r.Key == key);
+        if (value.Length == 0)
+        {
+            if (row is not null)
+                Items.Remove(row);
+            return;
+        }
+
+        if (row is null)
+        {
+            row = NewRow();
+            row.Key = key;
+            row.IsSecret = allowSecrets && secret;
+            Items.Add(row);
+        }
+
+        row.Value = value;
+    }
+
+    /// <summary>Adds a row for a key the list doesn't have yet, keeping its value. A row that exists is left as it is.</summary>
+    public void AddIfMissing(string key, string value, bool secret)
+    {
+        if (Items.Any(r => r.Key == key))
+            return;
+
+        var row = NewRow();
+        row.Key = key;
+        row.Value = value;
+        row.IsSecret = allowSecrets && secret;
+        Items.Add(row);
+    }
+
     public List<KeyValue> ToEntries() =>
         Items.Where(row => row.Key.Trim().Length > 0)
             .Select(row => new KeyValue(row.Key, row.Value, row.Enabled, row.IsSecret))
