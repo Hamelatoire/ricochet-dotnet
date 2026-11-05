@@ -1,0 +1,53 @@
+name: Pull request
+
+# Checks that a pull request tests and builds on every platform a release supports.
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the native linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Test
+        run: dotnet test --project tests/Ricochet.Core.Tests -c Release
+
+      - name: Publish
+        run: |
+          dotnet publish src/Ricochet.App -c Release -r ${{ matrix.rid }} -o out/app
+          dotnet publish src/Ricochet.Cli -c Release -r ${{ matrix.rid }} -o out/cli
+
+      - name: Check the CLI starts
+        run: out/cli/ricochet --help

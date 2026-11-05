@@ -1,0 +1,29 @@
+name: Assign pull request
+
+# Assigns a pull request to its author, or to the repository owner when the author can't be
+# assigned, such as someone contributing from a fork. pull_request_target gives the token write
+# access on fork pull requests too, so this workflow must never check out or run their code.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  assign:
+    name: Assign
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          assignee="$AUTHOR"
+          if ! gh api "repos/$GITHUB_REPOSITORY/assignees/$AUTHOR" --silent; then
+            assignee="$GITHUB_REPOSITORY_OWNER"
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/assignees" \
+            -f "assignees[]=$assignee" --silent

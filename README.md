@@ -69,14 +69,16 @@ On Windows, if linking fails with `'vswhere.exe' is not recognized`, add `C:\Pro
 
 ## Release
 
-Pushing a version tag runs the tests and builds the app and the CLI on Windows, Linux and macOS, then attaches them to a GitHub release.
+Merging a pull request into `main` runs the tests and builds the app and the CLI on Windows, Linux and macOS, then attaches them to a GitHub release with the next patch version, such as `v0.1.1`.
+
+To choose the version yourself, such as a new minor version, push a tag instead:
 
 ```bash
-git tag v0.1.0
+git tag v0.2.0
 ```
 
 ```bash
-git push origin v0.1.0
+git push origin v0.2.0
 ```
 
 The builds are not code signed, so Windows and macOS may warn about them or block them.
