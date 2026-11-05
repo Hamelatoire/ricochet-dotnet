@@ -80,14 +80,26 @@
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding Children}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid ColumnDefinitions="Auto,*,Auto">
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
                         <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center" ToolTip.Tip="{Binding Name}"
+                                   IsVisible="{Binding !IsRenaming}"
                                    FontWeight="{Binding IsContainer, Converter={x:Static views:BoolToWeightConverter.Instance}}" />
-                        <Button Grid.Column="2" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                        <TextBox Grid.Column="1" Classes="bare" Text="{Binding RenameText}" IsVisible="{Binding IsRenaming}"
+                                 VerticalAlignment="Center" Padding="2,2" FontSize="13"
+                                 views:FocusBehavior.FocusWhenVisible="True"
+                                 AutomationProperties.Name="New name" ToolTip.Tip="Enter saves, Escape cancels">
+                          <TextBox.KeyBindings>
+                            <KeyBinding Gesture="Enter" Command="{Binding CommitRenameCommand}" />
+                            <KeyBinding Gesture="Escape" Command="{Binding CancelRenameCommand}" />
+                          </TextBox.KeyBindings>
+                        </TextBox>
+                        <Button Grid.Column="2" Classes="mini" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"
+                                Command="{Binding ToggleRenameCommand}" ToolTip.Tip="Rename" AutomationProperties.Name="Rename" />
+                        <Button Grid.Column="3" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
                                 Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete" />
                       </Grid>
                     </TreeDataTemplate>

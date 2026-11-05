@@ -490,6 +490,24 @@ public sealed class WorkspaceStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_renamed_folder_saves_under_its_new_name_and_keeps_its_requests()
+    {
+        var request = new CollectionItem { Name = "Get", Request = new ApiRequest { Name = "Get", Url = "u" } };
+        var folder = new CollectionItem { Name = "Old name", Children = [request] };
+        var collection = new Collection { Name = "C", Items = [folder] };
+        var store = Loaded();
+        store.Save(new Workspace { Collections = [collection] });
+
+        var renamed = collection with { Items = [folder with { Name = "New name" }] };
+        store.Save(new Workspace { Collections = [renamed] });
+
+        var reloaded = new WorkspaceStore(_dir).Load().Workspace.Collections.Single();
+        var item = Assert.Single(reloaded.Items);
+        Assert.Equal("New name", item.Name);
+        Assert.Equal("Get", Assert.Single(item.Children).Name);
+    }
+
+    [Fact]
     public void Theme_choice_is_kept_across_restarts_and_saves()
     {
         var store = Loaded();

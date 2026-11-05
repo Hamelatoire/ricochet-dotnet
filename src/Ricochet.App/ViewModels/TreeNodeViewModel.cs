@@ -37,14 +37,17 @@ public abstract partial class DeletableViewModel : ObservableObject
 public sealed partial class TreeNodeViewModel : DeletableViewModel
 {
     private readonly Action<TreeNodeViewModel> _delete;
+    private readonly Action<TreeNodeViewModel> _rename;
     private readonly IReadOnlyList<StoredScript> _scripts;
 
-    private TreeNodeViewModel(string id, TreeNodeViewModel? parent, IReadOnlyList<StoredScript> scripts, Action<TreeNodeViewModel> delete)
+    private TreeNodeViewModel(string id, TreeNodeViewModel? parent, IReadOnlyList<StoredScript> scripts,
+        Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename)
     {
         Id = id;
         Parent = parent;
         _scripts = scripts;
         _delete = delete;
+        _rename = rename;
     }
 
     public string Id { get; }
@@ -56,6 +59,11 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
 
     [ObservableProperty] private string _name = "";
     [ObservableProperty] private bool _isExpanded;
+
+    /// <summary>True while the folder or collection name is being edited in the tree.</summary>
+    [ObservableProperty] private bool _isRenaming;
+
+    [ObservableProperty] private string _renameText = "";
 
     /// <summary>Set on a Collection made from an OpenAPI URL (ADR 0014), so running the same URL updates it.</summary>
     public string? SpecUrl { get; set; }
@@ -76,25 +84,57 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
 
     protected override void Delete() => _delete(this);
 
-    public static TreeNodeViewModel FromCollection(Collection collection, Action<TreeNodeViewModel> delete)
+    /// <summary>Starts editing the name, or saves it if it is already being edited.</summary>
+    [RelayCommand]
+    private void ToggleRename()
     {
-        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete) { Name = collection.Name, SpecUrl = collection.SpecUrl };
+        if (!IsContainer)
+            return;
+
+        if (IsRenaming)
+        {
+            CommitRename();
+            return;
+        }
+
+        RenameText = Name;
+        IsRenaming = true;
+    }
+
+    [RelayCommand]
+    private void CommitRename()
+    {
+        var name = RenameText.Trim();
+        IsRenaming = false;
+        if (name.Length == 0 || name == Name)
+            return;
+
+        Name = name;
+        _rename(this);
+    }
+
+    [RelayCommand]
+    private void CancelRename() => IsRenaming = false;
+
+    public static TreeNodeViewModel FromCollection(Collection collection, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename)
+    {
+        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete, rename) { Name = collection.Name, SpecUrl = collection.SpecUrl };
         node.Variables.Load(collection.Variables);
         foreach (var item in collection.Items)
-            node.Children.Add(FromItem(item, node, delete));
+            node.Children.Add(FromItem(item, node, delete, rename));
         return node;
     }
 
-    private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete)
+    private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename)
     {
-        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete) { Name = item.Name, Request = item.Request };
+        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename) { Name = item.Name, Request = item.Request };
         foreach (var child in item.Children)
-            node.Children.Add(FromItem(child, node, delete));
+            node.Children.Add(FromItem(child, node, delete, rename));
         return node;
     }
 
-    public static TreeNodeViewModel ForNewRequest(ApiRequest request, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete) =>
-        new(Guid.NewGuid().ToString("N"), parent, [], delete) { Name = request.Name, Request = request };
+    public static TreeNodeViewModel ForNewRequest(ApiRequest request, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename) =>
+        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename) { Name = request.Name, Request = request };
 
     public Collection ToCollection() => new()
     {
