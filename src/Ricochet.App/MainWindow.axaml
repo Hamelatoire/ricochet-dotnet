@@ -1,0 +1,432 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Ricochet.App.ViewModels"
+        xmlns:core="using:Ricochet.Core"
+        xmlns:views="using:Ricochet.App.Views"
+        xmlns:ae="using:AvaloniaEdit"
+        x:Class="Ricochet.App.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Ricochet"
+        Width="1360" Height="900" MinWidth="860" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaTitleBarHeightHint="46">
+  <Window.KeyBindings>
+    <KeyBinding Gesture="Ctrl+Enter" Command="{Binding SendOrCancelCommand}" />
+    <KeyBinding Gesture="Meta+Enter" Command="{Binding SendOrCancelCommand}" />
+    <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
+    <KeyBinding Gesture="Meta+S" Command="{Binding SaveCommand}" />
+    <KeyBinding Gesture="Ctrl+N" Command="{Binding NewRequestCommand}" />
+    <KeyBinding Gesture="Meta+N" Command="{Binding NewRequestCommand}" />
+  </Window.KeyBindings>
+
+  <Grid>
+    <Grid ColumnDefinitions="310,Auto,*">
+      <!-- Sidebar -->
+      <Border Grid.Column="0" Padding="20,46,12,16">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*" Margin="0,0,0,16">
+            <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding NewRequestCommand}"
+                    AutomationProperties.Name="New request" ToolTip.Tip="New request (Ctrl+N)">
+              <StackPanel Orientation="Horizontal" Spacing="7">
+                <PathIcon Data="{StaticResource IconPlus}" />
+                <TextBlock Text="New" />
+              </StackPanel>
+            </Button>
+            <Button Grid.Column="2" HorizontalAlignment="Stretch" Click="OnImportClick"
+                    AutomationProperties.Name="Import" ToolTip.Tip="Import Postman collections, environments and globals">
+              <StackPanel Orientation="Horizontal" Spacing="7">
+                <PathIcon Data="{StaticResource IconImport}" />
+                <TextBlock Text="Import" />
+              </StackPanel>
+            </Button>
+          </Grid>
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="4,12,0,0">
+            <PathIcon Grid.Column="0" Data="{StaticResource IconFolder}" Width="13" Height="13" Margin="0,0,8,0" Foreground="{StaticResource TextMuted}" />
+            <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                       Text="{Binding WorkspaceFolderName}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
+            <Button Grid.Column="2" Classes="ghost" Content="Change…" Padding="10,4" FontSize="12" Click="OnChangeFolderClick"
+                    AutomationProperties.Name="Change workspace folder"
+                    ToolTip.Tip="Open a workspace folder, or copy this workspace into a new one, such as a git repository" />
+          </Grid>
+          <TabControl>
+            <TabItem Header="Collections">
+              <Panel>
+                <TextBlock Classes="muted" TextWrapping="Wrap" Margin="2,10,8,0"
+                           Text="Save a request or import from Postman to get started."
+                           IsVisible="{Binding !Collections.Count}" />
+                <TreeView x:Name="CollectionsTree" ItemsSource="{Binding Collections}" SelectedItem="{Binding SelectedNode}"
+                          AutomationProperties.Name="Collection tree">
+                  <TreeView.Styles>
+                    <Style Selector="TreeViewItem" x:DataType="vm:TreeNodeViewModel">
+                      <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                    </Style>
+                  </TreeView.Styles>
+                  <TreeView.ItemTemplate>
+                    <TreeDataTemplate ItemsSource="{Binding Children}" x:DataType="vm:TreeNodeViewModel">
+                      <Grid ColumnDefinitions="Auto,*,Auto">
+                        <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
+                                   Text="{Binding MethodLabel}"
+                                   Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center" ToolTip.Tip="{Binding Name}"
+                                   FontWeight="{Binding IsContainer, Converter={x:Static views:BoolToWeightConverter.Instance}}" />
+                        <Button Grid.Column="2" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                                Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete" />
+                      </Grid>
+                    </TreeDataTemplate>
+                  </TreeView.ItemTemplate>
+                </TreeView>
+              </Panel>
+            </TabItem>
+            <TabItem Header="History">
+              <ListBox ItemsSource="{Binding History}" SelectedItem="{Binding SelectedHistory}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="core:HistoryEntry">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                      <TextBlock Grid.Column="0" Classes="method" Width="52" Text="{Binding Request.Method}"
+                                 Foreground="{Binding Request.Method, Converter={x:Static views:MethodBrushConverter.Instance}}" />
+                      <TextBlock Grid.Column="1" Text="{Binding Request.Url}" TextTrimming="CharacterEllipsis"
+                                 VerticalAlignment="Center" ToolTip.Tip="{Binding Request.Url}" />
+                      <TextBlock Grid.Column="2" Classes="muted" Text="{Binding StatusCode, TargetNullValue=ERR}"
+                                 Margin="6,0,0,0" FontSize="11" VerticalAlignment="Center" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </TabItem>
+          </TabControl>
+        </DockPanel>
+      </Border>
+
+      <GridSplitter Grid.Column="1" Width="8" ResizeDirection="Columns" />
+
+      <!-- Request and response -->
+      <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12">
+        <Border Grid.Row="0" Classes="card" Padding="24,20,24,6">
+        <DockPanel>
+          <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+              <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                <TextBlock Text="Old plain-text copies of your data may still hold credentials. Your work has been moved, so you can delete them."
+                           Foreground="{StaticResource Warning}" FontSize="12" TextWrapping="Wrap" />
+                <SelectableTextBlock Text="{Binding PlainTextCopies}" Foreground="{StaticResource Warning}" Opacity="0.8"
+                                     FontSize="11.5" FontFamily="{StaticResource MonoFont}" TextWrapping="Wrap" />
+              </StackPanel>
+              <Button Grid.Column="1" Content="{Binding DeleteCopiesLabel}" Margin="10,0,0,0" FontSize="12" VerticalAlignment="Center"
+                      Command="{Binding DeletePlainTextCopiesCommand}" AutomationProperties.Name="Delete plain-text copies" />
+              <Button Grid.Column="2" Classes="mini" Margin="6,0,0,0"
+                      Command="{Binding DismissPlainTextCopiesCommand}" ToolTip.Tip="Hide until next launch"><PathIcon Data="{StaticResource IconClose}" /></Button>
+            </Grid>
+          </Border>
+          <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasStorageWarning}">
+            <Grid ColumnDefinitions="*,Auto">
+              <SelectableTextBlock Grid.Column="0" Text="{Binding StorageWarning}" Foreground="{StaticResource Warning}"
+                                   FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"
+                                   AutomationProperties.Name="Storage warning" />
+              <Button Grid.Column="1" Classes="mini" Margin="8,0,0,0"
+                      Command="{Binding DismissStorageWarningCommand}" ToolTip.Tip="Dismiss"><PathIcon Data="{StaticResource IconClose}" /></Button>
+            </Grid>
+          </Border>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,16">
+            <TextBox Grid.Column="0" Classes="bare" FontSize="18" FontWeight="SemiBold" Padding="0,4"
+                     Text="{Binding RequestName}" PlaceholderText="Untitled request" />
+            <ComboBox Grid.Column="1" Width="200" Margin="12,0" ItemsSource="{Binding Environments}"
+                      SelectedItem="{Binding ActiveEnvironment}" AutomationProperties.Name="Environment"
+                      ToolTip.Tip="Active environment">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:EnvironmentViewModel">
+                  <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Grid.Column="2" Content="Save" Command="{Binding SaveCommand}" ToolTip.Tip="Save (Ctrl+S)" />
+          </Grid>
+
+          <Border DockPanel.Dock="Top" Classes="urlbar" Height="50" Margin="0,0,0,14">
+            <Grid ColumnDefinitions="Auto,1,*,Auto">
+              <ComboBox Grid.Column="0" Width="108" ItemsSource="{Binding Methods}" SelectedItem="{Binding Method}"
+                        Foreground="{Binding Method, Converter={x:Static views:MethodBrushConverter.Instance}}"
+                        AutomationProperties.Name="Method" />
+              <Border Grid.Column="1" Background="{StaticResource StrongLine}" Margin="0,8" />
+              <TextBox Grid.Column="2" x:Name="UrlBox" Classes="mono bare" VerticalContentAlignment="Center" Padding="14,0"
+                       Text="{Binding Url}" PlaceholderText="https://api.example.com/items"
+                       AutomationProperties.Name="URL">
+                <TextBox.KeyBindings>
+                  <KeyBinding Gesture="Enter" Command="{Binding SendOrCancelCommand}" />
+                </TextBox.KeyBindings>
+              </TextBox>
+              <Button Grid.Column="3" Classes="primary" Width="96" Content="{Binding SendButtonText}"
+                      Command="{Binding SendOrCancelCommand}" AutomationProperties.Name="Send"
+                      ToolTip.Tip="Send (Ctrl+Enter)" />
+            </Grid>
+          </Border>
+
+          <TabControl>
+            <TabItem Header="{Binding HeadersTabTitle}">
+              <views:KeyValueEditor DataContext="{Binding Headers}" />
+            </TabItem>
+            <TabItem Header="{Binding BodyTabTitle}">
+              <TextBox Classes="mono" Text="{Binding Body}" AcceptsReturn="True" AcceptsTab="True"
+                       TextWrapping="NoWrap" VerticalContentAlignment="Top" Margin="0,14,0,14"
+                       PlaceholderText="Request body. JSON is detected automatically." />
+            </TabItem>
+            <TabItem Header="{Binding AuthTabTitle}">
+              <ScrollViewer>
+                <StackPanel Spacing="12" Margin="0,16,10,14" MaxWidth="520" HorizontalAlignment="Left">
+                  <ComboBox Width="200" ItemsSource="{x:Static vm:MainViewModel.AuthOptions}"
+                            SelectedItem="{Binding SelectedAuth}" AutomationProperties.Name="Auth type">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:AuthOption">
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBlock Classes="muted" Text="This request sends no credentials." IsVisible="{Binding IsNoAuth}" />
+                  <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthToken}"
+                           PlaceholderText="Token" IsVisible="{Binding IsBearerAuth}" />
+                  <StackPanel Spacing="6" IsVisible="{Binding IsBasicAuth}">
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthUsername}" PlaceholderText="Username" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthPassword}" PlaceholderText="Password" PasswordChar="•" />
+                  </StackPanel>
+                  <StackPanel Spacing="6" IsVisible="{Binding IsApiKeyAuth}">
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyName}" PlaceholderText="Key name" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyValue}" PlaceholderText="Key value" />
+                    <CheckBox Content="Send in the query string instead of a header" IsChecked="{Binding AuthKeyInQuery}" />
+                  </StackPanel>
+                  <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding !IsNoAuth}"
+                             Text="Values you type here go to your system's secure storage. {{variables}} stay in the collection." />
+                </StackPanel>
+              </ScrollViewer>
+            </TabItem>
+            <TabItem Header="{Binding TestsTabTitle}">
+              <ScrollViewer>
+                <StackPanel Spacing="10" Margin="0,14,10,12">
+                  <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="2,0,0,4" IsVisible="{Binding !Assertions.Count}"
+                             Text="Add checks to run each time this request is sent. Save to keep them, and run them in CI with the ricochet command." />
+                  <ItemsControl ItemsSource="{Binding Assertions}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Spacing="10" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:AssertionRowViewModel">
+                        <Grid ColumnDefinitions="Auto,140,Auto,170,10,*,Auto">
+                          <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" MinWidth="32" />
+                          <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:AssertionRowViewModel.Sources}"
+                                    SelectedItem="{Binding Source}" AutomationProperties.Name="Test source">
+                            <ComboBox.ItemTemplate>
+                              <DataTemplate x:DataType="vm:AssertionOption">
+                                <TextBlock Text="{Binding Label}" />
+                              </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                          </ComboBox>
+                          <TextBox Grid.Column="2" Classes="mono" Width="180" Margin="10,0,0,0" Text="{Binding Path}"
+                                   PlaceholderText="{Binding PathPlaceholder}" IsVisible="{Binding NeedsPath}"
+                                   AutomationProperties.Name="Test path" />
+                          <ComboBox Grid.Column="3" HorizontalAlignment="Stretch" Margin="10,0,0,0" ItemsSource="{x:Static vm:AssertionRowViewModel.Ops}"
+                                    SelectedItem="{Binding Op}" AutomationProperties.Name="Test comparison">
+                            <ComboBox.ItemTemplate>
+                              <DataTemplate x:DataType="vm:AssertionOption">
+                                <TextBlock Text="{Binding Label}" />
+                              </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                          </ComboBox>
+                          <TextBox Grid.Column="5" Classes="mono" Text="{Binding Expected}" PlaceholderText="Expected value"
+                                   IsVisible="{Binding NeedsExpected}" AutomationProperties.Name="Test expected" />
+                          <Button Grid.Column="6" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{StaticResource IconClose}" /></Button>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Button Classes="ghost" Content="Add test" Command="{Binding AddAssertionCommand}" Padding="10,5"
+                          AutomationProperties.Name="Add test" />
+
+                  <TextBlock Text="Save values for later requests" FontWeight="SemiBold" Margin="2,20,0,2" />
+                  <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="2,0,0,4"
+                             Text="For example, save a login response's token as a variable, then use {{token}} in other requests in this collection. Values stay in memory until you close Ricochet." />
+                  <ItemsControl ItemsSource="{Binding Captures}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Spacing="10" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:CaptureRowViewModel">
+                        <Grid ColumnDefinitions="Auto,140,Auto,Auto,*,Auto">
+                          <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" MinWidth="32" />
+                          <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:CaptureRowViewModel.Sources}"
+                                    SelectedItem="{Binding Source}" AutomationProperties.Name="Capture source">
+                            <ComboBox.ItemTemplate>
+                              <DataTemplate x:DataType="vm:AssertionOption">
+                                <TextBlock Text="{Binding Label}" />
+                              </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                          </ComboBox>
+                          <TextBox Grid.Column="2" Classes="mono" Width="230" Margin="10,0,0,0" Text="{Binding Path}"
+                                   PlaceholderText="{Binding PathPlaceholder}" IsVisible="{Binding NeedsPath}"
+                                   AutomationProperties.Name="Capture path" />
+                          <TextBlock Grid.Column="3" Classes="muted" Text="save as" VerticalAlignment="Center" Margin="14,0" />
+                          <TextBox Grid.Column="4" Classes="mono" Text="{Binding Variable}" PlaceholderText="Variable name"
+                                   AutomationProperties.Name="Capture variable" />
+                          <Button Grid.Column="5" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{StaticResource IconClose}" /></Button>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Button Classes="ghost" Content="Add saved value" Command="{Binding AddCaptureCommand}" Padding="10,5"
+                          AutomationProperties.Name="Add saved value" />
+                </StackPanel>
+              </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Variables">
+              <TabControl Margin="0,6,0,0">
+                <TabItem Header="Environment" FontSize="12">
+                  <DockPanel>
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,8,8,0">
+                      <TextBox Grid.Column="0" Text="{Binding ActiveEnvironment.Name}" PlaceholderText="Environment name"
+                               IsVisible="{Binding HasActiveEnvironment}" />
+                      <TextBlock Grid.Column="0" Classes="muted" VerticalAlignment="Center" Text="No environment selected."
+                                 IsVisible="{Binding !HasActiveEnvironment}" />
+                      <Button Grid.Column="1" Margin="8,0,0,0" Command="{Binding NewEnvironmentCommand}" AutomationProperties.Name="New environment">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                          <PathIcon Data="{StaticResource IconPlus}" />
+                          <TextBlock Text="New" />
+                        </StackPanel>
+                      </Button>
+                      <Button Grid.Column="2" Content="{Binding ActiveEnvironment.DeleteLabel}" Margin="8,0,0,0"
+                              Command="{Binding ActiveEnvironment.DeleteClickedCommand}" IsVisible="{Binding HasActiveEnvironment}"
+                              ToolTip.Tip="Delete this environment" />
+                    </Grid>
+                    <Panel IsVisible="{Binding HasActiveEnvironment}">
+                      <views:KeyValueEditor DataContext="{Binding ActiveEnvironment.Variables}" />
+                    </Panel>
+                  </DockPanel>
+                </TabItem>
+                <TabItem Header="Collection" FontSize="12">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="muted" Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding CollectionVariablesTitle}" />
+                    <Panel IsVisible="{Binding HasCurrentCollection}">
+                      <views:KeyValueEditor DataContext="{Binding CurrentCollection.Variables}" />
+                    </Panel>
+                  </DockPanel>
+                </TabItem>
+                <TabItem Header="Globals" FontSize="12">
+                  <views:KeyValueEditor DataContext="{Binding Globals}" />
+                </TabItem>
+                <TabItem Header="Saved" FontSize="12">
+                  <StackPanel Spacing="6" Margin="0,8,0,0">
+                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                               Text="Values saved from responses for this collection. They override the other scopes, stay in memory only, and are hidden here because they are often tokens." />
+                    <ItemsControl ItemsSource="{Binding CapturedNames}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                          <TextBlock Classes="method" FontSize="12.5" Text="{Binding}" Margin="0,2" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Content="Clear saved values" Command="{Binding ClearCapturedCommand}" />
+                  </StackPanel>
+                </TabItem>
+              </TabControl>
+            </TabItem>
+          </TabControl>
+        </DockPanel>
+        </Border>
+
+        <GridSplitter Grid.Row="1" Height="8" ResizeDirection="Rows" />
+
+        <Border Grid.Row="2" Classes="card" Padding="24,18,24,12">
+          <Panel>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="4" IsVisible="{Binding ShowEmptyState}">
+              <TextBlock Classes="muted" HorizontalAlignment="Center" Text="Send a request to see the response" />
+              <TextBlock Classes="muted" HorizontalAlignment="Center" FontSize="11" Opacity="0.7" Text="Enter or Ctrl+Enter to send" />
+            </StackPanel>
+            <TextBlock Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Center" Text="Sending…" IsVisible="{Binding IsSending}" />
+
+            <DockPanel IsVisible="{Binding HasStatus}">
+              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
+                  <Border Classes="badge" Classes.success="{Binding IsSuccess}" Classes.failure="{Binding IsFailure}">
+                    <TextBlock Text="{Binding StatusText}" />
+                  </Border>
+                  <TextBlock Classes="muted" VerticalAlignment="Center" FontSize="12" Text="{Binding TimingText}" />
+                </StackPanel>
+                <ToggleButton Grid.Column="1" Classes="small" Content="Wrap" IsChecked="{Binding WrapResponse}"
+                              AutomationProperties.Name="Wrap lines" ToolTip.Tip="Wrap long lines" />
+                <Button Grid.Column="2" Classes="ghost" Content="Copy" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                        Click="OnCopyResponseClick" AutomationProperties.Name="Copy response" ToolTip.Tip="Copy the response body" />
+              </Grid>
+              <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Notice}" Foreground="{StaticResource Warning}"
+                                   FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" IsVisible="{Binding HasNotice}" />
+              <TabControl Margin="0,10,0,0">
+                <TabItem Header="Body">
+                  <ae:TextEditor x:Name="ResponseEditor" IsReadOnly="True" ShowLineNumbers="True"
+                                 FontFamily="{StaticResource MonoFont}" FontSize="12.5" Margin="0,12,0,0"
+                                 Foreground="{StaticResource TextPrimary}" LineNumbersForeground="#565C68"
+                                 WordWrap="{Binding WrapResponse}"
+                                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+                </TabItem>
+                <TabItem Header="Headers">
+                  <TextBox Classes="mono bare" IsReadOnly="True" Text="{Binding ResponseHeaders}" AcceptsReturn="True"
+                           VerticalContentAlignment="Top" Margin="0,12,0,0" />
+                </TabItem>
+                <TabItem Header="{Binding ResponseTestsTabTitle}" IsVisible="{Binding HasTestResults}">
+                  <ScrollViewer>
+                    <ItemsControl ItemsSource="{Binding TestResults}" Margin="0,14,10,12">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <StackPanel Spacing="12" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TestResultRow">
+                          <Grid ColumnDefinitions="Auto,*">
+                            <Border Grid.Column="0" Classes="badge" Classes.success="{Binding Passed}" Classes.failure="{Binding !Passed}"
+                                    VerticalAlignment="Top" Margin="0,0,10,0">
+                              <TextBlock Text="{Binding Verdict}" />
+                            </Border>
+                            <SelectableTextBlock Grid.Column="1" Text="{Binding Text}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
+                </TabItem>
+              </TabControl>
+            </DockPanel>
+          </Panel>
+        </Border>
+      </Grid>
+    </Grid>
+
+    <!-- Confirm copying the workspace into a folder -->
+    <Border Background="#B3050608" IsVisible="{Binding HasPendingCopy}">
+      <Border Classes="dialog" Width="520">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="brand" Text="Copy workspace here?" />
+          <TextBlock TextWrapping="Wrap" Text="{Binding PendingCopyMessage}" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="Cancel" Command="{Binding CancelCopyCommand}" AutomationProperties.Name="Cancel copy" />
+            <Button Content="Copy workspace" Background="{StaticResource Accent}" Foreground="#1A0F0A" FontWeight="SemiBold"
+                    Command="{Binding ConfirmCopyCommand}" AutomationProperties.Name="Copy workspace" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <!-- Import report -->
+    <Border Background="#B3050608" IsVisible="{Binding HasImportReport}">
+      <Border Classes="dialog" Width="640" MaxHeight="560">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Import results" Margin="0,0,0,10" />
+          <Button DockPanel.Dock="Bottom" Content="Close" HorizontalAlignment="Right" Margin="0,12,0,0"
+                  Command="{Binding CloseImportReportCommand}" AutomationProperties.Name="Close import results" />
+          <TextBox Classes="mono" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                   Text="{Binding ImportReport}" AutomationProperties.Name="Import report" />
+        </DockPanel>
+      </Border>
+    </Border>
+  </Grid>
+</Window>

@@ -1,0 +1,900 @@
+using System.Collections.ObjectModel;
+using System.Globalization;
+using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Ricochet.Core;
+
+namespace Ricochet.App.ViewModels;
+
+public sealed record AuthOption(string Kind, string Label);
+
+public sealed partial class MainViewModel : ObservableObject
+{
+    private readonly RequestSender _sender;
+    private readonly WorkspaceStore _store;
+    private readonly EnvironmentViewModel _noEnvironment;
+    private CancellationTokenSource? _sendCts;
+    private Task _pendingSave = Task.CompletedTask;
+    private TreeNodeViewModel? _currentNode;
+    private ISecretVault _vault;
+    private IReadOnlyDictionary<string, string> _storedSecrets;
+    private IDisposable? _folderWatcher;
+
+    public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault)
+    {
+        _sender = sender;
+        _store = store;
+        _vault = vault;
+        _storedSecrets = LoadSecrets();
+
+        var loaded = store.Load();
+        var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
+        Collections = new ObservableCollection<TreeNodeViewModel>(
+            workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode)));
+        History = new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
+        Globals.Load(workspace.Globals);
+        Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
+        Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
+        Captures.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
+        TestResults.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(ResponseTestsTabTitle));
+            OnPropertyChanged(nameof(HasTestResults));
+        };
+
+        ShowIssues(loaded.Issues);
+        RefreshPlainTextCopies();
+
+
+        _noEnvironment = new EnvironmentViewModel(new ApiEnvironment { Id = "", Name = "No environment" }, _ => { });
+        Environments = [_noEnvironment];
+        foreach (var environment in workspace.Environments)
+            Environments.Add(new EnvironmentViewModel(environment, DeleteEnvironment));
+        _activeEnvironment = Environments.FirstOrDefault(e => e.Id == workspace.ActiveEnvironmentId) ?? _noEnvironment;
+        _selectedAuth = AuthOptions[0];
+
+        // Last, because saving needs everything above. Moves data out of older formats,
+        // including credentials from before Secrets existed.
+        if (loaded.NeedsSave || WorkspaceSecrets.NeedsMigration(loaded.Workspace))
+            _ = MigrateAsync();
+
+        WatchFolder();
+    }
+
+    // Migrating leaves a backup behind, which should be offered for deletion straight away.
+    private async Task MigrateAsync()
+    {
+        await PersistAsync();
+        RefreshPlainTextCopies();
+    }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPlainTextCopies))]
+    private string _plainTextCopies = "";
+
+    public bool HasPlainTextCopies => PlainTextCopies.Length > 0;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DeleteCopiesLabel))]
+    private bool _isConfirmingCopiesDelete;
+
+    public string DeleteCopiesLabel => IsConfirmingCopiesDelete ? "Delete permanently?" : "Delete these copies";
+
+    private void RefreshPlainTextCopies() => PlainTextCopies = string.Join('\n', _store.FindPlainTextCopies());
+
+    [RelayCommand]
+    private void DismissPlainTextCopies() => PlainTextCopies = "";
+
+    // Deleting can't be undone, so it takes a second click within a few seconds.
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private async Task DeletePlainTextCopiesAsync()
+    {
+        if (!IsConfirmingCopiesDelete)
+        {
+            IsConfirmingCopiesDelete = true;
+            await Task.Delay(3000);
+            IsConfirmingCopiesDelete = false;
+            return;
+        }
+
+        IsConfirmingCopiesDelete = false;
+        var problems = await QueueStoreWork(() => _store.DeletePlainTextCopies());
+        RefreshPlainTextCopies();
+        if (problems.Count > 0)
+            StorageWarning = JoinNotices(StorageWarning, $"Some copies could not be deleted:\n{string.Join('\n', problems)}");
+    }
+
+    public ObservableCollection<string> Methods { get; } = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+    public static IReadOnlyList<AuthOption> AuthOptions { get; } =
+    [
+        new(AuthKinds.None, "No auth"),
+        new(AuthKinds.Bearer, "Bearer token"),
+        new(AuthKinds.Basic, "Basic"),
+        new(AuthKinds.ApiKey, "API key"),
+    ];
+
+    public ObservableCollection<TreeNodeViewModel> Collections { get; }
+    public ObservableCollection<HistoryEntry> History { get; }
+    public ObservableCollection<EnvironmentViewModel> Environments { get; }
+    public KeyValueListViewModel Headers { get; } = new();
+    public KeyValueListViewModel Globals { get; } = new(allowSecrets: true);
+
+    [ObservableProperty] private string _requestName = "";
+    [ObservableProperty] private string _method = "GET";
+    [ObservableProperty] private string _url = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BodyTabTitle))]
+    private string _body = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBearerAuth), nameof(IsBasicAuth), nameof(IsApiKeyAuth), nameof(IsNoAuth), nameof(AuthTabTitle))]
+    private AuthOption _selectedAuth;
+
+    public ObservableCollection<AssertionRowViewModel> Assertions { get; } = [];
+    public ObservableCollection<TestResultRow> TestResults { get; } = [];
+
+    public ObservableCollection<CaptureRowViewModel> Captures { get; } = [];
+
+    /// <summary>Names only, because captures are often tokens. Their values live in memory, never in a file.</summary>
+    public ObservableCollection<string> CapturedNames { get; } = [];
+
+    private readonly Dictionary<string, List<KeyValue>> _capturedByCollection = [];
+
+    private List<KeyValue> CapturedFor(string? collectionId) =>
+        _capturedByCollection.TryGetValue(collectionId ?? "", out var values) ? values : [];
+
+    private void RefreshCapturedNames()
+    {
+        CapturedNames.Clear();
+        foreach (var value in CapturedFor(CurrentCollection?.Id))
+            CapturedNames.Add(value.Key);
+    }
+
+    partial void OnCurrentCollectionChanged(TreeNodeViewModel? value) => RefreshCapturedNames();
+
+    private void StoreCaptured(string? collectionId, IReadOnlyList<KeyValue> values)
+    {
+        if (!_capturedByCollection.TryGetValue(collectionId ?? "", out var stored))
+            _capturedByCollection[collectionId ?? ""] = stored = [];
+
+        foreach (var value in values)
+        {
+            stored.RemoveAll(v => v.Key == value.Key);
+            stored.Add(value);
+        }
+
+        RefreshCapturedNames();
+    }
+
+    [RelayCommand]
+    private void ClearCaptured()
+    {
+        _capturedByCollection.Remove(CurrentCollection?.Id ?? "");
+        RefreshCapturedNames();
+    }
+
+    [RelayCommand]
+    private void AddCapture() => Captures.Add(NewCaptureRow(new RequestCapture()));
+
+    private CaptureRowViewModel NewCaptureRow(RequestCapture capture) => new(capture, row => Captures.Remove(row));
+
+    public string TestsTabTitle => Assertions.Count + Captures.Count > 0 ? $"Tests  {Assertions.Count + Captures.Count}" : "Tests";
+    public bool HasTestResults => TestResults.Count > 0;
+    public string ResponseTestsTabTitle => TestResults.Count > 0
+        ? $"Tests  {TestResults.Count(r => r.Passed)}/{TestResults.Count}"
+        : "Tests";
+
+    [RelayCommand]
+    private void AddAssertion() => Assertions.Add(NewAssertionRow(new RequestAssertion { Expected = "200" }));
+
+    private AssertionRowViewModel NewAssertionRow(RequestAssertion assertion) => new(assertion, row => Assertions.Remove(row));
+
+    public string HeadersTabTitle => Headers.Items.Count > 0 ? $"Headers  {Headers.Items.Count}" : "Headers";
+    public string BodyTabTitle => Body.Length > 0 ? "Body  •" : "Body";
+    public string AuthTabTitle => IsNoAuth ? "Auth" : "Auth  •";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStorageWarning))]
+    private string _storageWarning = "";
+
+    public bool HasStorageWarning => StorageWarning.Length > 0;
+
+    [ObservableProperty] private bool _wrapResponse = true;
+
+    [RelayCommand]
+    private void DismissStorageWarning() => StorageWarning = "";
+
+    public string WorkspaceFolderPath => _store.FolderPath;
+    public string WorkspaceFolderName => Path.GetFileName(_store.FolderPath.TrimEnd(Path.DirectorySeparatorChar));
+
+    private void WatchFolder()
+    {
+        _folderWatcher?.Dispose();
+        _folderWatcher = _store.Watch(() => Dispatcher.UIThread.Post(CheckForOutsideChanges));
+        OnPropertyChanged(nameof(WorkspaceFolderPath));
+        OnPropertyChanged(nameof(WorkspaceFolderName));
+    }
+
+    private void ShowIssues(IReadOnlyList<WorkspaceIssue> issues)
+    {
+        if (issues.Count == 0)
+            return;
+
+        var lines = issues.Select(i => $"{i.Path}: {i.Problem}");
+        StorageWarning = JoinNotices(StorageWarning, $"Some workspace files could not be used, and were left untouched:\n{string.Join('\n', lines)}");
+    }
+
+    private Task<T> QueueStoreWork<T>(Func<T> work)
+    {
+        var task = _pendingSave.ContinueWith(_ => work(), TaskScheduler.Default);
+        _pendingSave = task;
+        return task;
+    }
+
+    // Files can change underneath the app, for example after a git pull.
+    private async void CheckForOutsideChanges()
+    {
+        try
+        {
+            var reloaded = await QueueStoreWork(() => _store.HasOutsideChanges() ? _store.ReloadShared() : default);
+            if (reloaded.Shared is null)
+                return;
+
+            var secrets = WorkspaceSecrets.ForWorkspace(_storedSecrets, _store.WorkspaceId);
+            StorageWarning = "";
+            ShowIssues(reloaded.Issues);
+            ApplySharedWork(WorkspaceSecrets.Merge(reloaded.Shared, secrets));
+            if (WorkspaceSecrets.NeedsMigration(reloaded.Shared with { History = [] }))
+                await PersistAsync();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StorageWarning = JoinNotices(StorageWarning, $"Could not reload your workspace: {ex.Message}");
+        }
+    }
+
+    /// <summary>Replaces collections, environments and globals, keeping the user's place and any unsaved edits.</summary>
+    private void ApplySharedWork(Workspace shared)
+    {
+        var expanded = AllNodes(Collections).Where(n => n.IsExpanded).Select(n => n.Id).ToHashSet();
+        var currentId = _currentNode?.Id;
+        var hadUnsavedEdits = _currentNode?.Request is { } before && !WorkspaceSecrets.SameContent(before, CurrentRequest());
+        var collectionId = CurrentCollection?.Id;
+        var activeId = ActiveEnvironment.Id;
+
+        ActiveEnvironment = _noEnvironment;
+        foreach (var environment in Environments.Where(e => e != _noEnvironment).ToList())
+            Environments.Remove(environment);
+        foreach (var environment in shared.Environments)
+            Environments.Add(new EnvironmentViewModel(environment, DeleteEnvironment));
+        ActiveEnvironment = Environments.FirstOrDefault(e => e.Id == activeId) ?? _noEnvironment;
+
+        _currentNode = null;
+        SelectedNode = null;
+        Collections.Clear();
+        foreach (var collection in shared.Collections)
+            Collections.Add(TreeNodeViewModel.FromCollection(collection, DeleteNode));
+        foreach (var node in AllNodes(Collections))
+            node.IsExpanded = expanded.Contains(node.Id);
+
+        Globals.Load(shared.Globals);
+        CurrentCollection = Collections.FirstOrDefault(c => c.Id == collectionId);
+
+        if (currentId is null)
+            return;
+
+        var current = AllNodes(Collections).FirstOrDefault(n => n.Id == currentId);
+        if (current?.Request is not { } request)
+        {
+            Notice = "This request was removed outside Ricochet. Saving will create it again.";
+            return;
+        }
+
+        _currentNode = current;
+        SelectedNode = current;
+        if (hadUnsavedEdits)
+            Notice = "This request changed outside Ricochet. Your unsaved edits are still here, and saving will replace that version.";
+        else if (!WorkspaceSecrets.SameContent(request, CurrentRequest()))
+            LoadRequest(request);
+    }
+
+    private static IEnumerable<TreeNodeViewModel> AllNodes(IEnumerable<TreeNodeViewModel> nodes) =>
+        nodes.SelectMany(n => AllNodes(n.Children).Prepend(n));
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPendingCopy), nameof(PendingCopyMessage))]
+    private string _pendingCopyFolder = "";
+
+    public bool HasPendingCopy => PendingCopyFolder.Length > 0;
+    public string PendingCopyMessage => $"{PendingCopyFolder} doesn't hold a workspace yet. Copy your current workspace there? Your files in that folder won't be changed, and the current workspace stays where it is.";
+
+    [RelayCommand]
+    private void CancelCopy() => PendingCopyFolder = "";
+
+    [RelayCommand]
+    private async Task ConfirmCopyAsync()
+    {
+        var path = PendingCopyFolder;
+        PendingCopyFolder = "";
+        await SwitchFolderAsync(path);
+    }
+
+    /// <summary>Opens the Workspace in a folder. A folder without one needs confirming, because it gets files added.</summary>
+    public async Task OpenWorkspaceFolderAsync(string path)
+    {
+        if (WorkspaceFolder.LooksLikeWorkspace(path))
+            await SwitchFolderAsync(path);
+        else
+            PendingCopyFolder = path;
+    }
+
+    private async Task SwitchFolderAsync(string path)
+    {
+        var (clean, _) = WorkspaceSecrets.Split(Snapshot());
+        try
+        {
+            await PersistAsync();
+            var (result, copied) = await QueueStoreWork(() => _store.OpenFolder(path, clean));
+            WatchFolder();
+
+            StorageWarning = "";
+            ShowIssues(result.Issues);
+            if (copied)
+            {
+                // The in-memory values are complete, and just need storing under the new Workspace's id.
+                await PersistAsync();
+                Notice = $"Your workspace was copied to {path}. The previous folder was left as it was.";
+            }
+            else
+            {
+                NewRequest();
+                ApplySharedWork(WorkspaceSecrets.Merge(result.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, _store.WorkspaceId)));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StorageWarning = JoinNotices(StorageWarning, $"Could not open that folder: {ex.Message}");
+        }
+    }
+
+    private IReadOnlyDictionary<string, string> LoadSecrets()
+    {
+        try
+        {
+            return _vault.Load();
+        }
+        catch (SecretVaultException ex)
+        {
+            // Never write over a vault that could not be read. Secrets live in memory until the app closes.
+            _vault = new InMemorySecretVault();
+            StorageWarning = $"{ex.Message} Secrets you enter now will last only until you close Ricochet.";
+            return new Dictionary<string, string>();
+        }
+    }
+
+    [ObservableProperty] private string _authToken = "";
+    [ObservableProperty] private string _authUsername = "";
+    [ObservableProperty] private string _authPassword = "";
+    [ObservableProperty] private string _authKeyName = "";
+    [ObservableProperty] private string _authKeyValue = "";
+    [ObservableProperty] private bool _authKeyInQuery;
+
+    public bool IsNoAuth => SelectedAuth.Kind == AuthKinds.None;
+    public bool IsBearerAuth => SelectedAuth.Kind == AuthKinds.Bearer;
+    public bool IsBasicAuth => SelectedAuth.Kind == AuthKinds.Basic;
+    public bool IsApiKeyAuth => SelectedAuth.Kind == AuthKinds.ApiKey;
+
+    [ObservableProperty] private TreeNodeViewModel? _selectedNode;
+    [ObservableProperty] private HistoryEntry? _selectedHistory;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCurrentCollection), nameof(CollectionVariablesTitle))]
+    private TreeNodeViewModel? _currentCollection;
+
+    public bool HasCurrentCollection => CurrentCollection is not null;
+    public string CollectionVariablesTitle => CurrentCollection is { } collection
+        ? $"Variables of \"{collection.Name}\". These override Globals, and the active environment overrides these."
+        : "Open a request from a collection to edit its variables.";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasActiveEnvironment))]
+    private EnvironmentViewModel _activeEnvironment;
+
+    public bool HasActiveEnvironment => ActiveEnvironment != _noEnvironment;
+
+    // The combo box clears its selection when the selected item is removed from its list.
+    partial void OnActiveEnvironmentChanged(EnvironmentViewModel value)
+    {
+        if (value is null)
+            ActiveEnvironment = _noEnvironment;
+    }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SendButtonText), nameof(ShowEmptyState))]
+    private bool _isSending;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatus), nameof(ShowEmptyState))]
+    private string _statusText = "";
+
+    public bool HasStatus => StatusText.Length > 0;
+    public bool ShowEmptyState => !IsSending && !HasStatus;
+
+    [ObservableProperty] private string _timingText = "";
+    [ObservableProperty] private bool _isSuccess;
+    [ObservableProperty] private bool _isFailure;
+    [ObservableProperty] private string _responseHeaders = "";
+    [ObservableProperty] private string _responseBody = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasNotice))]
+    private string _notice = "";
+
+    public bool HasNotice => Notice.Length > 0;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasImportReport))]
+    private string _importReport = "";
+
+    public bool HasImportReport => ImportReport.Length > 0;
+
+    /// <summary>Whether <see cref="ResponseBody"/> is JSON. Set before the body so the view can pick highlighting.</summary>
+    public bool ResponseIsJson { get; private set; }
+
+    public string SendButtonText => IsSending ? "Cancel" : "Send";
+
+    partial void OnSelectedNodeChanged(TreeNodeViewModel? value)
+    {
+        // Matching the current node means it was just saved, so the editor and response are already right.
+        if (value?.Request is not { } request || value == _currentNode)
+            return;
+
+        SelectedHistory = null;
+        _currentNode = value;
+        CurrentCollection = value.Root;
+        LoadRequest(request);
+    }
+
+    partial void OnSelectedHistoryChanged(HistoryEntry? value)
+    {
+        if (value is null)
+            return;
+
+        SelectedNode = null;
+        _currentNode = null; // Saving from history creates a new request.
+        CurrentCollection = Collections.FirstOrDefault(c => c.Id == value.CollectionId);
+        LoadRequest(value.Request);
+        Notice = JoinNotices(Notice, CredentialNotice(value.Request));
+    }
+
+    private void LoadRequest(ApiRequest request)
+    {
+        if (!Methods.Contains(request.Method))
+            Methods.Add(request.Method);
+
+        RequestName = request.Name;
+        Method = request.Method;
+        Url = request.Url;
+        Body = request.Body;
+        Headers.Load(request.Headers);
+        LoadAuth(request.Auth);
+        Assertions.Clear();
+        foreach (var assertion in request.Assertions ?? [])
+            Assertions.Add(NewAssertionRow(assertion));
+        Captures.Clear();
+        foreach (var capture in request.Captures ?? [])
+            Captures.Add(NewCaptureRow(capture));
+        ClearResponse();
+        Notice = ScriptNotice();
+    }
+
+    private void LoadAuth(RequestAuth? auth)
+    {
+        auth ??= new RequestAuth();
+        SelectedAuth = AuthOptions.FirstOrDefault(o => o.Kind == auth.Kind) ?? AuthOptions[0];
+        AuthToken = auth.Token;
+        AuthUsername = auth.Username;
+        AuthPassword = auth.Password;
+        AuthKeyName = auth.KeyName;
+        AuthKeyValue = auth.KeyValue;
+        AuthKeyInQuery = auth.KeyInQuery;
+    }
+
+    private RequestAuth? CurrentAuth() => SelectedAuth.Kind == AuthKinds.None
+        ? null
+        : new RequestAuth
+        {
+            Kind = SelectedAuth.Kind,
+            Token = AuthToken,
+            Username = AuthUsername,
+            Password = AuthPassword,
+            KeyName = AuthKeyName,
+            KeyValue = AuthKeyValue,
+            KeyInQuery = AuthKeyInQuery,
+        };
+
+    private string ScriptNotice() => _currentNode?.HasScripts == true
+        ? "This request has Postman scripts, on it or on a parent, which are not run. It may rely on values they would set."
+        : "";
+
+    private static string CredentialNotice(ApiRequest request)
+    {
+        var missingAuth = request.Auth switch
+        {
+            { Kind: AuthKinds.Bearer, Token: "" } => "a token",
+            { Kind: AuthKinds.Basic, Password: "" } => "a password",
+            { Kind: AuthKinds.ApiKey, KeyValue: "" } => "an API key value",
+            _ => null,
+        };
+
+        return JoinNotices(
+            missingAuth is null ? "" : $"Auth has no value for {missingAuth} on this machine.",
+            WorkspaceSecrets.HasHiddenValues(request) ? $"Headers showing {SecretRules.HiddenValue} were removed from History, so enter them again." : "");
+    }
+
+    private static string JoinNotices(params string[] notices) =>
+        string.Join('\n', notices.Where(n => n.Length > 0));
+
+    private void ClearResponse()
+    {
+        StatusText = "";
+        TimingText = "";
+        IsSuccess = false;
+        IsFailure = false;
+        ResponseHeaders = "";
+        ResponseIsJson = false;
+        ResponseBody = "";
+        Notice = "";
+        TestResults.Clear();
+    }
+
+    private ApiRequest CurrentRequest() => new()
+    {
+        Id = _currentNode?.Request?.Id ?? Guid.NewGuid().ToString("N"),
+        Name = RequestName.Trim(),
+        Method = Method,
+        Url = Url,
+        Body = Body,
+        Headers = Headers.ToEntries(),
+        Auth = CurrentAuth(),
+        Assertions = Assertions.Count > 0 ? Assertions.Select(a => a.ToAssertion()).ToList() : null,
+        Captures = Captures.Count > 0 ? Captures.Select(c => c.ToCapture()).ToList() : null,
+    };
+
+    [RelayCommand]
+    private void NewRequest()
+    {
+        SelectedNode = null;
+        SelectedHistory = null;
+        _currentNode = null;
+        CurrentCollection = null;
+        LoadRequest(new ApiRequest());
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private async Task SendOrCancelAsync()
+    {
+        if (_sendCts is not null)
+        {
+            _sendCts.Cancel();
+            return;
+        }
+
+        using var cts = new CancellationTokenSource();
+        _sendCts = cts;
+        IsSending = true;
+        ClearResponse();
+
+        var request = CurrentRequest();
+        var collectionId = CurrentCollection?.Id;
+        var unresolved = "";
+        try
+        {
+            var variables = VariableResolver.Layer(
+                Globals.ToEntries(),
+                CurrentCollection?.Variables.ToEntries(),
+                ActiveEnvironment.Variables.ToEntries(),
+                CapturedFor(collectionId));
+            var resolved = VariableResolver.Apply(request, variables);
+            var names = VariableResolver.FindPlaceholders(resolved);
+            if (names.Count > 0)
+                unresolved = $"No value for: {string.Join(", ", names)}";
+
+            var response = await _sender.SendAsync(resolved, cts.Token);
+            var formatted = await Task.Run(() => ResponseFormatter.Format(response), cts.Token);
+            ShowResponse(response, formatted);
+            var testResults = await Task.Run(() => AssertionEvaluator.Evaluate(resolved.Assertions, response), cts.Token);
+            foreach (var result in testResults)
+            {
+                var detail = result.Passed ? "" : $": {result.Message}";
+                TestResults.Add(new TestResultRow(result.Passed ? "PASS" : "FAIL", result.Description + detail, result.Passed));
+            }
+
+            var captureOutcome = AssertionEvaluator.EvaluateCaptures(resolved.Captures, response);
+            StoreCaptured(collectionId, captureOutcome.Values);
+            foreach (var value in captureOutcome.Values)
+                TestResults.Add(new TestResultRow("SET", value.Key, true));
+            foreach (var failure in captureOutcome.Failures)
+                TestResults.Add(new TestResultRow("FAIL", $"{failure.Description}: {failure.Message}", false));
+
+            Notice = JoinNotices(ScriptNotice(), unresolved, CredentialNotice(request), response.Truncated
+                ? $"Response too large: showing the first {FormatSize(response.Body.Length)}."
+                : "");
+            AddHistory(request, response.StatusCode, (long)response.Elapsed.TotalMilliseconds, collectionId);
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Cancelled";
+        }
+        catch (RequestFailedException ex)
+        {
+            StatusText = "Failed";
+            IsFailure = true;
+            Notice = JoinNotices(ex.Message, unresolved, CredentialNotice(request), ScriptNotice());
+            AddHistory(request, statusCode: null, elapsedMs: 0, collectionId);
+        }
+        finally
+        {
+            _sendCts = null;
+            IsSending = false;
+        }
+
+        await PersistAsync();
+    }
+
+    private void ShowResponse(ApiResponse response, FormattedBody formatted)
+    {
+        StatusText = $"{response.StatusCode} {response.ReasonPhrase}".Trim();
+        IsSuccess = response.StatusCode is >= 200 and < 400;
+        IsFailure = !IsSuccess;
+        TimingText = $"{response.Elapsed.TotalMilliseconds:N0} ms  ·  {FormatSize(response.Body.Length)}";
+        ResponseHeaders = string.Join('\n', response.Headers.Select(h => $"{h.Key}: {h.Value}"));
+        ResponseIsJson = formatted.IsJson;
+        ResponseBody = formatted.Text;
+    }
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1024d:0.#} KB"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024d * 1024d):0.#} MB"),
+    };
+
+    private void AddHistory(ApiRequest request, int? statusCode, long elapsedMs, string? collectionId)
+    {
+        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
+        while (History.Count > Workspace.MaxHistory)
+            History.RemoveAt(History.Count - 1);
+    }
+
+    [RelayCommand]
+    private async Task SaveAsync()
+    {
+        var request = CurrentRequest();
+        if (request.Name.Length == 0)
+            request = request with { Name = $"{request.Method} {request.Url}".Trim() };
+
+        RequestName = request.Name;
+
+        if (_currentNode is { } node)
+        {
+            node.Request = request;
+            node.Name = request.Name;
+        }
+        else
+        {
+            var target = CurrentCollection ?? DefaultCollection();
+            node = TreeNodeViewModel.ForNewRequest(request, target, DeleteNode);
+            target.Children.Add(node);
+            target.IsExpanded = true;
+            _currentNode = node;
+            CurrentCollection = target;
+            SelectedHistory = null;
+            SelectedNode = node;
+        }
+
+        var literals = SecretRules.FindLikelyLiterals(request);
+        if (literals.Count > 0)
+        {
+            Notice = JoinNotices(ScriptNotice(),
+                $"Saved as plain text: {string.Join(", ", literals)}. Use a {{{{variable}}}} marked Secret to keep it out of your files.");
+        }
+
+        await PersistAsync();
+    }
+
+    private TreeNodeViewModel DefaultCollection()
+    {
+        var existing = Collections.FirstOrDefault(c => c.Name == Workspace.DefaultCollectionName);
+        if (existing is not null)
+            return existing;
+
+        var created = TreeNodeViewModel.FromCollection(new Collection { Name = Workspace.DefaultCollectionName }, DeleteNode);
+        Collections.Add(created);
+        return created;
+    }
+
+    private async void DeleteNode(TreeNodeViewModel node)
+    {
+        if (_currentNode?.IsWithin(node) == true)
+        {
+            _currentNode = null;
+            SelectedNode = null;
+        }
+
+        if (node.Parent is { } parent)
+        {
+            parent.Children.Remove(node);
+        }
+        else
+        {
+            Collections.Remove(node);
+            if (CurrentCollection == node)
+                CurrentCollection = null;
+        }
+
+        await PersistAsync();
+    }
+
+    [RelayCommand]
+    private async Task NewEnvironmentAsync()
+    {
+        var name = WorkspaceImport.UniqueName("New environment", Environments.Select(e => e.Name));
+        var environment = new EnvironmentViewModel(new ApiEnvironment { Name = name }, DeleteEnvironment);
+        Environments.Add(environment);
+        ActiveEnvironment = environment;
+        await PersistAsync();
+    }
+
+    private async void DeleteEnvironment(EnvironmentViewModel environment)
+    {
+        if (ActiveEnvironment == environment)
+            ActiveEnvironment = _noEnvironment;
+
+        Environments.Remove(environment);
+        await PersistAsync();
+    }
+
+    /// <summary>Imports each file on its own, so one bad file does not stop the others.</summary>
+    public async Task ImportFilesAsync(IReadOnlyList<string> paths)
+    {
+        var parsed = await Task.Run(() => paths.Select(ParseFile).ToList());
+
+        var report = new List<string>();
+        foreach (var (name, result, error) in parsed)
+            report.Add(result is null ? $"{name}\nNot imported. {error}" : $"{name}\n{ApplyImport(result)}");
+
+        ImportReport = string.Join("\n\n", report);
+        await PersistAsync();
+    }
+
+    private static (string Name, ImportResult? Result, string? Error) ParseFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        try
+        {
+            return (name, PostmanImporter.Import(File.ReadAllText(path), name), null);
+        }
+        catch (Exception ex) when (ex is PostmanImportException or IOException or UnauthorizedAccessException)
+        {
+            return (name, null, ex.Message);
+        }
+    }
+
+    private string ApplyImport(ImportResult result)
+    {
+        var notes = new List<string>();
+
+        if (result.Collection is { } collection)
+        {
+            var unique = WorkspaceImport.UniqueName(collection.Name, Collections.Select(c => c.Name));
+            if (unique != collection.Name)
+                notes.Add($"A collection with this name already exists, so it was added as \"{unique}\".");
+
+            var node = TreeNodeViewModel.FromCollection(collection with { Name = unique }, DeleteNode);
+            node.IsExpanded = true;
+            Collections.Add(node);
+        }
+
+        if (result.Environment is { } environment)
+        {
+            var unique = WorkspaceImport.UniqueName(environment.Name, Environments.Select(e => e.Name));
+            if (unique != environment.Name)
+                notes.Add($"An environment with this name already exists, so it was added as \"{unique}\".");
+
+            Environments.Add(new EnvironmentViewModel(environment with { Name = unique }, DeleteEnvironment));
+            notes.Add("Select it from the environment menu to use it.");
+        }
+
+        if (result.Globals is { } globals)
+        {
+            var (merged, overwritten) = WorkspaceImport.MergeGlobals(Globals.ToEntries(), globals);
+            Globals.Load(merged);
+            if (overwritten.Count > 0)
+                notes.Add($"Replaced existing values of: {string.Join(", ", overwritten)}");
+        }
+
+        var text = result.ToReportText().TrimEnd();
+        return notes.Count > 0 ? $"{text}\n\n{string.Join('\n', notes)}" : text;
+    }
+
+    [RelayCommand]
+    private void CloseImportReport() => ImportReport = "";
+
+    private Workspace Snapshot() => new()
+    {
+        Collections = Collections.Select(c => c.ToCollection()).ToList(),
+        Environments = Environments.Where(e => e != _noEnvironment).Select(e => e.ToEnvironment()).ToList(),
+        ActiveEnvironmentId = HasActiveEnvironment ? ActiveEnvironment.Id : null,
+        Globals = Globals.ToEntries(),
+        History = History.ToList(),
+    };
+
+    /// <summary>Saves run one after another so an older snapshot can never overwrite a newer one.</summary>
+    private Task QueueSave()
+    {
+        var (clean, secrets) = WorkspaceSecrets.Split(Snapshot());
+        _pendingSave = _pendingSave.ContinueWith(_ => Save(clean, secrets), TaskScheduler.Default);
+        return _pendingSave;
+    }
+
+    // Secrets go first, so a crash in between can't leave a file whose values were never stored.
+    // If the vault fails, the file is still saved without them: never fall back to plain text.
+    private void Save(Workspace clean, Dictionary<string, string> secrets)
+    {
+        SecretVaultException? vaultFailure = null;
+        var allSecrets = WorkspaceSecrets.WithWorkspace(_storedSecrets, _store.WorkspaceId, secrets);
+        if (!SameSecrets(allSecrets, _storedSecrets))
+        {
+            try
+            {
+                _vault.Save(allSecrets);
+                _storedSecrets = allSecrets;
+            }
+            catch (SecretVaultException ex)
+            {
+                vaultFailure = ex;
+            }
+        }
+
+        _store.Save(clean);
+        if (vaultFailure is not null)
+            throw vaultFailure;
+    }
+
+    private static bool SameSecrets(IReadOnlyDictionary<string, string> a, IReadOnlyDictionary<string, string> b) =>
+        a.Count == b.Count && a.All(pair => b.TryGetValue(pair.Key, out var value) && value == pair.Value);
+
+    private async Task PersistAsync()
+    {
+        try
+        {
+            await QueueSave();
+        }
+        catch (SecretVaultException ex)
+        {
+            StorageWarning = $"{ex.Message} They will last only until you close Ricochet.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notice = $"Could not save your workspace: {ex.Message}";
+        }
+    }
+
+    /// <summary>Blocks until everything is on disk. Called as the window closes.</summary>
+    public void SaveBeforeExit()
+    {
+        _sendCts?.Cancel();
+        try
+        {
+            QueueSave().Wait();
+        }
+        catch (AggregateException)
+        {
+            // The app is closing and there is nowhere left to show this.
+        }
+    }
+}

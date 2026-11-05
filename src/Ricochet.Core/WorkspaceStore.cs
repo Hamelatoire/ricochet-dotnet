@@ -1,0 +1,292 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Ricochet.Core;
+
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    NewLine = "\n",
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(Workspace))]
+[JsonSerializable(typeof(PersonalState))]
+[JsonSerializable(typeof(List<HistoryEntry>))]
+[JsonSerializable(typeof(List<KeyValue>))]
+[JsonSerializable(typeof(WorkspaceMarkerFile))]
+[JsonSerializable(typeof(CollectionFile))]
+[JsonSerializable(typeof(FolderFile))]
+[JsonSerializable(typeof(RequestFile))]
+[JsonSerializable(typeof(ApiEnvironment))]
+[JsonSerializable(typeof(ApiRequest))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
+internal sealed partial class WorkspaceJsonContext : JsonSerializerContext;
+
+/// <summary>Settings that belong to this person on this machine, and are never shared.</summary>
+public sealed record PersonalState
+{
+    public string? WorkspaceFolder { get; set; }
+    public string? ActiveEnvironmentId { get; set; }
+}
+
+public sealed record WorkspaceLoadResult(Workspace Workspace, IReadOnlyList<WorkspaceIssue> Issues, bool NeedsSave);
+
+/// <summary>Reads the original single-file format, so it can be migrated.</summary>
+public sealed class LegacyWorkspaceFile(string path)
+{
+    /// <summary>An unreadable file is kept beside the original rather than overwritten.</summary>
+    public Workspace Load()
+    {
+        if (!File.Exists(path))
+            return new Workspace();
+
+        try
+        {
+            var workspace = JsonSerializer.Deserialize(File.ReadAllText(path), WorkspaceJsonContext.Default.Workspace);
+            return workspace?.MigrateLegacyFields() ?? new Workspace();
+        }
+        catch (JsonException)
+        {
+            File.Move(path, $"{path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}", overwrite: true);
+            return new Workspace();
+        }
+    }
+}
+
+/// <summary>
+/// Keeps a Workspace across its two homes: a shareable folder, and personal files in app data.
+/// See docs/adr/0003-git-friendly-workspace-files.md.
+/// </summary>
+public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy = null)
+{
+    private const string StateFileName = "state.json";
+    private const string HistoryFileName = "history.json";
+    private const string LegacyFileName = "workspace.json";
+    private const string LegacyBackupSuffix = ".bak";
+    private const string DefaultFolderName = "workspace";
+    private const string OldAppFolderName = "PostmanLight";
+
+    private readonly Lock _gate = new();
+    private WorkspaceFolder? _folder;
+    private bool _legacyFilePending;
+
+    public string FolderPath => Folder.Root;
+
+    /// <summary>Identifies the Workspace, so that each one keeps its own Secrets on this machine.</summary>
+    public string WorkspaceId => Folder.Id;
+
+    private WorkspaceFolder Folder => _folder ?? throw new InvalidOperationException("Load the store first.");
+
+    public string SecretsPath => Path.Combine(personalDirectory, "secrets.dat");
+
+    /// <summary>Where personal data lives. Brings data over from when the app had its previous name.</summary>
+    public static string DefaultPersonalDirectory()
+    {
+        var overridePath = Environment.GetEnvironmentVariable("RICOCHET_DATA");
+        if (!string.IsNullOrEmpty(overridePath))
+            return overridePath;
+
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var directory = Path.Combine(appData, "Ricochet");
+        if (!File.Exists(Path.Combine(directory, StateFileName)))
+            AdoptFileFromOldName(Path.Combine(appData, OldAppFolderName, LegacyFileName), Path.Combine(directory, LegacyFileName));
+
+        return directory;
+    }
+
+    /// <summary>Where Secrets live, for tools that only read them and shouldn't migrate anything.</summary>
+    public static string DefaultSecretsPath()
+    {
+        var overridePath = Environment.GetEnvironmentVariable("RICOCHET_DATA");
+        var directory = !string.IsNullOrEmpty(overridePath)
+            ? overridePath
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Ricochet");
+        return Path.Combine(directory, "secrets.dat");
+    }
+
+    /// <summary>Brings data over from when the app had its previous name. The original stays as a backup.</summary>
+    public static void AdoptFileFromOldName(string oldPath, string currentPath)
+    {
+        if (File.Exists(currentPath) || !File.Exists(oldPath))
+            return;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(currentPath))!);
+        File.Copy(oldPath, currentPath);
+    }
+
+    /// <summary>
+    /// Where the app's previous name kept its data, for the normal personal directory only.
+    /// A custom one, such as a test's, must never reach outside itself.
+    /// </summary>
+    public static string? DefaultOldAppCopy()
+    {
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RICOCHET_DATA")))
+            return null;
+
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), OldAppFolderName, LegacyFileName);
+    }
+
+    /// <summary>Older plain-text copies of the user's data that may still hold credentials.</summary>
+    public IReadOnlyList<string> FindPlainTextCopies()
+    {
+        var candidates = new List<string> { Path.Combine(personalDirectory, LegacyFileName + LegacyBackupSuffix) };
+        if (oldAppCopy is not null)
+            candidates.Insert(0, oldAppCopy);
+
+        return candidates.Where(File.Exists).ToList();
+    }
+
+    /// <summary>
+    /// Permanently deletes the copies <see cref="FindPlainTextCopies"/> reports, and nothing else.
+    /// Returns a problem for each one that could not be deleted.
+    /// </summary>
+    public IReadOnlyList<string> DeletePlainTextCopies()
+    {
+        lock (_gate)
+        {
+            var problems = new List<string>();
+            foreach (var path in FindPlainTextCopies())
+            {
+                try
+                {
+                    File.Delete(path);
+
+                    // The old app's folder held only this file, so don't leave it behind empty.
+                    if (path == oldAppCopy && Path.GetDirectoryName(path) is { } folder && !Directory.EnumerateFileSystemEntries(folder).Any())
+                        Directory.Delete(folder);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    problems.Add($"{path}: {ex.Message}");
+                }
+            }
+
+            return problems;
+        }
+    }
+
+    public WorkspaceLoadResult Load()
+    {
+        lock (_gate)
+        {
+            var issues = new List<WorkspaceIssue>();
+            var stateExists = File.Exists(Path.Combine(personalDirectory, StateFileName));
+            var state = ReadPersonal(StateFileName, WorkspaceJsonContext.Default.PersonalState, issues) ?? new PersonalState();
+            var history = ReadPersonal(HistoryFileName, WorkspaceJsonContext.Default.ListHistoryEntry, issues) ?? [];
+
+            var folderPath = state.WorkspaceFolder ?? DefaultFolderPath();
+            if (state.WorkspaceFolder is not null && !Directory.Exists(folderPath))
+            {
+                // Possibly an unplugged drive, so report it rather than recreate an empty Workspace there.
+                issues.Add(new WorkspaceIssue(folderPath, "This workspace folder was not found, so the default one is open instead."));
+                folderPath = DefaultFolderPath();
+            }
+
+            _folder = new WorkspaceFolder(folderPath);
+            var (shared, folderIssues) = _folder.Load();
+            issues.AddRange(folderIssues);
+
+            var legacyPath = Path.Combine(personalDirectory, LegacyFileName);
+            if (!stateExists && File.Exists(legacyPath))
+            {
+                var legacy = new LegacyWorkspaceFile(legacyPath).Load();
+                _legacyFilePending = File.Exists(legacyPath);
+                return new WorkspaceLoadResult(legacy, issues, NeedsSave: true);
+            }
+
+            var workspace = shared with { ActiveEnvironmentId = state.ActiveEnvironmentId, History = history };
+            return new WorkspaceLoadResult(workspace, issues, NeedsSave: !stateExists);
+        }
+    }
+
+    /// <summary>
+    /// Opens a folder that already holds a Workspace. Any other folder gets a copy of the current
+    /// Workspace, with the original left where it was.
+    /// </summary>
+    public (WorkspaceLoadResult Result, bool Copied) OpenFolder(string path, Workspace current)
+    {
+        lock (_gate)
+        {
+            var folder = new WorkspaceFolder(Path.GetFullPath(path));
+            var copy = !WorkspaceFolder.LooksLikeWorkspace(path);
+            var (shared, issues) = folder.Load();
+            if (copy)
+            {
+                folder.Save(current);
+                shared = current;
+            }
+
+            _folder = folder;
+            SaveState(new PersonalState { WorkspaceFolder = RememberedFolder(), ActiveEnvironmentId = current.ActiveEnvironmentId });
+
+            var workspace = shared with { ActiveEnvironmentId = current.ActiveEnvironmentId, History = current.History };
+            return (new WorkspaceLoadResult(workspace, issues, NeedsSave: false), copy);
+        }
+    }
+
+    public void Save(Workspace workspace)
+    {
+        lock (_gate)
+        {
+            Folder.Save(workspace);
+            WritePersonal(HistoryFileName, workspace.History.ToList(), WorkspaceJsonContext.Default.ListHistoryEntry);
+            SaveState(new PersonalState { WorkspaceFolder = RememberedFolder(), ActiveEnvironmentId = workspace.ActiveEnvironmentId });
+
+            if (_legacyFilePending)
+            {
+                var legacyPath = Path.Combine(personalDirectory, LegacyFileName);
+                File.Move(legacyPath, legacyPath + LegacyBackupSuffix, overwrite: true);
+                _legacyFilePending = false;
+            }
+        }
+    }
+
+    public bool HasOutsideChanges() => Folder.HasOutsideChanges();
+
+    /// <summary>Rereads the shared files. History and the active Environment are personal, so they stay as they are.</summary>
+    public (Workspace Shared, IReadOnlyList<WorkspaceIssue> Issues) ReloadShared()
+    {
+        lock (_gate)
+        {
+            var (shared, issues) = Folder.Load();
+            return (shared, issues);
+        }
+    }
+
+    public IDisposable Watch(Action changed) => Folder.Watch(changed);
+
+    private string DefaultFolderPath() => Path.Combine(personalDirectory, DefaultFolderName);
+
+    // The default folder is not recorded, so moving the personal directory keeps working.
+    private string? RememberedFolder() =>
+        Path.GetFullPath(Folder.Root).Equals(Path.GetFullPath(DefaultFolderPath()), StringComparison.OrdinalIgnoreCase) ? null : Folder.Root;
+
+    private void SaveState(PersonalState state) => WritePersonal(StateFileName, state, WorkspaceJsonContext.Default.PersonalState);
+
+    private T? ReadPersonal<T>(string fileName, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type, List<WorkspaceIssue> issues) where T : class
+    {
+        var path = Path.Combine(personalDirectory, fileName);
+        if (!File.Exists(path))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize(File.ReadAllText(path), type);
+        }
+        catch (JsonException ex)
+        {
+            var kept = $"{path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
+            File.Move(path, kept, overwrite: true);
+            issues.Add(new WorkspaceIssue(kept, $"This file could not be read, so it was set aside: {ex.Message}"));
+            return null;
+        }
+    }
+
+    private void WritePersonal<T>(string fileName, T value, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
+    {
+        Directory.CreateDirectory(personalDirectory);
+        var path = Path.Combine(personalDirectory, fileName);
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(value, type));
+        File.Move(temp, path, overwrite: true);
+    }
+}
