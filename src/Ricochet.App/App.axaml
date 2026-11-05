@@ -359,7 +359,7 @@
     <!-- Rounded rows in the sidebar -->
     <Style Selector="TreeViewItem">
       <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="MinHeight" Value="30" />
     </Style>
     <Style Selector="TreeViewItem /template/ Border#PART_LayoutRoot">
       <Setter Property="CornerRadius" Value="8" />

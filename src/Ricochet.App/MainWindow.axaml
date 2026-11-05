@@ -23,9 +23,9 @@
   <Grid>
     <Grid ColumnDefinitions="310,Auto,*">
       <!-- Sidebar -->
-      <Border Grid.Column="0" Padding="20,46,12,16">
+      <Border Grid.Column="0" Padding="16,46,12,12">
         <DockPanel>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*,8,*" Margin="0,0,0,16">
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*,8,*" Margin="0,0,0,12">
             <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding NewRequestCommand}"
                     AutomationProperties.Name="New request" ToolTip.Tip="New request (Ctrl+N)">
               <StackPanel Orientation="Horizontal" Spacing="7">
@@ -45,14 +45,14 @@
               <TextBlock Text="URL" />
             </Button>
           </Grid>
-          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,16" Command="{Binding OpenEnvironmentsPageCommand}"
+          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,12" Command="{Binding OpenEnvironmentsPageCommand}"
                   AutomationProperties.Name="Environments" ToolTip.Tip="Edit your environments and their variables">
             <StackPanel Orientation="Horizontal" Spacing="7">
               <PathIcon Data="{DynamicResource IconSliders}" />
               <TextBlock Text="Environments" />
             </StackPanel>
           </Button>
-          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="4,12,0,0">
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="4,8,0,0">
             <PathIcon Grid.Column="0" Data="{DynamicResource IconFolder}" Width="13" Height="13" Margin="0,0,8,0" Foreground="{DynamicResource TextMuted}" />
             <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                        Text="{Binding WorkspaceFolderName}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
@@ -60,7 +60,7 @@
                     AutomationProperties.Name="Change workspace folder"
                     ToolTip.Tip="Open a workspace folder, or copy this workspace into a new one, such as a git repository" />
           </Grid>
-          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,12,0,0">
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,8,0,0">
             <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Theme" />
             <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding ThemeChoice}"
                       AutomationProperties.Name="Theme" ToolTip.Tip="Follow the system, or always use light or dark" />
@@ -188,7 +188,7 @@
 
       <!-- Request and response -->
       <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsEnvironmentsPageOpen}">
-        <Border Grid.Row="0" Classes="card" Padding="24,20,24,6">
+        <Border Grid.Row="0" Classes="card" Padding="20,16,20,6">
         <DockPanel>
           <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">
             <Grid ColumnDefinitions="*,Auto,Auto">
@@ -422,7 +422,7 @@
 
         <GridSplitter Grid.Row="1" Height="8" ResizeDirection="Rows" />
 
-        <Border Grid.Row="2" Classes="card" Padding="24,18,24,12">
+        <Border Grid.Row="2" Classes="card" Padding="20,14,20,12">
           <Panel>
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="4" IsVisible="{Binding ShowEmptyState}">
               <TextBlock Classes="muted" HorizontalAlignment="Center" Text="Send a request to see the response" />
