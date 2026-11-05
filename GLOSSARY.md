@@ -55,3 +55,7 @@ _Avoid_: Monitor, test suite
 **Import**:
 A one-time conversion of an exported Postman file into the Workspace.
 _Avoid_: Sync
+
+**Spec link**:
+A Collection kept up to date from an OpenAPI description at a URL the user chooses, by an update the user starts. Unlike an Import, it can be updated again.
+_Avoid_: Sync, subscription

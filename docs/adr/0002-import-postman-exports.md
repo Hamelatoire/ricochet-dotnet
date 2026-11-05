@@ -18,6 +18,7 @@ We follow Postman's order, so imported requests resolve to the same values: an E
 - **Dynamic variables are not resolved:** placeholders like `{{$guid}}` stay as written.
 - **Not carried over:** file uploads, disabled form fields and query parameters, saved example responses and descriptions.
 - **Files only:** no Postman account sign-in or API sync, so the app needs no credentials and no network access to import.
+- **Not an import:** repeatable updates from an OpenAPI URL are a Spec link, described in [ADR 0014](0014-collections-from-openapi-url.md). This ADR's one-time import is unchanged.
 
 ## Reporting and name clashes
 
