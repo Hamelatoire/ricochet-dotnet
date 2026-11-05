@@ -41,6 +41,13 @@
               </StackPanel>
             </Button>
           </Grid>
+          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,16" Command="{Binding OpenEnvironmentsPageCommand}"
+                  AutomationProperties.Name="Environments" ToolTip.Tip="Edit your environments and their variables">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+              <PathIcon Data="{StaticResource IconSliders}" />
+              <TextBlock Text="Environments" />
+            </StackPanel>
+          </Button>
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="4,12,0,0">
             <PathIcon Grid.Column="0" Data="{StaticResource IconFolder}" Width="13" Height="13" Margin="0,0,8,0" Foreground="{StaticResource TextMuted}" />
             <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
@@ -101,8 +108,63 @@
 
       <GridSplitter Grid.Column="1" Width="8" ResizeDirection="Columns" />
 
+      <!-- Environments page -->
+      <Border Grid.Column="2" Classes="card" Padding="24,20" Margin="0,46,12,12" IsVisible="{Binding IsEnvironmentsPageOpen}">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,20">
+            <StackPanel Grid.Column="0" Spacing="4">
+              <TextBlock Text="Environments" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                         Text="Use a variable in a request as {{name}}. The active environment's values override collection variables and globals." />
+            </StackPanel>
+            <Button Grid.Column="1" Classes="primary" Content="Done" Margin="16,0,0,0" VerticalAlignment="Top"
+                    Command="{Binding CloseEnvironmentsPageCommand}" AutomationProperties.Name="Done" />
+          </Grid>
+          <Grid ColumnDefinitions="240,24,*">
+            <DockPanel Grid.Column="0">
+              <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,10"
+                      Command="{Binding NewEnvironmentCommand}" AutomationProperties.Name="Add environment">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                  <PathIcon Data="{StaticResource IconPlus}" />
+                  <TextBlock Text="Add environment" />
+                </StackPanel>
+              </Button>
+              <ListBox ItemsSource="{Binding EditableEnvironments}" SelectedItem="{Binding EditingEnvironment}"
+                       AutomationProperties.Name="Environment list">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:EnvironmentViewModel">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
+                                 VerticalAlignment="Center" ToolTip.Tip="{Binding Name}" />
+                      <TextBlock Grid.Column="1" Opacity="0.8" FontSize="11" Text="Active" Margin="8,0,0,0"
+                                 VerticalAlignment="Center" IsVisible="{Binding IsActive}" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </DockPanel>
+            <Panel Grid.Column="2">
+              <TextBlock Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Center"
+                         Text="Add an environment to get started." IsVisible="{Binding !HasEditingEnvironment}" />
+              <DockPanel IsVisible="{Binding HasEditingEnvironment}">
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto">
+                  <TextBox Grid.Column="0" Text="{Binding EditingEnvironment.Name}" PlaceholderText="Environment name"
+                           AutomationProperties.Name="Environment name" />
+                  <Button Grid.Column="1" Content="{Binding UseEnvironmentLabel}" Margin="8,0,0,0"
+                          Command="{Binding ToggleEditingActiveCommand}" AutomationProperties.Name="Use environment" />
+                  <Button Grid.Column="2" Content="{Binding EditingEnvironment.DeleteLabel}" Margin="8,0,0,0"
+                          Command="{Binding EditingEnvironment.DeleteClickedCommand}" AutomationProperties.Name="Delete environment"
+                          ToolTip.Tip="Delete this environment" />
+                </Grid>
+                <views:KeyValueEditor DataContext="{Binding EditingEnvironment.Variables}" />
+              </DockPanel>
+            </Panel>
+          </Grid>
+        </DockPanel>
+      </Border>
+
       <!-- Request and response -->
-      <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12">
+      <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsEnvironmentsPageOpen}">
         <Border Grid.Row="0" Classes="card" Padding="24,20,24,6">
         <DockPanel>
           <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">

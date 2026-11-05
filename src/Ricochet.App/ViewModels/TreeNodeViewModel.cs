@@ -128,6 +128,7 @@ public sealed partial class EnvironmentViewModel : DeletableViewModel
     public KeyValueListViewModel Variables { get; } = new(allowSecrets: true);
 
     [ObservableProperty] private string _name;
+    [ObservableProperty] private bool _isActive;
 
     protected override void Delete() => _delete(this);
 

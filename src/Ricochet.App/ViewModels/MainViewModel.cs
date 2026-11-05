@@ -52,6 +52,21 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var environment in workspace.Environments)
             Environments.Add(new EnvironmentViewModel(environment, DeleteEnvironment));
         _activeEnvironment = Environments.FirstOrDefault(e => e.Id == workspace.ActiveEnvironmentId) ?? _noEnvironment;
+        _activeEnvironment.IsActive = true;
+        EditableEnvironments = new ObservableCollection<EnvironmentViewModel>(Environments.Where(e => e != _noEnvironment));
+        Environments.CollectionChanged += (_, e) =>
+        {
+            if (e.OldItems is not null)
+                foreach (EnvironmentViewModel environment in e.OldItems)
+                    EditableEnvironments.Remove(environment);
+            if (e.NewItems is not null)
+                foreach (EnvironmentViewModel environment in e.NewItems)
+                    EditableEnvironments.Add(environment);
+
+            // The page always shows an environment while there is one, including after a delete or an outside change.
+            if (EditingEnvironment is null || !EditableEnvironments.Contains(EditingEnvironment))
+                EditingEnvironment = EditableEnvironments.FirstOrDefault();
+        };
         _selectedAuth = AuthOptions[0];
 
         // Last, because saving needs everything above. Moves data out of older formats,
@@ -118,6 +133,10 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<TreeNodeViewModel> Collections { get; }
     public ObservableCollection<HistoryEntry> History { get; }
     public ObservableCollection<EnvironmentViewModel> Environments { get; }
+
+    /// <summary>The environments without the "No environment" choice, which has nothing to edit.</summary>
+    public ObservableCollection<EnvironmentViewModel> EditableEnvironments { get; }
+
     public KeyValueListViewModel Headers { get; } = new();
     public KeyValueListViewModel Globals { get; } = new(allowSecrets: true);
 
@@ -264,6 +283,7 @@ public sealed partial class MainViewModel : ObservableObject
         var hadUnsavedEdits = _currentNode?.Request is { } before && !WorkspaceSecrets.SameContent(before, CurrentRequest());
         var collectionId = CurrentCollection?.Id;
         var activeId = ActiveEnvironment.Id;
+        var editingId = EditingEnvironment?.Id;
 
         ActiveEnvironment = _noEnvironment;
         foreach (var environment in Environments.Where(e => e != _noEnvironment).ToList())
@@ -271,6 +291,7 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var environment in shared.Environments)
             Environments.Add(new EnvironmentViewModel(environment, DeleteEnvironment));
         ActiveEnvironment = Environments.FirstOrDefault(e => e.Id == activeId) ?? _noEnvironment;
+        EditingEnvironment = EditableEnvironments.FirstOrDefault(e => e.Id == editingId) ?? EditableEnvironments.FirstOrDefault();
 
         _currentNode = null;
         SelectedNode = null;
@@ -400,10 +421,49 @@ public sealed partial class MainViewModel : ObservableObject
         : "Open a request from a collection to edit its variables.";
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasActiveEnvironment))]
+    [NotifyPropertyChangedFor(nameof(HasActiveEnvironment), nameof(IsEditingActive), nameof(UseEnvironmentLabel))]
     private EnvironmentViewModel _activeEnvironment;
 
     public bool HasActiveEnvironment => ActiveEnvironment != _noEnvironment;
+
+    partial void OnActiveEnvironmentChanged(EnvironmentViewModel? oldValue, EnvironmentViewModel newValue)
+    {
+        if (oldValue is not null)
+            oldValue.IsActive = false;
+        if (newValue is not null)
+            newValue.IsActive = true;
+    }
+
+    [ObservableProperty] private bool _isEnvironmentsPageOpen;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasEditingEnvironment), nameof(IsEditingActive), nameof(UseEnvironmentLabel))]
+    private EnvironmentViewModel? _editingEnvironment;
+
+    public bool HasEditingEnvironment => EditingEnvironment is not null;
+    public bool IsEditingActive => EditingEnvironment == ActiveEnvironment;
+    public string UseEnvironmentLabel => IsEditingActive ? "Stop using" : "Use this environment";
+
+    [RelayCommand]
+    private void OpenEnvironmentsPage()
+    {
+        EditingEnvironment = HasActiveEnvironment ? ActiveEnvironment : EditingEnvironment ?? EditableEnvironments.FirstOrDefault();
+        IsEnvironmentsPageOpen = true;
+    }
+
+    [RelayCommand]
+    private async Task CloseEnvironmentsPageAsync()
+    {
+        IsEnvironmentsPageOpen = false;
+        await PersistAsync();
+    }
+
+    [RelayCommand]
+    private void ToggleEditingActive()
+    {
+        if (EditingEnvironment is { } environment)
+            ActiveEnvironment = IsEditingActive ? _noEnvironment : environment;
+    }
 
     // The combo box clears its selection when the selected item is removed from its list.
     partial void OnActiveEnvironmentChanged(EnvironmentViewModel value)
@@ -452,6 +512,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (value?.Request is not { } request || value == _currentNode)
             return;
 
+        IsEnvironmentsPageOpen = false;
         SelectedHistory = null;
         _currentNode = value;
         CurrentCollection = value.Root;
@@ -463,6 +524,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (value is null)
             return;
 
+        IsEnvironmentsPageOpen = false;
         SelectedNode = null;
         _currentNode = null; // Saving from history creates a new request.
         CurrentCollection = Collections.FirstOrDefault(c => c.Id == value.CollectionId);
@@ -567,6 +629,7 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void NewRequest()
     {
+        IsEnvironmentsPageOpen = false;
         SelectedNode = null;
         SelectedHistory = null;
         _currentNode = null;
@@ -582,6 +645,10 @@ public sealed partial class MainViewModel : ObservableObject
             _sendCts.Cancel();
             return;
         }
+
+        // The request is hidden behind the page, so the shortcut must not send it unseen.
+        if (IsEnvironmentsPageOpen)
+            return;
 
         using var cts = new CancellationTokenSource();
         _sendCts = cts;
@@ -673,6 +740,13 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task SaveAsync()
     {
+        // The request is hidden behind the page, so the shortcut saves what is on screen.
+        if (IsEnvironmentsPageOpen)
+        {
+            await PersistAsync();
+            return;
+        }
+
         var request = CurrentRequest();
         if (request.Name.Length == 0)
             request = request with { Name = $"{request.Method} {request.Url}".Trim() };
@@ -746,6 +820,7 @@ public sealed partial class MainViewModel : ObservableObject
         var environment = new EnvironmentViewModel(new ApiEnvironment { Name = name }, DeleteEnvironment);
         Environments.Add(environment);
         ActiveEnvironment = environment;
+        EditingEnvironment = environment;
         await PersistAsync();
     }
 
