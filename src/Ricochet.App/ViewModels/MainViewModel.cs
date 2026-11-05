@@ -809,6 +809,7 @@ public sealed partial class MainViewModel : ObservableObject
         var folder = TreeNodeViewModel.ForNewFolder(name, parent, DeleteNode, RenameNode, AddFolder);
         parent.Children.Add(folder);
         parent.IsExpanded = true;
+        SelectedNode = folder; // Highlights the new folder, which the tree then scrolls to.
         folder.StartRename();
         await PersistAsync();
     }
