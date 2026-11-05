@@ -11,6 +11,9 @@ public sealed record WorkspaceMarkerFile
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public int Format { get; set; } = 1;
+
+    /// <summary>The Collection ids in the order the sidebar shows them.</summary>
+    public IReadOnlyList<string> Order { get; set; } = [];
 }
 
 public sealed record CollectionFile
@@ -85,7 +88,7 @@ public sealed class WorkspaceFolder(string root)
 
             var workspace = new Workspace
             {
-                Collections = ReadCollections(issues),
+                Collections = ReadCollections(marker?.Order ?? [], issues),
                 Environments = ReadEnvironments(issues),
                 Globals = ReadGlobals(issues),
             };
@@ -170,7 +173,7 @@ public sealed class WorkspaceFolder(string root)
         return found;
     }
 
-    private List<Collection> ReadCollections(List<WorkspaceIssue> issues)
+    private List<Collection> ReadCollections(IReadOnlyList<string> order, List<WorkspaceIssue> issues)
     {
         var collections = new List<Collection>();
         var ids = new HashSet<string>();
@@ -197,7 +200,12 @@ public sealed class WorkspaceFolder(string root)
             });
         }
 
-        return collections.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        // Follow the saved order. A Collection the order doesn't list goes last, by name, as a merge can add one.
+        var rank = order.Select((id, index) => (id, index)).ToDictionary(p => p.id, p => p.index);
+        return collections
+            .OrderBy(c => rank.TryGetValue(c.Id, out var index) ? index : int.MaxValue)
+            .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private List<CollectionItem> ReadChildren(string relativeDir, IReadOnlyList<string> order, List<WorkspaceIssue> issues)
@@ -406,7 +414,7 @@ public sealed class WorkspaceFolder(string root)
                 AddItem(child, dir);
         }
 
-        Add(MarkerFileName, new WorkspaceMarkerFile { Id = Id }, WorkspaceJsonContext.Default.WorkspaceMarkerFile);
+        Add(MarkerFileName, new WorkspaceMarkerFile { Id = Id, Order = workspace.Collections.Select(c => c.Id).ToList() }, WorkspaceJsonContext.Default.WorkspaceMarkerFile);
 
         foreach (var collection in workspace.Collections)
         {
