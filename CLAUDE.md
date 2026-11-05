@@ -61,3 +61,5 @@ Never test against real user data. Set `RICOCHET_DATA` to a temporary folder bef
 - If a pull request changes nothing visible, such as documentation or build files, say so in place of the screenshots.
 - Commit screenshots to `docs/screenshots/` on the pull request's branch, and link them from its description using a raw GitHub URL with the commit's hash.
 - Take screenshots with throwaway data by setting `RICOCHET_DATA` to a temporary folder, so that they never show real requests, credentials or personal details.
+- When a pull request changes the look of the app, retake each screenshot in `README.md` that shows the changed screen, in both themes where the README shows both, and commit the new versions in the same pull request.
+- When a pull request removes a screenshot from `README.md`, or any screenshot in `docs/screenshots/` is no longer referenced by `README.md`, `docs/`, or the code, delete it in the same pull request. Older pull request descriptions may still link to deleted images, and that is acceptable.
