@@ -68,8 +68,14 @@ public static partial class VariableResolver
             texts.Add(header.Value);
         }
 
-        if (request.Auth is { } auth)
-            texts.AddRange([auth.Token, auth.Username, auth.Password, auth.KeyName, auth.KeyValue]);
+        // A request keeps the fields of other auth types, so switching back loses nothing, but only the chosen type is sent.
+        texts.AddRange(request.Auth switch
+        {
+            { Kind: AuthKinds.Bearer } auth => [auth.Token],
+            { Kind: AuthKinds.Basic } auth => [auth.Username, auth.Password],
+            { Kind: AuthKinds.ApiKey } auth => [auth.KeyName, auth.KeyValue],
+            _ => [],
+        });
 
         foreach (var assertion in request.Assertions?.Where(a => a.Enabled) ?? [])
         {
