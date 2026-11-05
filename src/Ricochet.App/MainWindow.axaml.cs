@@ -2,24 +2,32 @@ using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
-using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Styling;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Highlighting;
 using Ricochet.App.ViewModels;
+using Ricochet.App.Views;
 
 namespace Ricochet.App;
 
 public partial class MainWindow : Window
 {
-    private static readonly Lazy<IHighlightingDefinition?> JsonHighlighting = new(CreateJsonHighlighting);
-
+    private readonly Lazy<IHighlightingDefinition?> _jsonHighlighting;
+    private ThemeVariant _theme = ThemeVariant.Dark;
     private MainViewModel? _viewModel;
 
     public MainWindow()
     {
         InitializeComponent();
-        Opened += (_, _) => UrlBox.Focus();
+        _jsonHighlighting = new(CreateJsonHighlighting);
+        Opened += (_, _) =>
+        {
+            UrlBox.Focus();
+            ApplyTheme();
+        };
+        ActualThemeVariantChanged += (_, _) => ApplyTheme();
+        ApplyTheme();
     }
 
     protected override void OnDataContextChanged(EventArgs e)
@@ -89,29 +97,46 @@ public partial class MainWindow : Window
         if (e.PropertyName != nameof(MainViewModel.ResponseBody) || _viewModel is null)
             return;
 
-        ResponseEditor.SyntaxHighlighting = _viewModel.ResponseIsJson ? JsonHighlighting.Value : null;
+        ResponseEditor.SyntaxHighlighting = _viewModel.ResponseIsJson ? _jsonHighlighting.Value : null;
         ResponseEditor.Document = new TextDocument(_viewModel.ResponseBody);
     }
 
-    private static IHighlightingDefinition? CreateJsonHighlighting()
+    // Colours set from code follow the theme, so they are applied again whenever the theme changes.
+    private void ApplyTheme()
+    {
+        _theme = ActualThemeVariant == ThemeVariant.Light ? ThemeVariant.Light : ThemeVariant.Dark;
+        MethodBrushConverter.ApplyTheme(_theme);
+
+        if (_jsonHighlighting.IsValueCreated && _jsonHighlighting.Value is { } definition)
+        {
+            ApplyJsonColours(definition);
+            ResponseEditor.TextArea.TextView.Redraw();
+        }
+    }
+
+    private IHighlightingDefinition? CreateJsonHighlighting()
     {
         var definition = HighlightingManager.Instance.GetDefinition("Json");
-        if (definition is null)
-            return null;
-
-        // The built-in colours are meant for light backgrounds.
-        foreach (var color in definition.NamedHighlightingColors)
-        {
-            color.Foreground = new SimpleHighlightingBrush(Color.Parse(color.Name switch
-            {
-                "FieldName" => "#7DD3FC",
-                "String" => "#86EFAC",
-                "Number" => "#FDBA74",
-                "Bool" or "Null" => "#C4B5FD",
-                _ => "#D4D4D8",
-            }));
-        }
+        if (definition is not null)
+            ApplyJsonColours(definition);
 
         return definition;
+    }
+
+    // The built-in JSON colours are for light backgrounds, so the app sets its own for each theme.
+    private void ApplyJsonColours(IHighlightingDefinition definition)
+    {
+        foreach (var color in definition.NamedHighlightingColors)
+        {
+            var key = color.Name switch
+            {
+                "FieldName" => "JsonProperty",
+                "String" => "JsonString",
+                "Number" => "JsonNumber",
+                "Bool" or "Null" => "JsonKeyword",
+                _ => "JsonText",
+            };
+            color.Foreground = new SimpleHighlightingBrush(ThemeColors.Get(key, _theme));
+        }
     }
 }

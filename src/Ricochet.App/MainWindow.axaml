@@ -29,14 +29,14 @@
             <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding NewRequestCommand}"
                     AutomationProperties.Name="New request" ToolTip.Tip="New request (Ctrl+N)">
               <StackPanel Orientation="Horizontal" Spacing="7">
-                <PathIcon Data="{StaticResource IconPlus}" />
+                <PathIcon Data="{DynamicResource IconPlus}" />
                 <TextBlock Text="New" />
               </StackPanel>
             </Button>
             <Button Grid.Column="2" HorizontalAlignment="Stretch" Click="OnImportClick"
                     AutomationProperties.Name="Import" ToolTip.Tip="Import Postman collections, environments and globals">
               <StackPanel Orientation="Horizontal" Spacing="7">
-                <PathIcon Data="{StaticResource IconImport}" />
+                <PathIcon Data="{DynamicResource IconImport}" />
                 <TextBlock Text="Import" />
               </StackPanel>
             </Button>
@@ -44,12 +44,12 @@
           <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,16" Command="{Binding OpenEnvironmentsPageCommand}"
                   AutomationProperties.Name="Environments" ToolTip.Tip="Edit your environments and their variables">
             <StackPanel Orientation="Horizontal" Spacing="7">
-              <PathIcon Data="{StaticResource IconSliders}" />
+              <PathIcon Data="{DynamicResource IconSliders}" />
               <TextBlock Text="Environments" />
             </StackPanel>
           </Button>
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="4,12,0,0">
-            <PathIcon Grid.Column="0" Data="{StaticResource IconFolder}" Width="13" Height="13" Margin="0,0,8,0" Foreground="{StaticResource TextMuted}" />
+            <PathIcon Grid.Column="0" Data="{DynamicResource IconFolder}" Width="13" Height="13" Margin="0,0,8,0" Foreground="{DynamicResource TextMuted}" />
             <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                        Text="{Binding WorkspaceFolderName}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
             <Button Grid.Column="2" Classes="ghost" Content="Change…" Padding="10,4" FontSize="12" Click="OnChangeFolderClick"
@@ -125,7 +125,7 @@
               <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,10"
                       Command="{Binding NewEnvironmentCommand}" AutomationProperties.Name="Add environment">
                 <StackPanel Orientation="Horizontal" Spacing="7">
-                  <PathIcon Data="{StaticResource IconPlus}" />
+                  <PathIcon Data="{DynamicResource IconPlus}" />
                   <TextBlock Text="Add environment" />
                 </StackPanel>
               </Button>
@@ -171,23 +171,23 @@
             <Grid ColumnDefinitions="*,Auto,Auto">
               <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                 <TextBlock Text="Old plain-text copies of your data may still hold credentials. Your work has been moved, so you can delete them."
-                           Foreground="{StaticResource Warning}" FontSize="12" TextWrapping="Wrap" />
-                <SelectableTextBlock Text="{Binding PlainTextCopies}" Foreground="{StaticResource Warning}" Opacity="0.8"
-                                     FontSize="11.5" FontFamily="{StaticResource MonoFont}" TextWrapping="Wrap" />
+                           Foreground="{DynamicResource Warning}" FontSize="12" TextWrapping="Wrap" />
+                <SelectableTextBlock Text="{Binding PlainTextCopies}" Foreground="{DynamicResource Warning}" Opacity="0.8"
+                                     FontSize="11.5" FontFamily="{DynamicResource MonoFont}" TextWrapping="Wrap" />
               </StackPanel>
               <Button Grid.Column="1" Content="{Binding DeleteCopiesLabel}" Margin="10,0,0,0" FontSize="12" VerticalAlignment="Center"
                       Command="{Binding DeletePlainTextCopiesCommand}" AutomationProperties.Name="Delete plain-text copies" />
               <Button Grid.Column="2" Classes="mini" Margin="6,0,0,0"
-                      Command="{Binding DismissPlainTextCopiesCommand}" ToolTip.Tip="Hide until next launch"><PathIcon Data="{StaticResource IconClose}" /></Button>
+                      Command="{Binding DismissPlainTextCopiesCommand}" ToolTip.Tip="Hide until next launch"><PathIcon Data="{DynamicResource IconClose}" /></Button>
             </Grid>
           </Border>
           <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasStorageWarning}">
             <Grid ColumnDefinitions="*,Auto">
-              <SelectableTextBlock Grid.Column="0" Text="{Binding StorageWarning}" Foreground="{StaticResource Warning}"
+              <SelectableTextBlock Grid.Column="0" Text="{Binding StorageWarning}" Foreground="{DynamicResource Warning}"
                                    FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"
                                    AutomationProperties.Name="Storage warning" />
               <Button Grid.Column="1" Classes="mini" Margin="8,0,0,0"
-                      Command="{Binding DismissStorageWarningCommand}" ToolTip.Tip="Dismiss"><PathIcon Data="{StaticResource IconClose}" /></Button>
+                      Command="{Binding DismissStorageWarningCommand}" ToolTip.Tip="Dismiss"><PathIcon Data="{DynamicResource IconClose}" /></Button>
             </Grid>
           </Border>
           <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,16">
@@ -210,7 +210,7 @@
               <ComboBox Grid.Column="0" Width="108" ItemsSource="{Binding Methods}" SelectedItem="{Binding Method}"
                         Foreground="{Binding Method, Converter={x:Static views:MethodBrushConverter.Instance}}"
                         AutomationProperties.Name="Method" />
-              <Border Grid.Column="1" Background="{StaticResource StrongLine}" Margin="0,8" />
+              <Border Grid.Column="1" Background="{DynamicResource StrongLine}" Margin="0,8" />
               <TextBox Grid.Column="2" x:Name="UrlBox" Classes="mono bare" VerticalContentAlignment="Center" Padding="14,0"
                        Text="{Binding Url}" PlaceholderText="https://api.example.com/items"
                        AutomationProperties.Name="URL">
@@ -297,7 +297,7 @@
                           </ComboBox>
                           <TextBox Grid.Column="5" Classes="mono" Text="{Binding Expected}" PlaceholderText="Expected value"
                                    IsVisible="{Binding NeedsExpected}" AutomationProperties.Name="Test expected" />
-                          <Button Grid.Column="6" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{StaticResource IconClose}" /></Button>
+                          <Button Grid.Column="6" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{DynamicResource IconClose}" /></Button>
                         </Grid>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -332,7 +332,7 @@
                           <TextBlock Grid.Column="3" Classes="muted" Text="save as" VerticalAlignment="Center" Margin="14,0" />
                           <TextBox Grid.Column="4" Classes="mono" Text="{Binding Variable}" PlaceholderText="Variable name"
                                    AutomationProperties.Name="Capture variable" />
-                          <Button Grid.Column="5" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{StaticResource IconClose}" /></Button>
+                          <Button Grid.Column="5" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{DynamicResource IconClose}" /></Button>
                         </Grid>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -353,7 +353,7 @@
                                  IsVisible="{Binding !HasActiveEnvironment}" />
                       <Button Grid.Column="1" Margin="8,0,0,0" Command="{Binding NewEnvironmentCommand}" AutomationProperties.Name="New environment">
                         <StackPanel Orientation="Horizontal" Spacing="7">
-                          <PathIcon Data="{StaticResource IconPlus}" />
+                          <PathIcon Data="{DynamicResource IconPlus}" />
                           <TextBlock Text="New" />
                         </StackPanel>
                       </Button>
@@ -420,13 +420,13 @@
                 <Button Grid.Column="2" Classes="ghost" Content="Copy" Padding="10,3" Margin="4,0,0,0" FontSize="12"
                         Click="OnCopyResponseClick" AutomationProperties.Name="Copy response" ToolTip.Tip="Copy the response body" />
               </Grid>
-              <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Notice}" Foreground="{StaticResource Warning}"
+              <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Notice}" Foreground="{DynamicResource Warning}"
                                    FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" IsVisible="{Binding HasNotice}" />
               <TabControl Margin="0,10,0,0">
                 <TabItem Header="Body">
                   <ae:TextEditor x:Name="ResponseEditor" IsReadOnly="True" ShowLineNumbers="True"
-                                 FontFamily="{StaticResource MonoFont}" FontSize="12.5" Margin="0,12,0,0"
-                                 Foreground="{StaticResource TextPrimary}" LineNumbersForeground="#565C68"
+                                 FontFamily="{DynamicResource MonoFont}" FontSize="12.5" Margin="0,12,0,0"
+                                 Foreground="{DynamicResource TextPrimary}" LineNumbersForeground="{DynamicResource LineNumbers}"
                                  WordWrap="{Binding WrapResponse}"
                                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
                 </TabItem>
@@ -464,14 +464,14 @@
     </Grid>
 
     <!-- Confirm copying the workspace into a folder -->
-    <Border Background="#B3050608" IsVisible="{Binding HasPendingCopy}">
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding HasPendingCopy}">
       <Border Classes="dialog" Width="520">
         <StackPanel Spacing="12">
           <TextBlock Classes="brand" Text="Copy workspace here?" />
           <TextBlock TextWrapping="Wrap" Text="{Binding PendingCopyMessage}" />
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
             <Button Content="Cancel" Command="{Binding CancelCopyCommand}" AutomationProperties.Name="Cancel copy" />
-            <Button Content="Copy workspace" Background="{StaticResource Accent}" Foreground="#1A0F0A" FontWeight="SemiBold"
+            <Button Content="Copy workspace" Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="SemiBold"
                     Command="{Binding ConfirmCopyCommand}" AutomationProperties.Name="Copy workspace" />
           </StackPanel>
         </StackPanel>
@@ -479,7 +479,7 @@
     </Border>
 
     <!-- Import report -->
-    <Border Background="#B3050608" IsVisible="{Binding HasImportReport}">
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding HasImportReport}">
       <Border Classes="dialog" Width="640" MaxHeight="560">
         <DockPanel>
           <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Import results" Margin="0,0,0,10" />

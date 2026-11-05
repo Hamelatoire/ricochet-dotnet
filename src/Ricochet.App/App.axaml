@@ -1,9 +1,10 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:chrome="using:Avalonia.Controls.Chrome"
-             x:Class="Ricochet.App.App"
-             RequestedThemeVariant="Dark">
+             x:Class="Ricochet.App.App">
+  <!-- No RequestedThemeVariant: the app follows the operating system's light or dark setting (ADR 0013). -->
   <Application.Resources>
+    <ResourceDictionary>
     <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace</FontFamily>
 
     <!-- Icons, drawn on a 24 by 24 grid -->
@@ -13,65 +14,154 @@
     <StreamGeometry x:Key="IconSliders">M4 6h9V4h2v2h5v2h-5v2h-2V8H4zM4 16h5v-2h2v2h9v2h-9v2H9v-2H4z</StreamGeometry>
     <StreamGeometry x:Key="IconFolder">M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z</StreamGeometry>
 
-    <!-- Palette: panels float on a darker background, and borders stay barely visible -->
-    <SolidColorBrush x:Key="AppBackground" Color="#0D0E12" />
-    <SolidColorBrush x:Key="SurfaceBackground" Color="#15171C" />
-    <SolidColorBrush x:Key="RaisedBackground" Color="#23262E" />
-    <SolidColorBrush x:Key="HoverBackground" Color="#1D2026" />
-    <SolidColorBrush x:Key="Hairline" Color="#22252C" />
-    <SolidColorBrush x:Key="StrongLine" Color="#30343D" />
-    <SolidColorBrush x:Key="TextPrimary" Color="#ECEEF2" />
-    <SolidColorBrush x:Key="TextMuted" Color="#8B909B" />
-    <SolidColorBrush x:Key="Accent" Color="#FF7A50" />
-    <SolidColorBrush x:Key="AccentHover" Color="#FF9070" />
-    <SolidColorBrush x:Key="Success" Color="#4ADE80" />
-    <SolidColorBrush x:Key="SuccessBackground" Color="#12291D" />
-    <SolidColorBrush x:Key="Failure" Color="#F87171" />
-    <SolidColorBrush x:Key="FailureBackground" Color="#321A1D" />
-    <SolidColorBrush x:Key="Warning" Color="#FBBF24" />
+    <!-- Every colour is defined once per theme, so views only refer to names (ADR 0013) -->
+    <ResourceDictionary.ThemeDictionaries>
+      <!-- Dark: panels float on a darker background, and borders stay barely visible -->
+      <ResourceDictionary x:Key="Dark">
+        <SolidColorBrush x:Key="AppBackground" Color="#0D0E12" />
+        <SolidColorBrush x:Key="SurfaceBackground" Color="#15171C" />
+        <SolidColorBrush x:Key="RaisedBackground" Color="#23262E" />
+        <SolidColorBrush x:Key="HoverBackground" Color="#1D2026" />
+        <SolidColorBrush x:Key="Hairline" Color="#22252C" />
+        <SolidColorBrush x:Key="StrongLine" Color="#30343D" />
+        <SolidColorBrush x:Key="TextPrimary" Color="#ECEEF2" />
+        <SolidColorBrush x:Key="TextMuted" Color="#8B909B" />
+        <SolidColorBrush x:Key="Accent" Color="#FF7A50" />
+        <SolidColorBrush x:Key="AccentHover" Color="#FF9070" />
+        <SolidColorBrush x:Key="OnAccent" Color="#1A0F0A" />
+        <SolidColorBrush x:Key="Success" Color="#4ADE80" />
+        <SolidColorBrush x:Key="SuccessBackground" Color="#12291D" />
+        <SolidColorBrush x:Key="Failure" Color="#F87171" />
+        <SolidColorBrush x:Key="FailureBackground" Color="#321A1D" />
+        <SolidColorBrush x:Key="Warning" Color="#FBBF24" />
+        <SolidColorBrush x:Key="WarningBackground" Color="#2A2210" />
+        <SolidColorBrush x:Key="WarningBorder" Color="#4A3C15" />
+        <SolidColorBrush x:Key="SecretOnBackground" Color="#33211A" />
+        <SolidColorBrush x:Key="UrlBarBackground" Color="#1D2026" />
+        <SolidColorBrush x:Key="Scrim" Color="#B3050608" />
+        <SolidColorBrush x:Key="LineNumbers" Color="#565C68" />
+        <SolidColorBrush x:Key="JsonProperty" Color="#7DD3FC" />
+        <SolidColorBrush x:Key="JsonString" Color="#86EFAC" />
+        <SolidColorBrush x:Key="JsonNumber" Color="#FDBA74" />
+        <SolidColorBrush x:Key="JsonKeyword" Color="#C4B5FD" />
+        <SolidColorBrush x:Key="JsonText" Color="#D4D4D8" />
+        <SolidColorBrush x:Key="MethodGet" Color="#4ADE80" />
+        <SolidColorBrush x:Key="MethodPost" Color="#FBBF24" />
+        <SolidColorBrush x:Key="MethodPut" Color="#60A5FA" />
+        <SolidColorBrush x:Key="MethodPatch" Color="#C084FC" />
+        <SolidColorBrush x:Key="MethodDelete" Color="#F87171" />
+        <SolidColorBrush x:Key="MethodOther" Color="#8A909C" />
 
-    <!-- Fluent theme overrides: filled inputs with no border until focused -->
+        <!-- Fluent theme overrides: filled inputs with no border until focused -->
+        <SolidColorBrush x:Key="TextControlBackground" Color="#1D2026" />
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#23262E" />
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#1D2026" />
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#FF7A50" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#6F7480" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#6F7480" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#6F7480" />
+        <SolidColorBrush x:Key="ComboBoxBackground" Color="#1D2026" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#23262E" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBackground" Color="#1D2026" />
+        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#2A2E37" />
+        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#181A20" />
+        <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#23262E" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#2A2E37" />
+        <SolidColorBrush x:Key="TreeViewItemBackgroundSelected" Color="#23262E" />
+        <SolidColorBrush x:Key="TreeViewItemBackgroundSelectedPointerOver" Color="#2A2E37" />
+        <SolidColorBrush x:Key="TreeViewItemBackgroundPointerOver" Color="#1D2026" />
+      </ResourceDictionary>
+
+      <!-- Light: white panels on a cool grey background, with darker text and the same accent family -->
+      <ResourceDictionary x:Key="Light">
+        <SolidColorBrush x:Key="AppBackground" Color="#F3F4F7" />
+        <SolidColorBrush x:Key="SurfaceBackground" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="RaisedBackground" Color="#E8EAF0" />
+        <SolidColorBrush x:Key="HoverBackground" Color="#EDEFF3" />
+        <SolidColorBrush x:Key="Hairline" Color="#E3E6EC" />
+        <SolidColorBrush x:Key="StrongLine" Color="#CDD2DB" />
+        <SolidColorBrush x:Key="TextPrimary" Color="#15171C" />
+        <SolidColorBrush x:Key="TextMuted" Color="#5D6470" />
+        <SolidColorBrush x:Key="Accent" Color="#E85D31" />
+        <SolidColorBrush x:Key="AccentHover" Color="#F07245" />
+        <SolidColorBrush x:Key="OnAccent" Color="#1A0F0A" />
+        <SolidColorBrush x:Key="Success" Color="#15803D" />
+        <SolidColorBrush x:Key="SuccessBackground" Color="#DDF6E6" />
+        <SolidColorBrush x:Key="Failure" Color="#B42318" />
+        <SolidColorBrush x:Key="FailureBackground" Color="#FDE4E1" />
+        <SolidColorBrush x:Key="Warning" Color="#B45309" />
+        <SolidColorBrush x:Key="WarningBackground" Color="#FEF3DC" />
+        <SolidColorBrush x:Key="WarningBorder" Color="#F5D58A" />
+        <SolidColorBrush x:Key="SecretOnBackground" Color="#FBE3D9" />
+        <SolidColorBrush x:Key="UrlBarBackground" Color="#EEF0F4" />
+        <SolidColorBrush x:Key="Scrim" Color="#8C15171C" />
+        <SolidColorBrush x:Key="LineNumbers" Color="#A0A6B1" />
+        <SolidColorBrush x:Key="JsonProperty" Color="#0369A1" />
+        <SolidColorBrush x:Key="JsonString" Color="#15803D" />
+        <SolidColorBrush x:Key="JsonNumber" Color="#C2410C" />
+        <SolidColorBrush x:Key="JsonKeyword" Color="#7C3AED" />
+        <SolidColorBrush x:Key="JsonText" Color="#27272A" />
+        <SolidColorBrush x:Key="MethodGet" Color="#15803D" />
+        <SolidColorBrush x:Key="MethodPost" Color="#B45309" />
+        <SolidColorBrush x:Key="MethodPut" Color="#1D4ED8" />
+        <SolidColorBrush x:Key="MethodPatch" Color="#7E22CE" />
+        <SolidColorBrush x:Key="MethodDelete" Color="#B91C1C" />
+        <SolidColorBrush x:Key="MethodOther" Color="#5D6470" />
+
+        <SolidColorBrush x:Key="TextControlBackground" Color="#EEF0F4" />
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#E3E6EC" />
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#EEF0F4" />
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#E85D31" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#8A919C" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#8A919C" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#8A919C" />
+        <SolidColorBrush x:Key="ComboBoxBackground" Color="#EEF0F4" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#E3E6EC" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBackground" Color="#EEF0F4" />
+        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#E2E5EC" />
+        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#D8DCE4" />
+        <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#E8EAF0" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#DCDFE7" />
+        <SolidColorBrush x:Key="TreeViewItemBackgroundSelected" Color="#E8EAF0" />
+        <SolidColorBrush x:Key="TreeViewItemBackgroundSelectedPointerOver" Color="#DCDFE7" />
+        <SolidColorBrush x:Key="TreeViewItemBackgroundPointerOver" Color="#EEF0F4" />
+      </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <!-- Not colours, so the same in both themes -->
     <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
     <CornerRadius x:Key="OverlayCornerRadius">10</CornerRadius>
-    <SolidColorBrush x:Key="TextControlBackground" Color="#1D2026" />
-    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#23262E" />
-    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#1D2026" />
-    <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
-    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
-    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#FF7A50" />
     <Thickness x:Key="TextControlBorderThemeThicknessFocused">1</Thickness>
-    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#6F7480" />
-    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#6F7480" />
-    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#6F7480" />
-    <SolidColorBrush x:Key="ComboBoxBackground" Color="#1D2026" />
-    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#23262E" />
-    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="Transparent" />
-    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="Transparent" />
-    <SolidColorBrush x:Key="ButtonBackground" Color="#1D2026" />
-    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#2A2E37" />
-    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#181A20" />
-    <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent" />
-    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
-    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
-    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#23262E" />
-    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#2A2E37" />
-    <SolidColorBrush x:Key="TreeViewItemBackgroundSelected" Color="#23262E" />
-    <SolidColorBrush x:Key="TreeViewItemBackgroundSelectedPointerOver" Color="#2A2E37" />
-    <SolidColorBrush x:Key="TreeViewItemBackgroundPointerOver" Color="#1D2026" />
+    </ResourceDictionary>
   </Application.Resources>
 
   <Application.Styles>
     <FluentTheme>
       <FluentTheme.Palettes>
         <ColorPaletteResources x:Key="Dark" Accent="#FF7A50" />
+        <ColorPaletteResources x:Key="Light" Accent="#E85D31" />
       </FluentTheme.Palettes>
     </FluentTheme>
     <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
 
     <Style Selector="Window">
       <Setter Property="FontSize" Value="13" />
-      <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
-      <Setter Property="Background" Value="{StaticResource AppBackground}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource AppBackground}" />
     </Style>
 
     <!-- The window's title bar: three buttons are enough -->
@@ -82,14 +172,14 @@
 
     <!-- Panels -->
     <Style Selector="Border.card">
-      <Setter Property="Background" Value="{StaticResource SurfaceBackground}" />
-      <Setter Property="BorderBrush" Value="{StaticResource Hairline}" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hairline}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="14" />
     </Style>
     <Style Selector="Border.dialog">
-      <Setter Property="Background" Value="{StaticResource SurfaceBackground}" />
-      <Setter Property="BorderBrush" Value="{StaticResource StrongLine}" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource StrongLine}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="16" />
       <Setter Property="Padding" Value="26,22" />
@@ -100,14 +190,14 @@
 
     <!-- Text -->
     <Style Selector="TextBlock.muted">
-      <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
     </Style>
     <Style Selector="TextBlock.brand">
       <Setter Property="FontSize" Value="16" />
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="TextBlock.method">
-      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="FontSize" Value="10.5" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -117,28 +207,28 @@
     <Style Selector="Border.badge">
       <Setter Property="CornerRadius" Value="999" />
       <Setter Property="Padding" Value="11,3" />
-      <Setter Property="Background" Value="{StaticResource RaisedBackground}" />
+      <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
     </Style>
     <Style Selector="Border.badge.success">
-      <Setter Property="Background" Value="{StaticResource SuccessBackground}" />
+      <Setter Property="Background" Value="{DynamicResource SuccessBackground}" />
     </Style>
     <Style Selector="Border.badge.failure">
-      <Setter Property="Background" Value="{StaticResource FailureBackground}" />
+      <Setter Property="Background" Value="{DynamicResource FailureBackground}" />
     </Style>
     <Style Selector="Border.badge TextBlock">
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="Border.badge.success TextBlock">
-      <Setter Property="Foreground" Value="{StaticResource Success}" />
+      <Setter Property="Foreground" Value="{DynamicResource Success}" />
     </Style>
     <Style Selector="Border.badge.failure TextBlock">
-      <Setter Property="Foreground" Value="{StaticResource Failure}" />
+      <Setter Property="Foreground" Value="{DynamicResource Failure}" />
     </Style>
 
     <!-- Inputs -->
     <Style Selector="TextBox.mono">
-      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
       <Setter Property="FontSize" Value="12.5" />
     </Style>
     <Style Selector="TextBox.bare">
@@ -160,18 +250,18 @@
 
     <!-- URL bar: one filled control, with the send button sitting inside it -->
     <Style Selector="Border.urlbar">
-      <Setter Property="Background" Value="#1D2026" />
+      <Setter Property="Background" Value="{DynamicResource UrlBarBackground}" />
       <Setter Property="BorderBrush" Value="Transparent" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
       <Setter Property="Padding" Value="5" />
     </Style>
     <Style Selector="Border.urlbar:focus-within">
-      <Setter Property="BorderBrush" Value="{StaticResource Accent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
     </Style>
     <Style Selector="Border.urlbar ComboBox">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="VerticalAlignment" Value="Stretch" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -180,7 +270,7 @@
     <!-- Secret toggle: accent colour when on, so protected rows are easy to spot -->
     <Style Selector="ToggleButton.secret">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
       <Setter Property="Padding" Value="10,4" />
       <Setter Property="FontSize" Value="11" />
       <Setter Property="CornerRadius" Value="8" />
@@ -188,25 +278,25 @@
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="ToggleButton.secret:checked /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#33211A" />
-      <Setter Property="Foreground" Value="{StaticResource Accent}" />
+      <Setter Property="Background" Value="{DynamicResource SecretOnBackground}" />
+      <Setter Property="Foreground" Value="{DynamicResource Accent}" />
     </Style>
     <Style Selector="ToggleButton.small">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
       <Setter Property="Padding" Value="10,3" />
       <Setter Property="FontSize" Value="12" />
       <Setter Property="CornerRadius" Value="8" />
     </Style>
     <Style Selector="ToggleButton.small:checked /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource RaisedBackground}" />
-      <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
     </Style>
 
     <!-- Warning bar -->
     <Style Selector="Border.warningbar">
-      <Setter Property="Background" Value="#2A2210" />
-      <Setter Property="BorderBrush" Value="#4A3C15" />
+      <Setter Property="Background" Value="{DynamicResource WarningBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource WarningBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="10" />
       <Setter Property="Padding" Value="14,10" />
@@ -219,23 +309,23 @@
       <Setter Property="HorizontalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="Button.primary">
-      <Setter Property="Background" Value="{StaticResource Accent}" />
-      <Setter Property="Foreground" Value="#1A0F0A" />
+      <Setter Property="Background" Value="{DynamicResource Accent}" />
+      <Setter Property="Foreground" Value="{DynamicResource OnAccent}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="VerticalAlignment" Value="Stretch" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource AccentHover}" />
-      <Setter Property="Foreground" Value="#1A0F0A" />
+      <Setter Property="Background" Value="{DynamicResource AccentHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource OnAccent}" />
     </Style>
     <Style Selector="Button.ghost">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
     </Style>
     <Style Selector="Button.mini">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
       <Setter Property="Padding" Value="7" />
       <Setter Property="FontSize" Value="10.5" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -296,13 +386,13 @@
       <Setter Property="IsVisible" Value="False" />
     </Style>
     <Style Selector="TabItem:pointerover /template/ Border#PART_LayoutRoot">
-      <Setter Property="Background" Value="{StaticResource HoverBackground}" />
+      <Setter Property="Background" Value="{DynamicResource HoverBackground}" />
     </Style>
     <Style Selector="TabItem:selected /template/ Border#PART_LayoutRoot">
-      <Setter Property="Background" Value="{StaticResource RaisedBackground}" />
+      <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
     </Style>
     <Style Selector="TabItem:selected:pointerover /template/ Border#PART_LayoutRoot">
-      <Setter Property="Background" Value="{StaticResource RaisedBackground}" />
+      <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
     </Style>
     <Style Selector="TabControl">
       <Setter Property="Padding" Value="0" />
