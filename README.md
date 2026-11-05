@@ -9,6 +9,14 @@ A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, 
 
 Working today: sending requests with headers, bodies and auth (bearer, basic, API key), collections with folders, environments, scoped `{{variables}}`, secrets in OS secure storage, tests with a CI command, history, and formatted JSON responses.
 
+## Themes
+
+Ricochet follows your system's light or dark setting. Choose **System**, **Light** or **Dark** in the Theme box at the bottom of the sidebar. See [ADR 0013](docs/adr/0013-light-and-dark-theme.md).
+
+| Light | Dark |
+| --- | --- |
+| ![Ricochet in the light theme](docs/screenshots/theme-light.png) | ![Ricochet in the dark theme](docs/screenshots/theme-dark.png) |
+
 ## Import from Postman
 
 Export your collections (v2.0 or v2.1), environments and globals from Postman as JSON, then choose **Import** and select the files. The results list everything that could not be carried over. Scripts are kept but not run, and OAuth 2 and file uploads are not imported yet. See [ADR 0002](docs/adr/0002-import-postman-exports.md) for details.
