@@ -12,6 +12,7 @@ namespace Ricochet.Core;
 [JsonSerializable(typeof(PersonalState))]
 [JsonSerializable(typeof(List<HistoryEntry>))]
 [JsonSerializable(typeof(List<KeyValue>))]
+[JsonSerializable(typeof(BulkProgress))]
 [JsonSerializable(typeof(WorkspaceMarkerFile))]
 [JsonSerializable(typeof(CollectionFile))]
 [JsonSerializable(typeof(FolderFile))]
@@ -29,6 +30,18 @@ public sealed record PersonalState
 
     /// <summary>"light" or "dark"; null or missing follows the operating system.</summary>
     public string? Theme { get; set; }
+
+    /// <summary>Where each bulk run stopped, so it can resume after the last id it processed.</summary>
+    public IReadOnlyList<BulkProgress> Bulk { get; set; } = [];
+}
+
+/// <summary>The ids pasted for a Request's bulk run, and the last one that was processed.</summary>
+public sealed record BulkProgress
+{
+    public string RequestId { get; set; } = "";
+    public string Ids { get; set; } = "";
+    public string? LastId { get; set; }
+    public int Processed { get; set; }
 }
 
 public sealed record WorkspaceLoadResult(Workspace Workspace, IReadOnlyList<WorkspaceIssue> Issues, bool NeedsSave);
@@ -82,6 +95,29 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     {
         lock (_gate)
             SaveState(_state with { Theme = theme });
+    }
+
+    /// <summary>The bulk run progress saved for each Request.</summary>
+    public IReadOnlyList<BulkProgress> BulkProgresses
+    {
+        get
+        {
+            lock (_gate)
+                return _state.Bulk;
+        }
+    }
+
+    public void SetBulkProgress(BulkProgress progress)
+    {
+        lock (_gate)
+            SaveState(_state with { Bulk = _state.Bulk.Where(p => p.RequestId != progress.RequestId).Append(progress).ToList() });
+    }
+
+    /// <summary>Adds a line to the bulk run log, which is kept on this machine only.</summary>
+    public void AppendBulkLog(string line)
+    {
+        lock (_gate)
+            File.AppendAllText(Path.Combine(personalDirectory, "bulk-log.txt"), $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {line}{Environment.NewLine}");
     }
 
     /// <summary>Identifies the Workspace, so that each one keeps its own Secrets on this machine.</summary>

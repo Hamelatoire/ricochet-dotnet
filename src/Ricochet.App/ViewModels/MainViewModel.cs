@@ -461,6 +461,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         EditingEnvironment = HasActiveEnvironment ? ActiveEnvironment : EditingEnvironment ?? EditableEnvironments.FirstOrDefault();
         IsVariablesPageOpen = false;
+        IsBulkPageOpen = false;
         IsEnvironmentsPageOpen = true;
     }
 
@@ -469,7 +470,7 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _isVariablesPageOpen;
 
     /// <summary>True while either page covers the request, so the request is hidden behind it.</summary>
-    public bool IsSidePageOpen => IsEnvironmentsPageOpen || IsVariablesPageOpen;
+    public bool IsSidePageOpen => IsEnvironmentsPageOpen || IsVariablesPageOpen || IsBulkPageOpen;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEditingVariablesCollection))]
@@ -481,7 +482,7 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnIsEnvironmentsPageOpenChanged(bool value)
     {
         if (!value)
-            IsVariablesPageOpen = false;
+            IsVariablesPageOpen = IsBulkPageOpen = false;
     }
 
     /// <summary>The environment whose values the Variables page shows and edits.</summary>
@@ -537,6 +538,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void ShowVariablesPage(TreeNodeViewModel? collection)
     {
         IsEnvironmentsPageOpen = false;
+        IsBulkPageOpen = false;
         EditingVariablesCollection = collection ?? CurrentCollection ?? EditingVariablesCollection ?? Collections.FirstOrDefault();
         VariablesEnvironment = HasActiveEnvironment ? ActiveEnvironment
             : EditableEnvironments.Contains(VariablesEnvironment!) ? VariablesEnvironment
@@ -617,7 +619,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         // Clicking a request brings it up over the Variables page, even when it is already the current one.
         if (value?.Request is not null)
-            IsVariablesPageOpen = false;
+            IsVariablesPageOpen = IsBulkPageOpen = false;
 
         // Matching the current node means it was just saved, so the editor and response are already right.
         if (value?.Request is not { } request || value == _currentNode)

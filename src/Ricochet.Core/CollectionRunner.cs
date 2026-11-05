@@ -195,7 +195,7 @@ public sealed class CollectionRunner(RequestSender sender)
         }
     }
 
-    private static List<string> SecretsToMask(IEnumerable<KeyValue> variables, IEnumerable<KeyValue> overrides, IEnumerable<KeyValue> captured, ApiRequest resolved)
+    internal static List<string> SecretsToMask(IEnumerable<KeyValue> variables, IEnumerable<KeyValue> overrides, IEnumerable<KeyValue> captured, ApiRequest resolved)
     {
         // Captures are often tokens, and nothing marks which ones, so all of them are masked.
         var values = variables.Where(v => v.IsSecret).Concat(overrides).Concat(captured).Select(v => v.Value).ToList();
@@ -206,7 +206,7 @@ public sealed class CollectionRunner(RequestSender sender)
         return values.Where(v => v.Length >= MinMaskedLength).Distinct().OrderByDescending(v => v.Length).ToList();
     }
 
-    private static string MaskIn(string text, List<string> secrets) =>
+    internal static string MaskIn(string text, List<string> secrets) =>
         secrets.Aggregate(text, (current, secret) => current.Replace(secret, Mask, StringComparison.Ordinal));
 }
 
