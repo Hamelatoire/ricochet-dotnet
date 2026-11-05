@@ -490,6 +490,21 @@ public sealed class WorkspaceStoreTests : IDisposable
     }
 
     [Fact]
+    public void Theme_choice_is_kept_across_restarts_and_saves()
+    {
+        var store = Loaded();
+        Assert.Null(store.Theme);
+
+        store.SetTheme("light");
+        store.Save(Sample());
+
+        var reopened = new WorkspaceStore(_dir);
+        reopened.Load();
+        Assert.Equal("light", reopened.Theme);
+        Assert.Equal("e1aaaaaaaa", new WorkspaceStore(_dir).Load().Workspace.ActiveEnvironmentId);
+    }
+
+    [Fact]
     public void Original_single_file_is_migrated_then_kept_as_a_backup()
     {
         var legacy = Path.Combine(_dir, "workspace.json");

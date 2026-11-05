@@ -26,6 +26,9 @@ public sealed record PersonalState
 {
     public string? WorkspaceFolder { get; set; }
     public string? ActiveEnvironmentId { get; set; }
+
+    /// <summary>"light" or "dark"; null or missing follows the operating system.</summary>
+    public string? Theme { get; set; }
 }
 
 public sealed record WorkspaceLoadResult(Workspace Workspace, IReadOnlyList<WorkspaceIssue> Issues, bool NeedsSave);
@@ -68,8 +71,18 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     private readonly Lock _gate = new();
     private WorkspaceFolder? _folder;
     private bool _legacyFilePending;
+    private PersonalState _state = new();
 
     public string FolderPath => Folder.Root;
+
+    /// <summary>"light" or "dark", or null to follow the operating system. Personal, so never shared.</summary>
+    public string? Theme => _state.Theme;
+
+    public void SetTheme(string? theme)
+    {
+        lock (_gate)
+            SaveState(_state with { Theme = theme });
+    }
 
     /// <summary>Identifies the Workspace, so that each one keeps its own Secrets on this machine.</summary>
     public string WorkspaceId => Folder.Id;
@@ -171,6 +184,7 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
             var issues = new List<WorkspaceIssue>();
             var stateExists = File.Exists(Path.Combine(personalDirectory, StateFileName));
             var state = ReadPersonal(StateFileName, WorkspaceJsonContext.Default.PersonalState, issues) ?? new PersonalState();
+            _state = state;
             var history = ReadPersonal(HistoryFileName, WorkspaceJsonContext.Default.ListHistoryEntry, issues) ?? [];
 
             var folderPath = state.WorkspaceFolder ?? DefaultFolderPath();
@@ -216,7 +230,7 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
             }
 
             _folder = folder;
-            SaveState(new PersonalState { WorkspaceFolder = RememberedFolder(), ActiveEnvironmentId = current.ActiveEnvironmentId });
+            SaveState(_state with { WorkspaceFolder = RememberedFolder(), ActiveEnvironmentId = current.ActiveEnvironmentId });
 
             var workspace = shared with { ActiveEnvironmentId = current.ActiveEnvironmentId, History = current.History };
             return (new WorkspaceLoadResult(workspace, issues, NeedsSave: false), copy);
@@ -229,7 +243,7 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
         {
             Folder.Save(workspace);
             WritePersonal(HistoryFileName, workspace.History.ToList(), WorkspaceJsonContext.Default.ListHistoryEntry);
-            SaveState(new PersonalState { WorkspaceFolder = RememberedFolder(), ActiveEnvironmentId = workspace.ActiveEnvironmentId });
+            SaveState(_state with { WorkspaceFolder = RememberedFolder(), ActiveEnvironmentId = workspace.ActiveEnvironmentId });
 
             if (_legacyFilePending)
             {
@@ -260,7 +274,11 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     private string? RememberedFolder() =>
         Path.GetFullPath(Folder.Root).Equals(Path.GetFullPath(DefaultFolderPath()), StringComparison.OrdinalIgnoreCase) ? null : Folder.Root;
 
-    private void SaveState(PersonalState state) => WritePersonal(StateFileName, state, WorkspaceJsonContext.Default.PersonalState);
+    private void SaveState(PersonalState state)
+    {
+        _state = state;
+        WritePersonal(StateFileName, state, WorkspaceJsonContext.Default.PersonalState);
+    }
 
     private T? ReadPersonal<T>(string fileName, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type, List<WorkspaceIssue> issues) where T : class
     {

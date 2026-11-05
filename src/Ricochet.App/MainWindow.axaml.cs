@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
@@ -94,6 +95,12 @@ public partial class MainWindow : Window
     // AvaloniaEdit's text is not a bindable property, so the response is pushed in from here.
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.ThemeChoice) && _viewModel is not null && Application.Current is { } app)
+        {
+            app.RequestedThemeVariant = ThemeSettings.Variant(ThemeSettings.StoredValue(_viewModel.ThemeChoice));
+            return;
+        }
+
         if (e.PropertyName != nameof(MainViewModel.ResponseBody) || _viewModel is null)
             return;
 

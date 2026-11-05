@@ -56,6 +56,11 @@
                     AutomationProperties.Name="Change workspace folder"
                     ToolTip.Tip="Open a workspace folder, or copy this workspace into a new one, such as a git repository" />
           </Grid>
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,12,0,0">
+            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Theme" />
+            <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding ThemeChoice}"
+                      AutomationProperties.Name="Theme" ToolTip.Tip="Follow the system, or always use light or dark" />
+          </Grid>
           <TabControl>
             <TabItem Header="Collections">
               <Panel>
