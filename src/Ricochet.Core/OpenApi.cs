@@ -88,6 +88,7 @@ public static class OpenApiImporter
         var schemes = reader.Get(reader.Get(root, "components"), "securitySchemes");
         var globalSecurity = root.TryGetProperty("security", out var global) ? global : default;
 
+        reader.TagGroups = TagGroups(reader);
         var operations = ReadOperations(reader, schemes, globalSecurity);
 
         var collection = existing ?? new Collection { Name = Title(root, specUrl) };
@@ -141,26 +142,11 @@ public static class OpenApiImporter
 
         var items = Walk(collection.Items).ToList();
 
-        // New operations go to a Folder named after their first tag, created when needed.
+        // New operations go into the folders they belong to, created when needed.
         foreach (var operation in operations.Where(o => !matched.Contains(o.Key)))
         {
-            var item = new CollectionItem { Name = operation.Name, Request = operation.Request };
-            if (operation.Tag is null)
-            {
-                items.Add(item);
-                added.Add(operation.Name);
-                continue;
-            }
-
-            var folder = items.FindIndex(i => i.Request is null && i.Name == operation.Tag);
-            if (folder < 0)
-            {
-                items.Add(new CollectionItem { Name = operation.Tag });
-                folder = items.Count - 1;
-            }
-
-            items[folder] = items[folder] with { Children = [.. items[folder].Children, item] };
-            added.Add($"{operation.Tag} / {operation.Name}");
+            Place(items, operation.Folders, new CollectionItem { Name = operation.Name, Request = operation.Request });
+            added.Add(string.Join(" / ", operation.Folders.Append(operation.Name)));
         }
 
         var result = collection with
@@ -178,6 +164,71 @@ public static class OpenApiImporter
             notes.Add($"{count} operations have query or header parameters, which are not added yet. Add them by hand.");
 
         return new OpenApiResult(result, new OpenApiSummary(existing is null, added, changed, removed, notes));
+    }
+
+    /// <summary>Puts an item inside the chain of folders it belongs to, creating folders as needed.</summary>
+    private static void Place(List<CollectionItem> level, IReadOnlyList<string> folders, CollectionItem item)
+    {
+        if (folders.Count == 0)
+        {
+            level.Add(item);
+            return;
+        }
+
+        var index = level.FindIndex(i => i.Request is null && i.Name == folders[0]);
+        if (index < 0)
+        {
+            level.Add(new CollectionItem { Name = folders[0] });
+            index = level.Count - 1;
+        }
+
+        var folder = level[index];
+        var children = folder.Children.ToList();
+        Place(children, folders.Skip(1).ToList(), item);
+        level[index] = folder with { Children = children };
+    }
+
+    /// <summary>Reads x-tagGroups, used by some documentation tools to group tags, and maps each tag to its group.</summary>
+    private static Dictionary<string, string> TagGroups(Reader reader)
+    {
+        var groups = new Dictionary<string, string>();
+        var list = reader.Get(reader.Root, "x-tagGroups");
+        if (list.ValueKind != JsonValueKind.Array)
+            return groups;
+
+        foreach (var group in list.EnumerateArray())
+        {
+            var name = Text(group, "name");
+            var tags = reader.Get(group, "tags");
+            if (name.Length == 0 || tags.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var tag in tags.EnumerateArray())
+            {
+                if (tag.ValueKind == JsonValueKind.String)
+                    groups.TryAdd(tag.GetString()!, name);
+            }
+        }
+
+        return groups;
+    }
+
+    /// <summary>The first real word of a path, such as "account" for /v1/account. Null when the path has none.</summary>
+    private static string? ResourceName(string path)
+    {
+        foreach (var part in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part.StartsWith('{'))
+                return null;
+
+            var isVersion = part.Length > 1 && part[0] == 'v' && part.Skip(1).All(char.IsDigit);
+            if (part == "api" || isVersion)
+                continue;
+
+            return part;
+        }
+
+        return null;
     }
 
     private static List<Operation> ReadOperations(Reader reader, JsonElement schemes, JsonElement globalSecurity)
@@ -222,6 +273,14 @@ public static class OpenApiImporter
             ? tags[0].GetString()
             : null;
 
+        // Folders, outermost first: the tag group if there is one, then the tag. Without tags, the path's resource.
+        var folders = new List<string>();
+        if (tag is not null && reader.TagGroups.TryGetValue(tag, out var group))
+            folders.Add(group);
+        var leaf = tag ?? ResourceName(path);
+        if (leaf is not null)
+            folders.Add(leaf);
+
         if (HasQueryOrHeaderParameters(reader, source))
             reader.OperationsWithUnaddedParameters++;
 
@@ -240,7 +299,7 @@ public static class OpenApiImporter
             SpecKey = key,
         };
 
-        return new Operation(key, name, tag, request, variables);
+        return new Operation(key, name, folders, request, variables);
     }
 
     private static bool HasQueryOrHeaderParameters(Reader reader, JsonElement source)
@@ -540,7 +599,7 @@ public static class OpenApiImporter
     private static JsonElement Child(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
 
-    private sealed record Operation(string Key, string Name, string? Tag, ApiRequest Request, List<KeyValue> AuthVariables);
+    private sealed record Operation(string Key, string Name, IReadOnlyList<string> Folders, ApiRequest Request, List<KeyValue> AuthVariables);
 
     /// <summary>Follows references inside the same document, and records the rest as not followed.</summary>
     private sealed class Reader(JsonElement root)
@@ -548,6 +607,7 @@ public static class OpenApiImporter
         public JsonElement Root { get; } = root;
         public List<string> Notes { get; } = [];
         public int OperationsWithUnaddedParameters { get; set; }
+        public Dictionary<string, string> TagGroups { get; set; } = new();
 
         public JsonElement Get(JsonElement element, string name) => Deref(Child(element, name));
 
@@ -584,7 +644,7 @@ public static class OpenApiImporter
 /// <summary>Downloads an OpenAPI description. Only the user's request starts it (ADR 0014, ADR 0005).</summary>
 public static class OpenApiFetcher
 {
-    public const int MaxBytes = 10 * 1024 * 1024;
+    public const int MaxBytes = 20 * 1024 * 1024;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     public static async Task<string> FetchAsync(string address, HttpClient client, CancellationToken cancellationToken = default)
@@ -602,7 +662,7 @@ public static class OpenApiFetcher
                 throw new OpenApiException($"The server answered {(int)response.StatusCode} {response.ReasonPhrase}.");
 
             if (response.Content.Headers.ContentLength > MaxBytes)
-                throw new OpenApiException("The description is larger than 10 MB, so it was not read.");
+                throw new OpenApiException("The description is larger than 20 MB, so it was not read.");
 
             await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
             using var buffer = new MemoryStream();
@@ -611,7 +671,7 @@ public static class OpenApiFetcher
             while ((read = await stream.ReadAsync(chunk, timeout.Token)) > 0)
             {
                 if (buffer.Length + read > MaxBytes)
-                    throw new OpenApiException("The description is larger than 10 MB, so it was not read.");
+                    throw new OpenApiException("The description is larger than 20 MB, so it was not read.");
 
                 buffer.Write(chunk, 0, read);
             }

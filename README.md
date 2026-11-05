@@ -23,7 +23,7 @@ Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in J
 
 | Preview before applying | Stripe's public API, imported (612 requests) |
 | --- | --- |
-| ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Stripe API imported into Ricochet](docs/screenshots/openapi-stripe-imported-dark.png) |
+| ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Stripe API imported into Ricochet](docs/screenshots/openapi-stripe-nested-dark.png) |
 
 ## Import from Postman
 

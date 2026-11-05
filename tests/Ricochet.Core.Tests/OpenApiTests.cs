@@ -67,7 +67,44 @@ public class OpenApiTests
         Assert.Equal("{{baseUrl}}/pets", pets.Children[0].Request!.Url);
         Assert.Equal("GET", pets.Children[0].Request!.Method);
         Assert.Equal("{{baseUrl}}/pets/{{petId}}", pets.Children[2].Request!.Url);
-        Assert.Equal("health", collection.Items.Single(i => i.Request is not null).Request!.SpecKey);
+        // Without a tag, an operation is filed under the first word of its path.
+        Assert.Equal("health", Folder(collection, "health").Children.Single().Request!.SpecKey);
+    }
+
+    [Fact]
+    public void Tag_groups_become_folders_around_the_tag_folders()
+    {
+        var json = Spec.Replace("\"components\": {",
+            "\"x-tagGroups\": [ { \"name\": \"Core Resources\", \"tags\": [\"pets\"] } ], \"components\": {");
+        var collection = Import(json).Collection;
+
+        var group = Folder(collection, "Core Resources");
+        var pets = group.Children.Single(c => c.Name == "pets");
+        Assert.Equal(["List pets", "Create a pet", "Delete a pet"], pets.Children.Select(c => c.Name));
+        Assert.DoesNotContain(collection.Items, i => i.Name == "pets");
+    }
+
+    [Fact]
+    public void Untagged_paths_are_grouped_by_their_resource_in_nested_folders()
+    {
+        const string untagged = """
+            {
+              "openapi": "3.0.3",
+              "info": { "title": "Untagged" },
+              "servers": [ { "url": "https://api.example.test" } ],
+              "paths": {
+                "/v1/account_links": { "post": { "summary": "Create link" } },
+                "/v1/accounts/{id}": { "get": { "summary": "Get account" } },
+                "/{id}": { "get": { "summary": "Anything" } }
+              }
+            }
+            """;
+        var collection = OpenApiImporter.Build(untagged, Url, null).Collection;
+
+        // The version segment is skipped, and a path that starts with a parameter has no folder.
+        Assert.Equal(["Create link"], Folder(collection, "account_links").Children.Select(c => c.Name));
+        Assert.Equal(["Get account"], Folder(collection, "accounts").Children.Select(c => c.Name));
+        Assert.Contains(collection.Items, i => i.Request is not null && i.Name == "Anything");
     }
 
     [Fact]
@@ -99,7 +136,7 @@ public class OpenApiTests
         Assert.Equal("{{apiKeyAuth}}", apiKey.KeyValue);
 
         // An operation that says no security needs none, even though the document has a global default.
-        Assert.Null(collection.Items.Single(i => i.Request is not null).Request!.Auth);
+        Assert.Null(Folder(collection, "health").Children.Single().Request!.Auth);
         Assert.Equal("", collection.Variables.Single(v => v.Key == "bearerAuth").Value);
     }
 
