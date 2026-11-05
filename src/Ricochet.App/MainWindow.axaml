@@ -149,6 +149,44 @@
 
       <GridSplitter Grid.Column="1" Width="8" ResizeDirection="Columns" />
 
+      <!-- Bulk run page -->
+      <Border Grid.Column="2" Classes="card" Padding="24,20" Margin="0,46,12,12" IsVisible="{Binding IsBulkPageOpen}">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <StackPanel Grid.Column="0" Spacing="4">
+              <TextBlock Text="Bulk run" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                         Text="{Binding BulkRequestName, StringFormat='Sends {0} once for each id, one at a time.'}" />
+            </StackPanel>
+            <Button Grid.Column="1" Classes="primary" Content="Done" Margin="16,0,0,0" VerticalAlignment="Top"
+                    Command="{Binding CloseBulkPageCommand}" AutomationProperties.Name="Done" />
+          </Grid>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0" Text="Placeholder" />
+            <TextBox Grid.Column="1" Text="{Binding BulkPlaceholder}" PlaceholderText="id" AutomationProperties.Name="Placeholder name"
+                     ToolTip.Tip="Write {{id}} in the URL, body or headers. Each id replaces it." />
+          </Grid>
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" Margin="0,0,0,6" Text="Ids, one per line" />
+          <Grid DockPanel.Dock="Top" RowDefinitions="Auto,*" Height="180" Margin="0,0,0,12">
+            <TextBox Grid.Row="0" Text="{Binding BulkIdsText}" AcceptsReturn="True" TextWrapping="Wrap" Height="180"
+                     FontFamily="Consolas,Menlo,monospace" PlaceholderText="Paste ids here, one per line"
+                     AutomationProperties.Name="Ids to run" IsEnabled="{Binding !IsBulkRunning}" />
+          </Grid>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,*" Margin="0,0,0,8">
+            <Button Grid.Column="0" Classes="primary" Content="Start" Command="{Binding StartBulkCommand}"
+                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Start from the first id" />
+            <Button Grid.Column="1" Content="Resume" Margin="8,0,0,0" Command="{Binding ResumeBulkCommand}"
+                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Resume after the last id processed"
+                    ToolTip.Tip="Continue after the last id that was processed for this request" />
+            <Button Grid.Column="2" Content="Stop" Margin="8,0,0,0" Command="{Binding StopBulkCommand}"
+                    IsEnabled="{Binding IsBulkRunning}" AutomationProperties.Name="Stop" />
+            <TextBlock Grid.Column="3" Classes="muted" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis" Text="{Binding BulkStatus}" />
+          </Grid>
+          <ListBox ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
+                   AutomationProperties.Name="Bulk run log" />
+        </DockPanel>
+      </Border>
+
       <!-- Variables page -->
       <Border Grid.Column="2" Classes="card" Padding="24,20" Margin="0,46,12,12" IsVisible="{Binding IsVariablesPageOpen}">
         <DockPanel>
@@ -297,7 +335,7 @@
                       Command="{Binding DismissStorageWarningCommand}" ToolTip.Tip="Dismiss"><PathIcon Data="{DynamicResource IconClose}" /></Button>
             </Grid>
           </Border>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,16">
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,16">
             <TextBox Grid.Column="0" Classes="bare" FontSize="18" FontWeight="SemiBold" Padding="0,4"
                      Text="{Binding RequestName}" PlaceholderText="Untitled request" />
             <ComboBox Grid.Column="1" Width="200" Margin="12,0" ItemsSource="{Binding Environments}"
@@ -309,7 +347,9 @@
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
-            <Button Grid.Column="2" Content="Save" Command="{Binding SaveCommand}" ToolTip.Tip="Save (Ctrl+S)" />
+            <Button Grid.Column="2" Content="Bulk run" Margin="0,0,8,0" Command="{Binding OpenBulkPageCommand}"
+                    ToolTip.Tip="Send this request once for each id in a pasted list" />
+            <Button Grid.Column="3" Content="Save" Command="{Binding SaveCommand}" ToolTip.Tip="Save (Ctrl+S)" />
           </Grid>
 
           <Border DockPanel.Dock="Top" Classes="urlbar" Height="50" Margin="0,0,0,14">
@@ -318,13 +358,12 @@
                         Foreground="{Binding Method, Converter={x:Static views:MethodBrushConverter.Instance}}"
                         AutomationProperties.Name="Method" />
               <Border Grid.Column="1" Background="{DynamicResource StrongLine}" Margin="0,8" />
-              <TextBox Grid.Column="2" x:Name="UrlBox" Classes="mono bare" VerticalContentAlignment="Center" Padding="14,0"
-                       Text="{Binding Url}" PlaceholderText="https://api.example.com/items"
-                       AutomationProperties.Name="URL">
-                <TextBox.KeyBindings>
-                  <KeyBinding Gesture="Enter" Command="{Binding SendOrCancelCommand}" />
-                </TextBox.KeyBindings>
-              </TextBox>
+              <!-- A single line editor, so {{variables}} can be colored. Enter sends, handled in code. -->
+              <ae:TextEditor Grid.Column="2" x:Name="UrlEditor" FontFamily="{DynamicResource MonoFont}" FontSize="13.5"
+                             Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}"
+                             Padding="14,0" VerticalAlignment="Center" WordWrap="False"
+                             HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"
+                             AutomationProperties.Name="URL" />
               <Button Grid.Column="3" Classes="primary" Width="96" Content="{Binding SendButtonText}"
                       Command="{Binding SendOrCancelCommand}" AutomationProperties.Name="Send"
                       ToolTip.Tip="Send (Ctrl+Enter)" />

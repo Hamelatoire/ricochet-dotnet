@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Media;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
@@ -19,6 +20,7 @@ public partial class MainWindow : Window
     private readonly Lazy<IHighlightingDefinition?> _jsonHighlighting;
     private ThemeVariant _theme = ThemeVariant.Dark;
     private MainViewModel? _viewModel;
+    private bool _syncingUrl;
 
     // Drag and drop in the Collections tree. A drag starts only after the pointer moves a little, so a click still selects.
     private const double DragStartDistance = 5;
@@ -34,9 +36,12 @@ public partial class MainWindow : Window
         InitializeComponent();
         _jsonHighlighting = new(CreateJsonHighlighting);
         InitializeTreeDrag();
+        UrlEditor.TextArea.TextView.LineTransformers.Add(new VariableColorizer(new SolidColorBrush(Color.Parse("#FF7A50"))));
+        UrlEditor.TextChanged += OnUrlEditorTextChanged;
+        UrlEditor.AddHandler(InputElement.KeyDownEvent, OnUrlEditorKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
         Opened += (_, _) =>
         {
-            UrlBox.Focus();
+            UrlEditor.Focus();
             ApplyTheme();
         };
         ActualThemeVariantChanged += (_, _) => ApplyTheme();
@@ -53,7 +58,10 @@ public partial class MainWindow : Window
         _viewModel = DataContext as MainViewModel;
 
         if (_viewModel is not null)
+        {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+            SetUrlText(_viewModel.Url);
+        }
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)
@@ -235,8 +243,46 @@ public partial class MainWindow : Window
     }
 
     // AvaloniaEdit's text is not a bindable property, so the response is pushed in from here.
+    /// <summary>Keeps the URL editor and the view model's Url in step, without each one echoing the other.</summary>
+    private void SetUrlText(string text)
+    {
+        if (UrlEditor.Text == text)
+            return;
+
+        _syncingUrl = true;
+        try
+        {
+            UrlEditor.Document.Text = text;
+            UrlEditor.CaretOffset = text.Length;
+        }
+        finally
+        {
+            _syncingUrl = false;
+        }
+    }
+
+    private void OnUrlEditorTextChanged(object? sender, EventArgs e)
+    {
+        if (_syncingUrl || _viewModel is null)
+            return;
+
+        _viewModel.Url = UrlEditor.Text;
+    }
+
+    private void OnUrlEditorKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || _viewModel is null)
+            return;
+
+        e.Handled = true;
+        _viewModel.SendOrCancelCommand.Execute(null);
+    }
+
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.Url) && _viewModel is not null)
+            SetUrlText(_viewModel.Url);
+
         if (e.PropertyName == nameof(MainViewModel.ThemeChoice) && _viewModel is not null && Application.Current is { } app)
         {
             app.RequestedThemeVariant = ThemeSettings.Variant(ThemeSettings.StoredValue(_viewModel.ThemeChoice));
