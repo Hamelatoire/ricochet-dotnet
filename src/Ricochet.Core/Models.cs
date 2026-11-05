@@ -45,6 +45,9 @@ public sealed record ApiRequest
 
     /// <summary>Null rather than empty when there are none, for the same reason.</summary>
     public IReadOnlyList<RequestCapture>? Captures { get; set; }
+
+    /// <summary>Set on Requests made from an OpenAPI description: the operationId, or "METHOD /path" when there is none.</summary>
+    public string? SpecKey { get; set; }
 }
 
 public sealed record ApiResponse(
@@ -77,6 +80,9 @@ public sealed record Collection
     public IReadOnlyList<CollectionItem> Items { get; set; } = [];
     public IReadOnlyList<KeyValue> Variables { get; set; } = [];
     public IReadOnlyList<StoredScript> Scripts { get; set; } = [];
+
+    /// <summary>Set on a Collection kept up to date from an OpenAPI URL (ADR 0014). Null otherwise.</summary>
+    public string? SpecUrl { get; set; }
 }
 
 public sealed record ApiEnvironment

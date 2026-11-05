@@ -57,6 +57,9 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     [ObservableProperty] private string _name = "";
     [ObservableProperty] private bool _isExpanded;
 
+    /// <summary>Set on a Collection made from an OpenAPI URL (ADR 0014), so running the same URL updates it.</summary>
+    public string? SpecUrl { get; set; }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(MethodLabel), nameof(IsRequest), nameof(IsContainer))]
     private ApiRequest? _request;
@@ -75,7 +78,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
 
     public static TreeNodeViewModel FromCollection(Collection collection, Action<TreeNodeViewModel> delete)
     {
-        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete) { Name = collection.Name };
+        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete) { Name = collection.Name, SpecUrl = collection.SpecUrl };
         node.Variables.Load(collection.Variables);
         foreach (var item in collection.Items)
             node.Children.Add(FromItem(item, node, delete));
@@ -100,6 +103,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         Items = Children.Select(c => c.ToItem()).ToList(),
         Variables = Variables.ToEntries(),
         Scripts = _scripts,
+        SpecUrl = SpecUrl,
     };
 
     private CollectionItem ToItem() => new()

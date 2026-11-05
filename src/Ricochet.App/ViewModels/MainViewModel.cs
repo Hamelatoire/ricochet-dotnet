@@ -907,6 +907,94 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseImportReport() => ImportReport = "";
 
+    [ObservableProperty] private bool _isSpecDialogOpen;
+    [ObservableProperty] private string _specUrl = "";
+    [ObservableProperty] private bool _isSpecBusy;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSpecError))] private string _specError = "";
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSpecPreview))] private string _specPreview = "";
+
+    public bool HasSpecError => SpecError.Length > 0;
+    public bool HasSpecPreview => SpecPreview.Length > 0;
+
+    private static readonly Lazy<HttpClient> SpecClient = new(RequestSender.CreateDefaultClient);
+    private OpenApiResult? _pendingSpec;
+
+    [RelayCommand]
+    private void OpenSpecDialog()
+    {
+        SpecUrl = CurrentCollection?.SpecUrl ?? "";
+        ClearSpecDialog();
+        IsSpecDialogOpen = true;
+    }
+
+    /// <summary>Fetches only when the user presses Fetch, then shows what would change before anything is applied.</summary>
+    [RelayCommand]
+    private async Task FetchSpecAsync()
+    {
+        var address = SpecUrl.Trim();
+        ClearSpecDialog();
+        IsSpecBusy = true;
+        try
+        {
+            var text = await OpenApiFetcher.FetchAsync(address, SpecClient.Value);
+            var existing = Collections.FirstOrDefault(c => c.SpecUrl == address)?.ToCollection();
+            var result = await Task.Run(() => OpenApiImporter.Build(text, address, existing));
+            _pendingSpec = result;
+            SpecPreview = result.Summary.ToReportText();
+        }
+        catch (OpenApiException ex)
+        {
+            SpecError = ex.Message;
+        }
+        finally
+        {
+            IsSpecBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ApplySpecAsync()
+    {
+        if (_pendingSpec is not { } result)
+            return;
+
+        var address = result.Collection.SpecUrl ?? "";
+        if (result.Summary.IsNew)
+        {
+            var unique = WorkspaceImport.UniqueName(result.Collection.Name, Collections.Select(c => c.Name));
+            var node = TreeNodeViewModel.FromCollection(result.Collection with { Name = unique }, DeleteNode);
+            node.IsExpanded = true;
+            Collections.Add(node);
+        }
+        else if (Collections.FirstOrDefault(c => c.SpecUrl == address) is { } old)
+        {
+            // The old node is detached, so the selection must not keep pointing at it.
+            var node = TreeNodeViewModel.FromCollection(result.Collection, DeleteNode);
+            node.IsExpanded = true;
+            SelectedNode = null;
+            Collections[Collections.IndexOf(old)] = node;
+        }
+
+        ImportReport = $"From {address}\n\n{result.Summary.ToReportText()}";
+        IsSpecDialogOpen = false;
+        ClearSpecDialog();
+        await PersistAsync();
+    }
+
+    [RelayCommand]
+    private void CloseSpecDialog()
+    {
+        IsSpecDialogOpen = false;
+        ClearSpecDialog();
+    }
+
+    private void ClearSpecDialog()
+    {
+        _pendingSpec = null;
+        SpecError = "";
+        SpecPreview = "";
+    }
+
     private Workspace Snapshot() => new()
     {
         Collections = Collections.Select(c => c.ToCollection()).ToList(),
