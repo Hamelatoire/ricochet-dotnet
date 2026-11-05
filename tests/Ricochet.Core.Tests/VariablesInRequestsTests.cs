@@ -44,6 +44,28 @@ public class VariablesInRequestsTests
     }
 
     [Fact]
+    public async Task Values_inside_JSON_strings_are_escaped_so_the_body_stays_valid()
+    {
+        var sent = await SendAsync(
+            Request() with { Method = "POST", Body = """{"name":"{{name}}","count":{{count}}}""" },
+            new("name", "say \"hi\" \\ bye\n"), new("count", "3"));
+
+        Assert.Equal("""{"name":"say \"hi\" \\ bye\n","count":3}""", sent.Body);
+        Assert.Equal("say \"hi\" \\ bye\n", System.Text.Json.JsonDocument.Parse(sent.Body!).RootElement.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task Values_outside_JSON_strings_are_inserted_as_written()
+    {
+        // A variable can hold a whole JSON object, which must not be escaped.
+        var sent = await SendAsync(
+            Request() with { Method = "POST", Body = """{"filter":{{filter}}}""" },
+            new KeyValue("filter", """{"active":true}"""));
+
+        Assert.Equal("""{"filter":{"active":true}}""", sent.Body);
+    }
+
+    [Fact]
     public async Task Header_name_and_value_are_sent_with_variables_replaced()
     {
         var sent = await SendAsync(
