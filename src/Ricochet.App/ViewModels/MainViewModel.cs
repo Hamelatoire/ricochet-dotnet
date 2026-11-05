@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -442,7 +444,9 @@ public sealed partial class MainViewModel : ObservableObject
             newValue.IsActive = true;
     }
 
-    [ObservableProperty] private bool _isEnvironmentsPageOpen;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
+    private bool _isEnvironmentsPageOpen;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEditingEnvironment), nameof(IsEditingActive), nameof(UseEnvironmentLabel))]
@@ -456,7 +460,95 @@ public sealed partial class MainViewModel : ObservableObject
     private void OpenEnvironmentsPage()
     {
         EditingEnvironment = HasActiveEnvironment ? ActiveEnvironment : EditingEnvironment ?? EditableEnvironments.FirstOrDefault();
+        IsVariablesPageOpen = false;
         IsEnvironmentsPageOpen = true;
+    }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
+    private bool _isVariablesPageOpen;
+
+    /// <summary>True while either page covers the request, so the request is hidden behind it.</summary>
+    public bool IsSidePageOpen => IsEnvironmentsPageOpen || IsVariablesPageOpen;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasEditingVariablesCollection))]
+    private TreeNodeViewModel? _editingVariablesCollection;
+
+    public bool HasEditingVariablesCollection => EditingVariablesCollection is not null;
+
+    // The Environments and Variables pages share one place on screen, so closing Environments also closes Variables.
+    partial void OnIsEnvironmentsPageOpenChanged(bool value)
+    {
+        if (!value)
+            IsVariablesPageOpen = false;
+    }
+
+    /// <summary>The environment whose values the Variables page shows and edits.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasVariablesEnvironment))]
+    private EnvironmentViewModel? _variablesEnvironment;
+
+    public bool HasVariablesEnvironment => VariablesEnvironment is not null;
+
+    /// <summary>The collection's variables as the selected environment sees them, one row each.</summary>
+    public ObservableCollection<VariableOverrideRowViewModel> VariableOverrides { get; } = [];
+
+    partial void OnVariablesEnvironmentChanged(EnvironmentViewModel? value) => RebuildVariableOverrides();
+
+    partial void OnEditingVariablesCollectionChanged(TreeNodeViewModel? oldValue, TreeNodeViewModel? newValue)
+    {
+        if (oldValue is not null)
+            oldValue.Variables.Items.CollectionChanged -= OnVariableNamesChanged;
+        if (newValue is not null)
+            newValue.Variables.Items.CollectionChanged += OnVariableNamesChanged;
+        RebuildVariableOverrides();
+    }
+
+    private void OnVariableNamesChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildVariableOverrides();
+
+    private void RebuildVariableOverrides()
+    {
+        VariableOverrides.Clear();
+        if (EditingVariablesCollection is null || VariablesEnvironment is null)
+            return;
+
+        foreach (var variable in EditingVariablesCollection.Variables.Items.Where(row => row.Key.Trim().Length > 0))
+            VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret,
+                VariablesEnvironment.Variables, VariablesEnvironment.Name, MoveVariable));
+    }
+
+    private async void MoveVariable(VariableOverrideRowViewModel row)
+    {
+        var defaults = EditingVariablesCollection?.Variables;
+        var environment = VariablesEnvironment;
+        var variable = defaults?.Items.FirstOrDefault(r => r.Key == row.Key);
+        if (defaults is null || environment is null || variable is null)
+            return;
+
+        // The environment keeps a value it already has. Otherwise it takes the collection's default.
+        environment.Variables.AddIfMissing(variable.Key, variable.Value, variable.IsSecret);
+        defaults.Items.Remove(variable);
+        await PersistAsync();
+    }
+
+    [RelayCommand]
+    /// <summary>Opens the Variables page for a collection, or for the current one when none is given.</summary>
+    private void ShowVariablesPage(TreeNodeViewModel? collection)
+    {
+        IsEnvironmentsPageOpen = false;
+        EditingVariablesCollection = collection ?? CurrentCollection ?? EditingVariablesCollection ?? Collections.FirstOrDefault();
+        VariablesEnvironment = HasActiveEnvironment ? ActiveEnvironment
+            : EditableEnvironments.Contains(VariablesEnvironment!) ? VariablesEnvironment
+            : EditableEnvironments.FirstOrDefault();
+        IsVariablesPageOpen = true;
+    }
+
+    [RelayCommand]
+    private async Task CloseVariablesPageAsync()
+    {
+        IsVariablesPageOpen = false;
+        await PersistAsync();
     }
 
     [RelayCommand]
@@ -516,6 +608,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSelectedNodeChanged(TreeNodeViewModel? value)
     {
+        // Clicking a collection opens its variables, since a collection has no request to show.
+        if (value is { Parent: null, Request: null })
+        {
+            ShowVariablesPage(value);
+            return;
+        }
+
+        // Clicking a request brings it up over the Variables page, even when it is already the current one.
+        if (value?.Request is not null)
+            IsVariablesPageOpen = false;
+
         // Matching the current node means it was just saved, so the editor and response are already right.
         if (value?.Request is not { } request || value == _currentNode)
             return;
@@ -655,7 +758,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         // The request is hidden behind the page, so the shortcut must not send it unseen.
-        if (IsEnvironmentsPageOpen)
+        if (IsEnvironmentsPageOpen || IsVariablesPageOpen)
             return;
 
         using var cts = new CancellationTokenSource();
@@ -749,7 +852,7 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task SaveAsync()
     {
         // The request is hidden behind the page, so the shortcut saves what is on screen.
-        if (IsEnvironmentsPageOpen)
+        if (IsEnvironmentsPageOpen || IsVariablesPageOpen)
         {
             await PersistAsync();
             return;
@@ -816,6 +919,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async void DeleteNode(TreeNodeViewModel node)
     {
+        if (EditingVariablesCollection?.IsWithin(node) == true)
+            EditingVariablesCollection = null;
+
         if (_currentNode?.IsWithin(node) == true)
         {
             _currentNode = null;

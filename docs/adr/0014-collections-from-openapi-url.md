@@ -10,6 +10,7 @@ Many APIs publish an OpenAPI (Swagger) description, and writing a Request for ea
 
 - **Fetch only when asked:** the user gives the URL and presses the button. [ADR 0005](0005-local-first.md) allows this, because it's a request the user chose. Nothing refreshes on a timer, and the URL is shown before it's fetched. It uses the same TLS settings as any Request.
 - **Auth becomes Variables, never values:** a security scheme maps to Bearer, Basic or API key auth that reads a `{{variable}}`. Values in the description, such as example tokens, are never copied, so they can't end up in a shared file.
+- **Path parameters become Variables:** each one, such as `{{trackId}}`, is added as an empty Collection Variable, so the user fills it in per Environment. Values already typed are kept.
 - **The server becomes a Variable:** the first server URL is stored as a Collection Variable, such as `{{baseUrl}}`, so each Environment can point at its own host.
 - **Updates change only what the description owns:** the name, method, URL and documented parameters are updated from the description. Headers, bodies, Assertions and Captures the user added are left alone.
 - **Operations keep their ids:** an operation is matched to an existing Request by its `operationId`, or by method and path when it has none. The id stays the same, so [ADR 0003](0003-git-friendly-workspace-files.md)'s file names and diffs stay stable.
