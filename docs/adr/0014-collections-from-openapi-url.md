@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Create or update a Collection from an OpenAPI URL
