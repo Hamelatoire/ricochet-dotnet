@@ -12,6 +12,8 @@ Some behaviour is currently fixed in code, such as the two-minute request timeou
 - **Changes apply immediately:** there is no Save button, matching how the rest of the app keeps state. Risky settings say what they do right beside the control.
 - **Only settings with a real use:** every option adds something to test and explain, so one is added when someone needs it, not because it might be useful.
 
+Environment variables are not settings: they are Workspace data shared with the team, so they have their own Environments page.
+
 ## First settings
 
 | Setting | Default |
