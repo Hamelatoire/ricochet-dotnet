@@ -1,3 +1,6 @@
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Ricochet.Core;
@@ -38,10 +41,57 @@ public static partial class VariableResolver
             return text;
         }
 
+        // In a JSON body, a value inside a string is escaped, so a quote in it can't end the string early.
+        // A value outside a string is inserted as written, because it may be a whole JSON object.
+        string ResolveBody(string text)
+        {
+            if (!text.TrimStart().StartsWith('{') && !text.TrimStart().StartsWith('['))
+                return Resolve(text);
+
+            var result = new StringBuilder();
+            var inString = false;
+            var escaped = false;
+
+            void AppendLiteral(string literal)
+            {
+                foreach (var c in literal)
+                {
+                    if (escaped)
+                        escaped = false;
+                    else if (inString && c == '\\')
+                        escaped = true;
+                    else if (c == '"')
+                        inString = !inString;
+                }
+
+                result.Append(literal);
+            }
+
+            var last = 0;
+            foreach (Match match in Placeholder().Matches(text))
+            {
+                AppendLiteral(text[last..match.Index]);
+                last = match.Index + match.Length;
+
+                var name = match.Groups[1].Value.Trim();
+                if (!lookup.TryGetValue(name, out var value))
+                {
+                    result.Append(match.Value);
+                    continue;
+                }
+
+                var resolved = Resolve(value);
+                result.Append(inString ? JsonEncodedText.Encode(resolved, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString() : resolved);
+            }
+
+            AppendLiteral(text[last..]);
+            return result.ToString();
+        }
+
         return request with
         {
             Url = Resolve(request.Url),
-            Body = Resolve(request.Body),
+            Body = ResolveBody(request.Body),
             Headers = request.Headers.Select(h => h with { Key = Resolve(h.Key), Value = Resolve(h.Value) }).ToList(),
             Auth = request.Auth is { } auth
                 ? auth with
