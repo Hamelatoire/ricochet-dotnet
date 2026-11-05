@@ -1,6 +1,7 @@
 using System.Globalization;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
+using Avalonia.Styling;
 
 namespace Ricochet.App.Views;
 
@@ -9,22 +10,27 @@ public sealed class MethodBrushConverter : IValueConverter
 {
     public static readonly MethodBrushConverter Instance = new();
 
-    private static readonly IBrush Get = new SolidColorBrush(Color.Parse("#4ADE80"));
-    private static readonly IBrush Post = new SolidColorBrush(Color.Parse("#FBBF24"));
-    private static readonly IBrush Put = new SolidColorBrush(Color.Parse("#60A5FA"));
-    private static readonly IBrush Patch = new SolidColorBrush(Color.Parse("#C084FC"));
-    private static readonly IBrush Delete = new SolidColorBrush(Color.Parse("#F87171"));
-    private static readonly IBrush Other = new SolidColorBrush(Color.Parse("#8A909C"));
-
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value switch
+    // The brushes stay the same objects, so a theme change recolours rows that are already on screen.
+    private static readonly Dictionary<string, (string Resource, SolidColorBrush Brush)> Methods = new()
     {
-        "GET" => Get,
-        "POST" => Post,
-        "PUT" => Put,
-        "PATCH" => Patch,
-        "DELETE" => Delete,
-        _ => Other,
+        ["GET"] = ("MethodGet", new SolidColorBrush()),
+        ["POST"] = ("MethodPost", new SolidColorBrush()),
+        ["PUT"] = ("MethodPut", new SolidColorBrush()),
+        ["PATCH"] = ("MethodPatch", new SolidColorBrush()),
+        ["DELETE"] = ("MethodDelete", new SolidColorBrush()),
     };
+
+    private static readonly (string Resource, SolidColorBrush Brush) Other = ("MethodOther", new SolidColorBrush());
+
+    /// <summary>Sets every method colour to the one for the given theme.</summary>
+    public static void ApplyTheme(ThemeVariant theme)
+    {
+        foreach (var (resource, brush) in Methods.Values.Append(Other))
+            brush.Color = ThemeColors.Get(resource, theme);
+    }
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is string method && Methods.TryGetValue(method, out var entry) ? entry.Brush : Other.Brush;
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();

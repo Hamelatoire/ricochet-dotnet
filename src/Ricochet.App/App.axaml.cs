@@ -17,6 +17,7 @@ public partial class App : Application
             var sender = new RequestSender(RequestSender.CreateDefaultClient());
             var store = new WorkspaceStore(WorkspaceStore.DefaultPersonalDirectory(), WorkspaceStore.DefaultOldAppCopy());
             var viewModel = new MainViewModel(sender, store, SecretVaults.CreateDefault(store.SecretsPath));
+            RequestedThemeVariant = ThemeSettings.Variant(store.Theme);
             desktop.MainWindow = new MainWindow { DataContext = viewModel };
         }
 

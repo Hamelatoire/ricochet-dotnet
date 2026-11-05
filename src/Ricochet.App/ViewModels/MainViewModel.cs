@@ -29,6 +29,7 @@ public sealed partial class MainViewModel : ObservableObject
         _storedSecrets = LoadSecrets();
 
         var loaded = store.Load();
+        _themeChoice = ThemeSettings.ChoiceName(store.Theme);
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
             workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode)));
@@ -225,6 +226,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     private void DismissStorageWarning() => StorageWarning = "";
+
+    public IReadOnlyList<string> ThemeChoices { get; } = ThemeSettings.Choices;
+
+    /// <summary>System, Light or Dark. Kept on this machine only, in state.json.</summary>
+    [ObservableProperty] private string _themeChoice = ThemeSettings.SystemChoice;
+
+    partial void OnThemeChoiceChanged(string value) => _store.SetTheme(ThemeSettings.StoredValue(value));
 
     public string WorkspaceFolderPath => _store.FolderPath;
     public string WorkspaceFolderName => Path.GetFileName(_store.FolderPath.TrimEnd(Path.DirectorySeparatorChar));
