@@ -67,6 +67,20 @@ Native AOT needs a platform linker: the Visual Studio C++ build tools on Windows
 
 On Windows, if linking fails with `'vswhere.exe' is not recognized`, add `C:\Program Files (x86)\Microsoft Visual Studio\Installer` to your `PATH`.
 
+## Release
+
+Pushing a version tag runs the tests and builds the app and the CLI on Windows, Linux and macOS, then attaches them to a GitHub release.
+
+```bash
+git tag v0.1.0
+```
+
+```bash
+git push origin v0.1.0
+```
+
+The builds are not code signed, so Windows and macOS may warn about them or block them.
+
 ## Your data
 
 Your work is stored as a folder of small JSON files, one per request, so it can be shared through git. By default that folder is in your user application data (`%APPDATA%\Ricochet\workspace` on Windows). To keep it in a repository, choose **Change…** at the bottom of the sidebar and pick a folder: a folder without a workspace gets a copy after you confirm, and one that has a workspace is opened. If files change while Ricochet is open, for example after a `git pull`, it reloads them. Files it can't read, such as one with merge conflict markers, are reported and left untouched.
