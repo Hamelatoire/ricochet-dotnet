@@ -1,17 +1,54 @@
 name: Release
 
-# Pushing a tag such as v0.1.0 builds every platform and publishes a GitHub release.
+# Merging a pull request into main publishes the next patch version.
+# Pushing a tag such as v0.2.0 publishes that version instead.
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
 permissions:
   contents: read
 
+# One at a time, so that two merges can't choose the same version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  version:
+    name: Choose the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.choose.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Choose the version
+        id: choose
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+          else
+            latest="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)"
+            if [ -z "$latest" ]; then
+              version="v0.1.0"
+            elif [[ "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              version="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+            else
+              echo "The latest tag, $latest, is not in the form v1.2.3." >&2
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.rid }}
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -51,12 +88,14 @@ jobs:
       # The app and the CLI are packaged apart: their names differ only by case,
       # so they would collide in one folder on Windows and macOS.
       - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir dist
           for part in app cli; do
             cd "out/$part"
             rm -rf ./*.pdb ./*.dbg ./*.dSYM
-            name="ricochet-$part-$GITHUB_REF_NAME-${{ matrix.rid }}"
+            name="ricochet-$part-$VERSION-${{ matrix.rid }}"
             if [ "$RUNNER_OS" = "Windows" ]; then
               7z a "$GITHUB_WORKSPACE/dist/$name.zip" ./*
             else
@@ -73,7 +112,7 @@ jobs:
 
   release:
     name: Publish the release
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,12 +122,14 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # A tag created here doesn't start this workflow again, because it uses the workflow's own token.
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$VERSION" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            --verify-tag
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes
