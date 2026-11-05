@@ -25,7 +25,7 @@
       <!-- Sidebar -->
       <Border Grid.Column="0" Padding="20,46,12,16">
         <DockPanel>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*" Margin="0,0,0,16">
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*,8,*" Margin="0,0,0,16">
             <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding NewRequestCommand}"
                     AutomationProperties.Name="New request" ToolTip.Tip="New request (Ctrl+N)">
               <StackPanel Orientation="Horizontal" Spacing="7">
@@ -39,6 +39,10 @@
                 <PathIcon Data="{DynamicResource IconImport}" />
                 <TextBlock Text="Import" />
               </StackPanel>
+            </Button>
+            <Button Grid.Column="4" HorizontalAlignment="Stretch" Command="{Binding OpenSpecDialogCommand}"
+                    AutomationProperties.Name="From OpenAPI URL" ToolTip.Tip="Create a collection from an OpenAPI description at a web address, or update one made that way">
+              <TextBlock Text="URL" />
             </Button>
           </Grid>
           <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,16" Command="{Binding OpenEnvironmentsPageCommand}"
@@ -492,6 +496,33 @@
                   Command="{Binding CloseImportReportCommand}" AutomationProperties.Name="Close import results" />
           <TextBox Classes="mono" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
                    Text="{Binding ImportReport}" AutomationProperties.Name="Import report" />
+        </DockPanel>
+      </Border>
+    </Border>
+
+    <!-- From an OpenAPI URL (ADR 0014): fetch on request, preview, then apply -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsSpecDialogOpen}">
+      <Border Classes="dialog" Width="640" MaxHeight="620">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="From an OpenAPI URL" Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+                     Text="Paste the address of an OpenAPI 3 description in JSON. Ricochet fetches it only when you press Fetch. Running the same address again updates that collection." />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <TextBox Grid.Column="0" Classes="mono" Text="{Binding SpecUrl}" PlaceholderText="https://api.example.com/openapi.json"
+                     AutomationProperties.Name="OpenAPI address" />
+            <Button Grid.Column="1" Classes="primary" Content="Fetch" Margin="8,0,0,0" Command="{Binding FetchSpecCommand}"
+                    IsEnabled="{Binding !IsSpecBusy}" AutomationProperties.Name="Fetch description" />
+          </Grid>
+          <TextBlock DockPanel.Dock="Top" Classes="muted" Text="Fetching…" IsVisible="{Binding IsSpecBusy}" Margin="0,0,0,8" />
+          <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding SpecError}" Foreground="{DynamicResource Failure}"
+                               FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" IsVisible="{Binding HasSpecError}" />
+          <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Cancel" Command="{Binding CloseSpecDialogCommand}" AutomationProperties.Name="Cancel" />
+            <Button Classes="primary" Content="Apply" Command="{Binding ApplySpecCommand}" IsVisible="{Binding HasSpecPreview}"
+                    AutomationProperties.Name="Apply changes" />
+          </StackPanel>
+          <TextBox Classes="mono" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                   Text="{Binding SpecPreview}" IsVisible="{Binding HasSpecPreview}" AutomationProperties.Name="Changes preview" />
         </DockPanel>
       </Border>
     </Border>
