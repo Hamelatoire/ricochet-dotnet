@@ -77,10 +77,24 @@
                     <Style Selector="TreeViewItem" x:DataType="vm:TreeNodeViewModel">
                       <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                     </Style>
+                    <!-- Drop hints while dragging: a line above or below, or a highlight for a folder that will take the item. -->
+                    <Style Selector="TreeViewItem.drop-before">
+                      <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
+                      <Setter Property="BorderThickness" Value="0,2,0,0" />
+                    </Style>
+                    <Style Selector="TreeViewItem.drop-after">
+                      <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
+                      <Setter Property="BorderThickness" Value="0,0,0,2" />
+                    </Style>
+                    <Style Selector="TreeViewItem.drop-into">
+                      <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
+                      <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
+                      <Setter Property="BorderThickness" Value="1" />
+                    </Style>
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding Children}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto">
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />

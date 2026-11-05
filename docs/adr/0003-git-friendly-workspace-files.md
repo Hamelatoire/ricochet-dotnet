@@ -27,7 +27,7 @@ Without an account or cloud service ([ADR 0005](0005-local-first.md)), git is ho
 
 - **JSON, not YAML or a custom format:** System.Text.Json source generation already works with Native AOT, and it adds no dependency or new syntax to learn.
 - **The id stays in the file name:** two Requests can share a name, and renaming only the name portion keeps the id stable.
-- **Order lives in the parent file:** file systems sort alphabetically, but imported Collections have a meaningful order.
+- **Order lives in the parent file:** file systems sort alphabetically, but imported Collections have a meaningful order. Collections are ordered by the list in `ricochet.json`, and items by their Collection or Folder file.
 - **Default location is app data:** people who don't use git never need to think about folders.
 - **Only touch what we understood:** a save changes or deletes only files the app read successfully or wrote itself. A file with merge conflict markers, or anything unrecognised, is reported and left exactly as it is.
 - **A file keeps its name until the item is renamed in the app:** renaming a file by hand doesn't cause churn in git.

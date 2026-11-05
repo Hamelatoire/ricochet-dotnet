@@ -836,6 +836,32 @@ public sealed partial class MainViewModel : ObservableObject
         await PersistAsync();
     }
 
+    /// <summary>Moves a dragged node to where it was dropped, then saves. The caller checks that the drop is allowed.</summary>
+    public async Task MoveNodeAsync(TreeNodeViewModel source, TreeNodeViewModel target, DropPlacement placement)
+    {
+        var destination = placement == DropPlacement.Into ? target : target.Parent;
+
+        if (source.Parent is { } oldParent)
+            oldParent.Children.Remove(source);
+        else
+            Collections.Remove(source);
+
+        var siblings = destination?.Children ?? Collections;
+        if (placement == DropPlacement.Into)
+        {
+            siblings.Add(source);
+            target.IsExpanded = true;
+        }
+        else
+        {
+            var index = siblings.IndexOf(target) + (placement == DropPlacement.After ? 1 : 0);
+            siblings.Insert(index, source);
+        }
+
+        source.MoveTo(destination);
+        await PersistAsync();
+    }
+
     [RelayCommand]
     private async Task NewEnvironmentAsync()
     {

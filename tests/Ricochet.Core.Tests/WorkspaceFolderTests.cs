@@ -85,6 +85,21 @@ public sealed class WorkspaceFolderTests : IDisposable
     }
 
     [Fact]
+    public void Collections_keep_the_order_they_were_saved_in()
+    {
+        var workspace = Sample();
+        var second = new Collection { Id = "c2aaaaaaaa", Name = "Auth API" };
+        var third = new Collection { Id = "c3aaaaaaaa", Name = "Billing" };
+        workspace = workspace with { Collections = [third, workspace.Collections[0], second] };
+        Saved(workspace);
+
+        var (loaded, issues) = new WorkspaceFolder(_root).Load();
+
+        Assert.Empty(issues);
+        Assert.Equal(["Billing", "Shop API", "Auth API"], loaded.Collections.Select(c => c.Name));
+    }
+
+    [Fact]
     public void Uses_one_readable_file_per_request()
     {
         Saved();

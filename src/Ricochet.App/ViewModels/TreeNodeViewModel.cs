@@ -34,6 +34,9 @@ public abstract partial class DeletableViewModel : ObservableObject
     }
 }
 
+/// <summary>Where a dragged node lands, relative to the node it is dropped on.</summary>
+public enum DropPlacement { Before, Into, After }
+
 public sealed partial class TreeNodeViewModel : DeletableViewModel
 {
     private readonly Action<TreeNodeViewModel> _delete;
@@ -53,7 +56,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     }
 
     public string Id { get; }
-    public TreeNodeViewModel? Parent { get; }
+    public TreeNodeViewModel? Parent { get; private set; }
     public ObservableCollection<TreeNodeViewModel> Children { get; } = [];
 
     /// <summary>Only meaningful on a Collection node.</summary>
@@ -83,6 +86,33 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     public bool HasScripts => _scripts.Count > 0 || Parent?.HasScripts == true;
 
     public bool IsWithin(TreeNodeViewModel other) => this == other || Parent?.IsWithin(other) == true;
+
+    /// <summary>
+    /// Where dropping this node onto <paramref name="target"/> would put it, or null if that is not allowed.
+    /// <paramref name="fraction"/> is how far down the target's row the pointer is, from 0 (top) to 1 (bottom).
+    /// Collections only reorder among Collections; other items can also go into a Folder or Collection.
+    /// </summary>
+    public DropPlacement? PlacementOnto(TreeNodeViewModel target, double fraction)
+    {
+        if (target.IsWithin(this))
+            return null;
+
+        var edge = fraction < 0.5 ? DropPlacement.Before : DropPlacement.After;
+
+        if (Parent is null)
+            return target.Parent is null ? edge : null;
+
+        // Only a Folder or Collection can hold items, so it takes the middle of its row. Its edges still reorder.
+        // The edges are wide enough that a folder can be dropped above or below another folder.
+        if (target.IsContainer && fraction is > 0.3 and < 0.7)
+            return DropPlacement.Into;
+
+        // A Collection holds only Folders and Requests, so an edge drop on one can't reorder it.
+        return target.Parent is null ? DropPlacement.Into : edge;
+    }
+
+    /// <summary>Puts this node in <paramref name="parent"/>'s children, or in the list of Collections when null.</summary>
+    internal void MoveTo(TreeNodeViewModel? parent) => Parent = parent;
 
     protected override void Delete() => _delete(this);
 
