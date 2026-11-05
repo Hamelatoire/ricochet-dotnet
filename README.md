@@ -17,6 +17,14 @@ Ricochet follows your system's light or dark setting. Choose **System**, **Light
 | --- | --- |
 | ![Ricochet in the light theme](docs/screenshots/theme-light.png) | ![Ricochet in the dark theme](docs/screenshots/theme-dark.png) |
 
+## Collections from an OpenAPI URL
+
+Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in JSON, and press **Fetch**. Ricochet shows what it will add or change before you press **Apply**. Each operation becomes a request, grouped into folders by tag. Running the same address again updates that collection and keeps the headers, bodies, tests and saved values you added. See [ADR 0014](docs/adr/0014-collections-from-openapi-url.md).
+
+| Preview before applying | Stripe's public API, imported (612 requests) |
+| --- | --- |
+| ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Stripe API imported into Ricochet](docs/screenshots/openapi-stripe-imported-dark.png) |
+
 ## Import from Postman
 
 Export your collections (v2.0 or v2.1), environments and globals from Postman as JSON, then choose **Import** and select the files. The results list everything that could not be carried over. Scripts are kept but not run, and OAuth 2 and file uploads are not imported yet. See [ADR 0002](docs/adr/0002-import-postman-exports.md) for details.
