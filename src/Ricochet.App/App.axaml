@@ -334,6 +334,12 @@
       <Setter Property="Width" Value="14" />
       <Setter Property="Height" Value="14" />
     </Style>
+    <!-- Folder actions (rename, new folder) are glyphs, so they need more room than the delete cross -->
+    <Style Selector="Button.folderaction">
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="Padding" Value="6,1" />
+      <Setter Property="MinWidth" Value="26" />
+    </Style>
     <Style Selector="Button.mini PathIcon">
       <Setter Property="Width" Value="11" />
       <Setter Property="Height" Value="11" />

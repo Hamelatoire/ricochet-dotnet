@@ -32,7 +32,7 @@ public sealed partial class MainViewModel : ObservableObject
         _themeChoice = ThemeSettings.ChoiceName(store.Theme);
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
-            workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode)));
+            workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder)));
         History = new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
@@ -305,7 +305,7 @@ public sealed partial class MainViewModel : ObservableObject
         SelectedNode = null;
         Collections.Clear();
         foreach (var collection in shared.Collections)
-            Collections.Add(TreeNodeViewModel.FromCollection(collection, DeleteNode, RenameNode));
+            Collections.Add(TreeNodeViewModel.FromCollection(collection, DeleteNode, RenameNode, AddFolder));
         foreach (var node in AllNodes(Collections))
             node.IsExpanded = expanded.Contains(node.Id);
 
@@ -769,7 +769,7 @@ public sealed partial class MainViewModel : ObservableObject
         else
         {
             var target = CurrentCollection ?? DefaultCollection();
-            node = TreeNodeViewModel.ForNewRequest(request, target, DeleteNode, RenameNode);
+            node = TreeNodeViewModel.ForNewRequest(request, target, DeleteNode, RenameNode, AddFolder);
             target.Children.Add(node);
             target.IsExpanded = true;
             _currentNode = node;
@@ -794,13 +794,25 @@ public sealed partial class MainViewModel : ObservableObject
         if (existing is not null)
             return existing;
 
-        var created = TreeNodeViewModel.FromCollection(new Collection { Name = Workspace.DefaultCollectionName }, DeleteNode, RenameNode);
+        var created = TreeNodeViewModel.FromCollection(new Collection { Name = Workspace.DefaultCollectionName }, DeleteNode, RenameNode, AddFolder);
         Collections.Add(created);
         return created;
     }
 
     /// <summary>The name is already changed on the node, so this only saves it.</summary>
     private async void RenameNode(TreeNodeViewModel node) => await PersistAsync();
+
+    /// <summary>Adds an empty folder inside the node, then opens its name for editing.</summary>
+    private async void AddFolder(TreeNodeViewModel parent)
+    {
+        var name = WorkspaceImport.UniqueName("New folder", parent.Children.Select(c => c.Name));
+        var folder = TreeNodeViewModel.ForNewFolder(name, parent, DeleteNode, RenameNode, AddFolder);
+        parent.Children.Add(folder);
+        parent.IsExpanded = true;
+        SelectedNode = folder; // Highlights the new folder, which the tree then scrolls to.
+        folder.StartRename();
+        await PersistAsync();
+    }
 
     private async void DeleteNode(TreeNodeViewModel node)
     {
@@ -880,7 +892,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (unique != collection.Name)
                 notes.Add($"A collection with this name already exists, so it was added as \"{unique}\".");
 
-            var node = TreeNodeViewModel.FromCollection(collection with { Name = unique }, DeleteNode, RenameNode);
+            var node = TreeNodeViewModel.FromCollection(collection with { Name = unique }, DeleteNode, RenameNode, AddFolder);
             node.IsExpanded = true;
             Collections.Add(node);
         }
@@ -965,14 +977,14 @@ public sealed partial class MainViewModel : ObservableObject
         if (result.Summary.IsNew)
         {
             var unique = WorkspaceImport.UniqueName(result.Collection.Name, Collections.Select(c => c.Name));
-            var node = TreeNodeViewModel.FromCollection(result.Collection with { Name = unique }, DeleteNode, RenameNode);
+            var node = TreeNodeViewModel.FromCollection(result.Collection with { Name = unique }, DeleteNode, RenameNode, AddFolder);
             node.IsExpanded = true;
             Collections.Add(node);
         }
         else if (Collections.FirstOrDefault(c => c.SpecUrl == address) is { } old)
         {
             // The old node is detached, so the selection must not keep pointing at it.
-            var node = TreeNodeViewModel.FromCollection(result.Collection, DeleteNode, RenameNode);
+            var node = TreeNodeViewModel.FromCollection(result.Collection, DeleteNode, RenameNode, AddFolder);
             node.IsExpanded = true;
             SelectedNode = null;
             Collections[Collections.IndexOf(old)] = node;

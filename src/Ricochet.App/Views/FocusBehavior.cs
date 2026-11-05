@@ -18,6 +18,8 @@ public static class FocusBehavior
             {
                 Dispatcher.UIThread.Post(() =>
                 {
+                    // A new folder can be at the bottom of a long tree, so scroll it into view first.
+                    control.BringIntoView();
                     control.Focus();
                     if (control is TextBox box)
                         box.SelectAll();

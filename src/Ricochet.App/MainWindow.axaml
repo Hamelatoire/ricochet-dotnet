@@ -80,7 +80,7 @@
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding Children}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
@@ -97,9 +97,11 @@
                             <KeyBinding Gesture="Escape" Command="{Binding CancelRenameCommand}" />
                           </TextBox.KeyBindings>
                         </TextBox>
-                        <Button Grid.Column="2" Classes="mini" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"
+                        <Button Grid.Column="2" Classes="mini folderaction" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"
                                 Command="{Binding ToggleRenameCommand}" ToolTip.Tip="Rename" AutomationProperties.Name="Rename" />
-                        <Button Grid.Column="3" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                        <Button Grid.Column="3" Classes="mini folderaction" Margin="4,0,0,0" Content="+" IsVisible="{Binding IsContainer}"
+                                Command="{Binding NewFolderCommand}" ToolTip.Tip="New folder" AutomationProperties.Name="New folder" />
+                        <Button Grid.Column="4" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
                                 Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete" />
                       </Grid>
                     </TreeDataTemplate>
