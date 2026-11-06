@@ -1,5 +1,5 @@
 ---
-status: accepted (core built; History does not yet show generated values)
+status: accepted (built; History keeps the generated values that were sent)
 ---
 
 # Built-in functions for generated values
