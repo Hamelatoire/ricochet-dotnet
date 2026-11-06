@@ -4,7 +4,8 @@ namespace Ricochet.Core;
 
 /// <summary>The outcome of sending the Request for one id.</summary>
 /// <param name="StatusCode">Null when nothing was sent, or the request failed before a response came back.</param>
-public sealed record BulkItemResult(string Id, int? StatusCode, bool Succeeded, string Detail, long ElapsedMs)
+/// <param name="Position">The id's place in the pasted list, so a caller can tell which ids have finished when they complete out of order.</param>
+public sealed record BulkItemResult(string Id, int? StatusCode, bool Succeeded, string Detail, long ElapsedMs, int Position = 0)
 {
     /// <summary>One line for a log: OK or ERR, the id, the status and the response start.</summary>
     public string LogLine => $"{(Succeeded ? "OK " : "ERR")} {Id}  [{StatusCode?.ToString() ?? "-"}] {Detail}".TrimEnd();
@@ -27,8 +28,9 @@ public sealed class BulkRunner(RequestSender sender)
             .ToList();
 
     /// <summary>
-    /// Runs the Request for each id in order, stopping before the next id when cancelled.
-    /// Returns true when every id was sent, and false when it was stopped.
+    /// Runs the Request for each id, at most <paramref name="maxParallel"/> at a time. Ids start in the order pasted,
+    /// but results arrive in completion order (see <see cref="BulkItemResult.Position"/>), one at a time.
+    /// Cancelling starts no new ids; the ids in flight still finish. Returns true when every id was sent, and false when it was stopped.
     /// </summary>
     public async Task<bool> RunAsync(
         Workspace workspace,
@@ -38,25 +40,59 @@ public sealed class BulkRunner(RequestSender sender)
         string placeholder,
         IReadOnlyList<string> ids,
         Action<BulkItemResult> onResult,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int maxParallel = 1)
     {
+        if (maxParallel < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxParallel), "At least one thread is needed.");
+
+        using var gate = new SemaphoreSlim(maxParallel);
+        var resultLock = new object();
+        var inFlight = new List<Task>();
+        var stopped = false;
+
         try
         {
-            foreach (var id in ids)
+            for (var position = 0; position < ids.Count; position++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                onResult(await RunOneAsync(workspace, collection, environment, template, placeholder, id, cancellationToken));
+                await gate.WaitAsync(cancellationToken);
+                // WaitAsync can succeed even after a cancel, so the token is checked again before any id starts.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    gate.Release();
+                    throw new OperationCanceledException(cancellationToken);
+                }
+
+                var index = position;
+                var id = ids[position];
+                inFlight.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = (await RunOneAsync(workspace, collection, environment, template, placeholder, id)) with { Position = index };
+                        lock (resultLock)
+                            onResult(result);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                }));
             }
-            return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return false;
+            stopped = true;
         }
+
+        // Waits for the ids already started, so none is left half sent or unreported.
+        await Task.WhenAll(inFlight);
+        return !stopped;
     }
 
     private async Task<BulkItemResult> RunOneAsync(Workspace workspace, Collection collection, ApiEnvironment? environment,
-        ApiRequest template, string placeholder, string id, CancellationToken cancellationToken)
+        ApiRequest template, string placeholder, string id)
     {
         var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, [new KeyValue(placeholder, id)]);
         var resolved = VariableResolver.Apply(template, variables);
@@ -69,7 +105,8 @@ public sealed class BulkRunner(RequestSender sender)
 
         try
         {
-            var response = await sender.SendAsync(resolved, cancellationToken);
+            // The token is not passed on: Stop takes effect between ids, so the id in flight still gets its response or error.
+            var response = await sender.SendAsync(resolved);
             var succeeded = response.StatusCode is >= 200 and < 300;
             var detail = succeeded ? "" : Snippet(response.Body);
             return new BulkItemResult(id, response.StatusCode, succeeded, CollectionRunner.MaskIn(detail, secrets),

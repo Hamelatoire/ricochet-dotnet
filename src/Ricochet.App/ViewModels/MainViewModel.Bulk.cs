@@ -22,6 +22,9 @@ public sealed partial class MainViewModel
     [ObservableProperty] private string _bulkStatus = "";
     [ObservableProperty] private string _bulkRequestName = "";
 
+    /// <summary>How many ids are sent at once. Kept between 1 and 16 when a run starts.</summary>
+    [ObservableProperty] private int _bulkThreads = 4;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsBulkRunning))]
     private bool _isBulkRunningFlag;
@@ -123,29 +126,46 @@ public sealed partial class MainViewModel
         var workspace = Snapshot();
         var placeholder = string.IsNullOrWhiteSpace(BulkPlaceholder) ? BulkRunner.DefaultPlaceholder : BulkPlaceholder.Trim();
 
+        // Ids can finish out of order, so "processed" means the leading run of finished ids. Resume starts after that
+        // run, which re-sends any later id that finished early. That is safe, and nothing is skipped.
+        var finishedFlags = new bool[ids.Count];
         var processed = start;
-        string? last = start > 0 ? ids[start - 1] : null;
+        // Calls actually sent in this run, and how many got a 2xx. Ids that were not sent (missing variable) don't count.
+        var callsSent = 0;
+        var callsOk = 0;
+        var frontier = start;
+        var threads = Math.Clamp(BulkThreads, 1, 16);
         var cts = new CancellationTokenSource();
         _bulkCts = cts;
         IsBulkRunningFlag = true;
-        BulkStatus = $"Running from {ids[start]}…";
+        BulkStatus = $"Running from {ids[start]} on {threads} {(threads == 1 ? "thread" : "threads")}…";
 
         try
         {
             var finished = await Bulk.RunAsync(workspace, collection, environment, template, placeholder,
                 ids.Skip(start).ToList(), result =>
                 {
-                    processed++;
-                    last = result.Id;
                     BulkLog.Add(result.LogLine);
                     _store.AppendBulkLog($"{BulkKey} {result.LogLine}");
-                    SaveBulkProgress(ids, last, processed);
-                    BulkStatus = $"{processed} of {ids.Count} processed. Last id: {last}";
-                }, cts.Token);
 
+                    finishedFlags[start + result.Position] = true;
+                    processed++;
+                    if (result.StatusCode is not null)
+                        callsSent++;
+                    if (result.Succeeded)
+                        callsOk++;
+                    while (frontier < ids.Count && finishedFlags[frontier])
+                        frontier++;
+
+                    var lastProcessed = frontier > 0 ? ids[frontier - 1] : null;
+                    SaveBulkProgress(ids, lastProcessed, processed);
+                    BulkStatus = $"{processed} of {ids.Count} processed. Last id: {lastProcessed ?? "none"}. {CallsText(callsSent, callsOk)}";
+                }, cts.Token, threads);
+
+            var lastId = frontier > 0 ? ids[frontier - 1] : null;
             BulkStatus = finished
-                ? $"Finished. {processed} of {ids.Count} processed."
-                : $"Stopped after {last}. Resume to continue from there.";
+                ? $"Finished. {processed} of {ids.Count} processed. {CallsText(callsSent, callsOk)}"
+                : $"Stopped after {lastId ?? "nothing"}. Resume to continue from there. {CallsText(callsSent, callsOk)}";
         }
         finally
         {
@@ -168,6 +188,9 @@ public sealed partial class MainViewModel
             Processed = processed,
         });
     }
+
+    private static string CallsText(int sent, int ok) =>
+        $"Responses: {sent} ({ok} OK, {sent - ok} failed).";
 
     private static string ProgressText(BulkProgress? saved) => saved is null
         ? "No ids processed yet for this request."

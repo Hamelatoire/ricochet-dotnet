@@ -8,7 +8,7 @@ Some work means sending the same Request once per item, such as syncing each pro
 
 ## Decisions within this
 
-- **One id at a time:** requests run in the order pasted, and the next one waits for the last to finish. Sending in parallel would be faster, but it could overload the API and makes the log harder to follow.
+- **One id at a time:** requests run in the order pasted, and the next one waits for the last to finish. *Amended by [ADR 0017](0017-parallel-bulk-runs.md), which lets the user choose how many ids are sent at once. Setting one thread gives the behaviour described here.*
 - **The Request on screen is the template:** unsaved edits are used, as with Send. Variables, the active Environment and the Collection's variables apply as they do for any request.
 - **Progress is remembered per Request:** after each id, the last id processed and the pasted list are saved to personal state, so Resume continues after that id even after the app restarts. Starting over clears it. A Request that has never been saved keeps no progress.
 - **Stop finishes the current id:** cancelling never leaves an id half sent, so the last id processed is always one that got a response or an error.
