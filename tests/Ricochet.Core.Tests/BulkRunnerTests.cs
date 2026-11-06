@@ -74,6 +74,85 @@ public class BulkRunnerTests
     }
 
     [Fact]
+    public async Task Stop_pressed_during_an_id_lets_that_id_finish()
+    {
+        using var cancel = new CancellationTokenSource();
+        var handler = new Handler(_ =>
+        {
+            cancel.Cancel();
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        var runner = new BulkRunner(new RequestSender(new HttpClient(handler)));
+        var results = new List<BulkItemResult>();
+
+        var finished = await runner.RunAsync(Empty(), Plain(), null, Template(), "id", ["p1", "p2"], results.Add, cancel.Token);
+
+        Assert.False(finished);
+        Assert.Equal(["p1"], results.Select(r => r.Id));
+        Assert.True(results[0].Succeeded);
+        Assert.Single(handler.Urls);
+    }
+
+    private sealed class OverlapHandler : HttpMessageHandler
+    {
+        private int _current;
+        public int MaxConcurrent { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var now = Interlocked.Increment(ref _current);
+            lock (this)
+                MaxConcurrent = Math.Max(MaxConcurrent, now);
+            await Task.Delay(50, cancellationToken);
+            Interlocked.Decrement(ref _current);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
+    [Fact]
+    public async Task Parallel_run_never_exceeds_the_thread_count_and_reports_every_id()
+    {
+        var handler = new OverlapHandler();
+        var runner = new BulkRunner(new RequestSender(new HttpClient(handler)));
+        var results = new List<BulkItemResult>();
+        string[] ids = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"];
+
+        var finished = await runner.RunAsync(Empty(), Plain(), null, Template(), "id", ids, results.Add, maxParallel: 3);
+
+        Assert.True(finished);
+        Assert.Equal(3, handler.MaxConcurrent);
+        Assert.Equal(ids.OrderBy(id => id), results.Select(r => r.Id).OrderBy(id => id));
+        Assert.Equal(Enumerable.Range(0, ids.Length), results.Select(r => r.Position).OrderBy(p => p));
+    }
+
+    [Fact]
+    public async Task One_thread_sends_one_id_at_a_time()
+    {
+        var handler = new OverlapHandler();
+        var runner = new BulkRunner(new RequestSender(new HttpClient(handler)));
+
+        await runner.RunAsync(Empty(), Plain(), null, Template(), "id", ["p1", "p2", "p3"], _ => { }, maxParallel: 1);
+
+        Assert.Equal(1, handler.MaxConcurrent);
+    }
+
+    [Fact]
+    public async Task Stopping_a_parallel_run_starts_no_new_ids_but_finishes_those_in_flight()
+    {
+        var handler = new OverlapHandler();
+        var runner = new BulkRunner(new RequestSender(new HttpClient(handler)));
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(120));
+        var results = new List<BulkItemResult>();
+        string[] ids = Enumerable.Range(1, 40).Select(i => $"p{i}").ToArray();
+
+        var finished = await runner.RunAsync(Empty(), Plain(), null, Template(), "id", ids, results.Add, cancel.Token, maxParallel: 4);
+
+        Assert.False(finished);
+        Assert.True(results.Count < ids.Length);
+        Assert.All(results, r => Assert.True(r.Succeeded));
+    }
+
+    [Fact]
     public async Task An_id_with_a_missing_variable_is_not_sent()
     {
         var handler = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK));
