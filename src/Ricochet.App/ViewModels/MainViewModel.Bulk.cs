@@ -68,6 +68,28 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private void CloseBulkPage() => IsBulkPageOpen = false;
 
+    /// <summary>Replaces the pasted ids with the ids from a file. Blank lines and surrounding spaces are dropped, as with paste.</summary>
+    public void LoadBulkIds(string text, string fileName)
+    {
+        var ids = BulkRunner.ParseIds(text);
+        BulkIdsText = string.Join('\n', ids);
+        BulkStatus = ids.Count == 0
+            ? $"{fileName} has no ids."
+            : $"Loaded {ids.Count} id(s) from {fileName}.";
+    }
+
+    /// <summary>Removes the ids from the page. Saved progress and the log are kept, so Resume still knows where it stopped.</summary>
+    [RelayCommand]
+    private void ClearBulkIds()
+    {
+        BulkIdsText = "";
+        BulkStatus = "Ids removed.";
+    }
+
+    /// <summary>Empties the log on screen. The saved bulk-log.txt keeps every run.</summary>
+    [RelayCommand]
+    private void ClearBulkLog() => BulkLog.Clear();
+
     [RelayCommand]
     private async Task StartBulkAsync()
     {
@@ -128,6 +150,12 @@ public sealed partial class MainViewModel
 
         // Ids can finish out of order, so "processed" means the leading run of finished ids. Resume starts after that
         // run, which re-sends any later id that finished early. That is safe, and nothing is skipped.
+        // Each run starts with an empty log, so its lines aren't mixed with an earlier run's. The saved file keeps every run, with a header.
+        BulkLog.Clear();
+        var header = $"--- Run from {ids[start]}, {Math.Clamp(BulkThreads, 1, 16)} thread(s), {ids.Count - start} id(s), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ---";
+        BulkLog.Add(header);
+        _store.AppendBulkLog($"{BulkKey} {header}");
+
         var finishedFlags = new bool[ids.Count];
         var processed = start;
         // Calls actually sent in this run, and how many got a 2xx. Ids that were not sent (missing variable) don't count.

@@ -226,6 +226,37 @@ public partial class MainWindow : Window
             await _viewModel.ImportFilesAsync(paths);
     }
 
+    /// <summary>Loads ids from a text file into the bulk page, one id per line. The file is only read, never changed.</summary>
+    private async void OnImportIdsClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null)
+            return;
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import ids from a text file",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("Text files") { Patterns = ["*.txt"] },
+                FilePickerFileTypes.All,
+            ],
+        });
+
+        if (files.Count == 0 || files[0].TryGetLocalPath() is not { } path)
+            return;
+
+        try
+        {
+            var text = await File.ReadAllTextAsync(path);
+            _viewModel.LoadBulkIds(text, Path.GetFileName(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _viewModel.BulkStatus = $"Could not read {Path.GetFileName(path)}: {ex.Message}";
+        }
+    }
+
     private async void OnChangeFolderClick(object? sender, RoutedEventArgs e)
     {
         if (_viewModel is null)
