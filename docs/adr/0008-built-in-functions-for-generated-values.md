@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted (core built; History does not yet show generated values)
 ---
 
 # Built-in functions for generated values
