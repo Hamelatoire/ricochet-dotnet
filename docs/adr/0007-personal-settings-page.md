@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # A settings page for personal settings only

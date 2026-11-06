@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -10,36 +11,70 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
 {
     public const long DefaultMaxBodyBytes = 100 * 1024 * 1024;
 
-    private readonly TimeSpan _timeout = timeout ?? TimeSpan.FromMinutes(2);
+    private readonly Lock _gate = new();
+    private HttpClient _client = client;
+    private TimeSpan _timeout = timeout ?? TimeSpan.FromMinutes(2);
+    private long _maxBodyBytes = maxBodyBytes;
 
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*://")]
     private static partial Regex HasScheme();
 
-    /// <summary>A client configured for an API tool: no hidden cookie jar, and our own timeout handling.</summary>
-    public static HttpClient CreateDefaultClient() => new(new SocketsHttpHandler
+    /// <summary>
+    /// A client configured for an API tool: no hidden cookie jar, and our own timeout handling.
+    /// Turning off certificate verification accepts any certificate, so only do it on purpose.
+    /// </summary>
+    public static HttpClient CreateDefaultClient(bool followRedirects = true, bool verifyCertificates = true)
     {
-        AutomaticDecompression = DecompressionMethods.All,
-        AllowAutoRedirect = true,
-        UseCookies = false,
-        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-    })
+        var handler = new SocketsHttpHandler
+        {
+            AutomaticDecompression = DecompressionMethods.All,
+            AllowAutoRedirect = followRedirects,
+            UseCookies = false,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        };
+        if (!verifyCertificates)
+            handler.SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = (_, _, _, _) => true };
+
+        return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+    }
+
+    /// <summary>
+    /// Applies new settings to the requests sent from now on. A request already in progress finishes with the
+    /// settings it started with. The client it replaced is not disposed, so that request can still finish.
+    /// </summary>
+    public void Configure(TimeSpan timeout, bool followRedirects, bool verifyCertificates, long maxBodyBytes)
     {
-        Timeout = Timeout.InfiniteTimeSpan,
-    };
+        lock (_gate)
+        {
+            _timeout = timeout;
+            _maxBodyBytes = maxBodyBytes;
+            _client = CreateDefaultClient(followRedirects, verifyCertificates);
+        }
+    }
 
     /// <exception cref="RequestFailedException">The request was invalid, failed, or timed out.</exception>
     /// <exception cref="OperationCanceledException">The caller cancelled.</exception>
     public async Task<ApiResponse> SendAsync(ApiRequest request, CancellationToken cancellationToken = default)
     {
+        HttpClient client;
+        TimeSpan timeout;
+        long maxBodyBytes;
+        lock (_gate)
+        {
+            client = _client;
+            timeout = _timeout;
+            maxBodyBytes = _maxBodyBytes;
+        }
+
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(_timeout);
+        timeoutCts.CancelAfter(timeout);
 
         try
         {
             using var message = BuildMessage(request);
             var stopwatch = Stopwatch.StartNew();
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
-            var (body, truncated) = await ReadBodyAsync(response.Content, timeoutCts.Token);
+            var (body, truncated) = await ReadBodyAsync(response.Content, maxBodyBytes, timeoutCts.Token);
             stopwatch.Stop();
 
             return new ApiResponse(
@@ -54,7 +89,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RequestFailedException($"Timed out after {_timeout.TotalSeconds:0} seconds.", ex);
+            throw new RequestFailedException($"Timed out after {timeout.TotalSeconds:0} seconds.", ex);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or FormatException or ArgumentException)
         {
@@ -143,7 +178,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         return start.Length > 0 && start[0] is '{' or '[' ? "application/json" : "text/plain; charset=utf-8";
     }
 
-    private async Task<(byte[] Body, bool Truncated)> ReadBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    private static async Task<(byte[] Body, bool Truncated)> ReadBodyAsync(HttpContent content, long maxBodyBytes, CancellationToken cancellationToken)
     {
         await using var stream = await content.ReadAsStreamAsync(cancellationToken);
         using var buffer = new MemoryStream();
