@@ -23,6 +23,12 @@ Choose **Settings** at the bottom of the sidebar for preferences that stay on th
 
 ![The Settings page](docs/screenshots/settings-page-light.png)
 
+## Git branch
+
+When the workspace folder is a git repository, the sidebar shows its branch under the folder name, with commits ahead and behind its upstream. Ricochet only reads this, using the git on your computer. It never fetches, commits or pushes, so the counts reflect what git last fetched. See [ADR 0011](docs/adr/0011-read-only-git-status.md).
+
+![The sidebar showing the git branch](docs/screenshots/sidebar-git-branch.png)
+
 ## Collections from an OpenAPI URL
 
 Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in JSON, and press **Fetch**. Ricochet shows what it will add or change before you press **Apply**. Each operation becomes a request, grouped into folders by tag. Running the same address again updates that collection and keeps the headers, bodies, tests and saved values you added. See [ADR 0014](docs/adr/0014-collections-from-openapi-url.md).

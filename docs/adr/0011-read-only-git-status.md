@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted (built; the sidebar refreshes on window activation, not on every outside change)
 ---
 
 # Show git status read-only, using the installed git
