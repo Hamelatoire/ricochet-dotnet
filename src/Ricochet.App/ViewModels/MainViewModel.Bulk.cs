@@ -68,6 +68,10 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private void CloseBulkPage() => IsBulkPageOpen = false;
 
+    /// <summary>Empties the log on screen. The saved bulk-log.txt keeps every run.</summary>
+    [RelayCommand]
+    private void ClearBulkLog() => BulkLog.Clear();
+
     [RelayCommand]
     private async Task StartBulkAsync()
     {

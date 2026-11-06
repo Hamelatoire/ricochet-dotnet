@@ -191,6 +191,12 @@
                     IsEnabled="{Binding IsBulkRunning}" AutomationProperties.Name="Stop" />
             <TextBlock Grid.Column="3" Classes="muted" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis" Text="{Binding BulkStatus}" />
           </Grid>
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
+            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center"
+                       Text="The log on this screen. The saved log keeps every run." />
+            <Button Grid.Column="1" Content="Clear log" Command="{Binding ClearBulkLogCommand}"
+                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Clear the bulk run log" />
+          </Grid>
           <ListBox ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
                    AutomationProperties.Name="Bulk run log" />
         </DockPanel>
