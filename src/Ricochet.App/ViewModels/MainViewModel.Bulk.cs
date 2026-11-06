@@ -128,6 +128,12 @@ public sealed partial class MainViewModel
 
         // Ids can finish out of order, so "processed" means the leading run of finished ids. Resume starts after that
         // run, which re-sends any later id that finished early. That is safe, and nothing is skipped.
+        // Each run starts with an empty log, so its lines aren't mixed with an earlier run's. The saved file keeps every run, with a header.
+        BulkLog.Clear();
+        var header = $"--- Run from {ids[start]}, {Math.Clamp(BulkThreads, 1, 16)} thread(s), {ids.Count - start} id(s), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ---";
+        BulkLog.Add(header);
+        _store.AppendBulkLog($"{BulkKey} {header}");
+
         var finishedFlags = new bool[ids.Count];
         var processed = start;
         // Calls actually sent in this run, and how many got a 2xx. Ids that were not sent (missing variable) don't count.
