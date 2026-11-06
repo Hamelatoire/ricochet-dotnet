@@ -41,6 +41,8 @@ public partial class MainWindow : Window
         UrlEditor.AddHandler(InputElement.KeyDownEvent, OnUrlEditorKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
         Opened += (_, _) =>
         {
+            // The Bulk run page must never be showing when the window first appears, so the request is always visible.
+            _viewModel?.CloseBulkPageCommand.Execute(null);
             UrlEditor.Focus();
             ApplyTheme();
         };
