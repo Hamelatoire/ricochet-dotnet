@@ -68,6 +68,24 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private void CloseBulkPage() => IsBulkPageOpen = false;
 
+    /// <summary>Replaces the pasted ids with the ids from a file. Blank lines and surrounding spaces are dropped, as with paste.</summary>
+    public void LoadBulkIds(string text, string fileName)
+    {
+        var ids = BulkRunner.ParseIds(text);
+        BulkIdsText = string.Join('\n', ids);
+        BulkStatus = ids.Count == 0
+            ? $"{fileName} has no ids."
+            : $"Loaded {ids.Count} id(s) from {fileName}.";
+    }
+
+    /// <summary>Removes the ids from the page. Saved progress and the log are kept, so Resume still knows where it stopped.</summary>
+    [RelayCommand]
+    private void ClearBulkIds()
+    {
+        BulkIdsText = "";
+        BulkStatus = "Ids removed.";
+    }
+
     /// <summary>Empties the log on screen. The saved bulk-log.txt keeps every run.</summary>
     [RelayCommand]
     private void ClearBulkLog() => BulkLog.Clear();
