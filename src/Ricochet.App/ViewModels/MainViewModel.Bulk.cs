@@ -130,6 +130,9 @@ public sealed partial class MainViewModel
         // run, which re-sends any later id that finished early. That is safe, and nothing is skipped.
         var finishedFlags = new bool[ids.Count];
         var processed = start;
+        // Calls actually sent in this run, and how many got a 2xx. Ids that were not sent (missing variable) don't count.
+        var callsSent = 0;
+        var callsOk = 0;
         var frontier = start;
         var threads = Math.Clamp(BulkThreads, 1, 16);
         var cts = new CancellationTokenSource();
@@ -147,18 +150,22 @@ public sealed partial class MainViewModel
 
                     finishedFlags[start + result.Position] = true;
                     processed++;
+                    if (result.StatusCode is not null)
+                        callsSent++;
+                    if (result.Succeeded)
+                        callsOk++;
                     while (frontier < ids.Count && finishedFlags[frontier])
                         frontier++;
 
                     var lastProcessed = frontier > 0 ? ids[frontier - 1] : null;
                     SaveBulkProgress(ids, lastProcessed, processed);
-                    BulkStatus = $"{processed} of {ids.Count} processed. Last id: {lastProcessed ?? "none"}";
+                    BulkStatus = $"{processed} of {ids.Count} processed. Last id: {lastProcessed ?? "none"}. {CallsText(callsSent, callsOk)}";
                 }, cts.Token, threads);
 
             var lastId = frontier > 0 ? ids[frontier - 1] : null;
             BulkStatus = finished
-                ? $"Finished. {processed} of {ids.Count} processed."
-                : $"Stopped after {lastId ?? "nothing"}. Resume to continue from there.";
+                ? $"Finished. {processed} of {ids.Count} processed. {CallsText(callsSent, callsOk)}"
+                : $"Stopped after {lastId ?? "nothing"}. Resume to continue from there. {CallsText(callsSent, callsOk)}";
         }
         finally
         {
@@ -181,6 +188,9 @@ public sealed partial class MainViewModel
             Processed = processed,
         });
     }
+
+    private static string CallsText(int sent, int ok) =>
+        $"Responses: {sent} ({ok} OK, {sent - ok} failed).";
 
     private static string ProgressText(BulkProgress? saved) => saved is null
         ? "No ids processed yet for this request."
