@@ -175,7 +175,14 @@
                            AutomationProperties.Name="Threads"
                            ToolTip.Tip="How many ids are sent at once. 1 sends them one at a time." />
           </Grid>
-          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" Margin="0,0,0,6" Text="Ids, one per line" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
+            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Text="Ids, one per line" />
+            <Button Grid.Column="1" Content="Import from file…" Click="OnImportIdsClick" IsEnabled="{Binding !IsBulkRunning}"
+                    AutomationProperties.Name="Import ids from a text file" ToolTip.Tip="Load ids from a .txt file, one per line" />
+            <Button Grid.Column="2" Content="Remove ids" Margin="8,0,0,0" Command="{Binding ClearBulkIdsCommand}"
+                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Remove the ids"
+                    ToolTip.Tip="Clear the list of ids. Saved progress is kept, so Resume still knows where it stopped." />
+          </Grid>
           <Grid DockPanel.Dock="Top" RowDefinitions="Auto,*" Height="180" Margin="0,0,0,12">
             <TextBox Grid.Row="0" Text="{Binding BulkIdsText}" AcceptsReturn="True" TextWrapping="Wrap" Height="180"
                      FontFamily="Consolas,Menlo,monospace" PlaceholderText="Paste ids here, one per line"
