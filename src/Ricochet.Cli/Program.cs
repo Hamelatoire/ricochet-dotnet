@@ -29,6 +29,7 @@ internal static class Program
           --xunit <file>         Also write an xUnit XML report.
           --timeout <seconds>    Time limit for each request. Default: 120.
           --bail                 Stop at the first failure.
+          --insecure             Skip TLS certificate checks. Only for servers you trust, such as a local test server.
           --help                 Show this help.
 
         Variables can also come from environment variables named RICOCHET_VAR_<name>.
@@ -50,6 +51,7 @@ internal static class Program
         public string? Xunit { get; set; }
         public int TimeoutSeconds { get; set; } = 120;
         public bool Bail { get; set; }
+        public bool Insecure { get; set; }
         public List<KeyValue> Variables { get; } = [];
     }
 
@@ -111,7 +113,13 @@ internal static class Program
         string? currentCollection = null;
         var startedAt = DateTimeOffset.Now;
 
-        var runner = new CollectionRunner(new RequestSender(RequestSender.CreateDefaultClient(), TimeSpan.FromSeconds(options.TimeoutSeconds)));
+        // Certificate checks are a CI setting of their own. The app's Settings page does not reach the CLI (ADR 0007).
+        if (options.Insecure)
+            Console.Error.WriteLine("Warning: TLS certificate checks are off (--insecure). Requests are not verified.");
+
+        var runner = new CollectionRunner(new RequestSender(
+            RequestSender.CreateDefaultClient(verifyCertificates: !options.Insecure),
+            TimeSpan.FromSeconds(options.TimeoutSeconds)));
         var report = await runner.RunAsync(
             workspace,
             new RunOptions
@@ -223,6 +231,9 @@ internal static class Program
                     return false;
                 case "--bail":
                     options.Bail = true;
+                    break;
+                case "--insecure":
+                    options.Insecure = true;
                     break;
                 case "--collection":
                     options.Collection = Value();
