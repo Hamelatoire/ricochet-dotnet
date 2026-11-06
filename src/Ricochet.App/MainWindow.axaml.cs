@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         InitializeTreeDrag();
         UrlEditor.TextArea.TextView.LineTransformers.Add(new VariableColorizer(new SolidColorBrush(Color.Parse("#FF7A50"))));
         UrlEditor.TextChanged += OnUrlEditorTextChanged;
+        UrlEditor.PointerMoved += OnUrlEditorPointerMoved;
         UrlEditor.AddHandler(InputElement.KeyDownEvent, OnUrlEditorKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
         // The branch can change outside the app, so it's read again whenever the window comes to the front.
         Activated += (_, _) => _viewModel?.RefreshRepositoryStatusCommand.Execute(null);
@@ -242,8 +243,18 @@ public partial class MainWindow : Window
 
     private async void OnCopyResponseClick(object? sender, RoutedEventArgs e)
     {
-        if (_viewModel is not null && Clipboard is { } clipboard)
-            await clipboard.SetTextAsync(_viewModel.ResponseBody);
+        if (_viewModel is null || Clipboard is not { } clipboard)
+            return;
+
+        await clipboard.SetTextAsync(_viewModel.ResponseBody);
+
+        // Confirms the copy on the button itself, then puts its label back.
+        if (sender is Button button)
+        {
+            button.Content = "Copied";
+            await Task.Delay(1500);
+            button.Content = "Copy";
+        }
     }
 
     // AvaloniaEdit's text is not a bindable property, so the response is pushed in from here.
@@ -271,6 +282,37 @@ public partial class MainWindow : Window
             return;
 
         _viewModel.Url = UrlEditor.Text;
+    }
+
+    /// <summary>Shows what the {{variable}} under the pointer resolves to, unless it is a Secret.</summary>
+    private void OnUrlEditorPointerMoved(object? sender, PointerEventArgs e)
+    {
+        var tip = _viewModel is null ? null : VariableTipAt(e.GetPosition(UrlEditor.TextArea.TextView));
+        if (ToolTip.GetTip(UrlEditor) as string != tip)
+            ToolTip.SetTip(UrlEditor, tip);
+    }
+
+    private string? VariableTipAt(Point point)
+    {
+        var position = UrlEditor.TextArea.TextView.GetPosition(point);
+        if (position is null)
+            return null;
+
+        var text = UrlEditor.Text;
+        var offset = UrlEditor.Document.GetOffset(position.Value.Location);
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(text, @"\{\{[^{}\r\n]*\}\}"))
+        {
+            if (offset < match.Index || offset > match.Index + match.Length)
+                continue;
+
+            var name = match.Value[2..^2].Trim();
+            if (name.StartsWith('$'))
+                return null; // Built-in functions generate their value on send, so there is nothing to show yet.
+            var value = _viewModel!.VariableValueForHover(name);
+            return value is null ? $"{{{{{name}}}}}: no value" : $"{{{{{name}}}}} = {value}";
+        }
+
+        return null;
     }
 
     private void OnUrlEditorKeyDown(object? sender, KeyEventArgs e)

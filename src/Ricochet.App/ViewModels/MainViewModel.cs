@@ -492,6 +492,21 @@ public sealed partial class MainViewModel : ObservableObject
     public bool IsBasicAuth => SelectedAuth.Kind == AuthKinds.Basic;
     public bool IsApiKeyAuth => SelectedAuth.Kind == AuthKinds.ApiKey;
 
+    /// <summary>
+    /// The value a {{name}} in the URL currently resolves to, for the hover tip. Null when it has no value
+    /// or is a Secret, so a Secret's value is never shown on screen.
+    /// </summary>
+    public string? VariableValueForHover(string name)
+    {
+        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries()];
+        var match = scopes.SelectMany(scope => scope ?? []).LastOrDefault(entry => entry.Enabled && entry.Key == name);
+        if (match is null)
+            return null;
+        if (match.IsSecret)
+            return "Secret, hidden";
+        return match.Value;
+    }
+
     [ObservableProperty] private TreeNodeViewModel? _selectedNode;
     [ObservableProperty] private HistoryEntry? _selectedHistory;
 
