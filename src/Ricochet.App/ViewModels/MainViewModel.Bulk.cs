@@ -57,6 +57,7 @@ public sealed partial class MainViewModel
         BulkStatus = ProgressText(saved);
 
         IsEnvironmentsPageOpen = false;
+        IsSettingsPageOpen = false;
         IsVariablesPageOpen = false;
         IsBulkPageOpen = true;
     }

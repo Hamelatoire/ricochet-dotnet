@@ -52,14 +52,13 @@
               <TextBlock Text="Environments" />
             </StackPanel>
           </Button>
-          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="4,8,0,0">
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,8,0,0">
             <PathIcon Grid.Column="0" Data="{DynamicResource IconFolder}" Width="13" Height="13" Margin="0,0,8,0" Foreground="{DynamicResource TextMuted}" />
             <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                        Text="{Binding WorkspaceFolderName}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
-            <Button Grid.Column="2" Classes="ghost" Content="Change…" Padding="10,4" FontSize="12" Click="OnChangeFolderClick"
-                    AutomationProperties.Name="Change workspace folder"
-                    ToolTip.Tip="Open a workspace folder, or copy this workspace into a new one, such as a git repository" />
           </Grid>
+          <Button DockPanel.Dock="Bottom" HorizontalAlignment="Stretch" Margin="0,8,0,0" Content="Settings" Command="{Binding OpenSettingsPageCommand}"
+                  AutomationProperties.Name="Settings" ToolTip.Tip="Timeouts, redirects, certificate checks, response size and the workspace folder" />
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,8,0,0">
             <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Theme" />
             <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding ThemeChoice}"
@@ -305,6 +304,89 @@
               </DockPanel>
             </Panel>
           </Grid>
+        </DockPanel>
+      </Border>
+
+      <!-- Settings page (ADR 0007): this machine's preferences only -->
+      <Border Grid.Column="2" Classes="card" Padding="24,20" Margin="0,46,12,12" IsVisible="{Binding IsSettingsPageOpen}">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,20">
+            <StackPanel Grid.Column="0" Spacing="4">
+              <TextBlock Text="Settings" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                         Text="These apply to this machine only. They are never saved in the workspace, so a git pull can't change them. Changes apply straight away." />
+            </StackPanel>
+            <Button Grid.Column="1" Classes="primary" Content="Done" Margin="16,0,0,0" VerticalAlignment="Top"
+                    Command="{Binding CloseSettingsPageCommand}" AutomationProperties.Name="Done" />
+          </Grid>
+          <ScrollViewer>
+            <StackPanel Spacing="22" MaxWidth="720" HorizontalAlignment="Left">
+              <StackPanel Spacing="12">
+                <TextBlock Text="Requests" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Request timeout (seconds)" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A request that takes longer is cancelled. Between 1 and 3600." />
+                  </StackPanel>
+                  <NumericUpDown Grid.Column="1" Value="{Binding RequestTimeoutSeconds}" Minimum="1" Maximum="3600" Increment="5"
+                                 VerticalAlignment="Top" AutomationProperties.Name="Request timeout in seconds" />
+                </Grid>
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Follow redirects" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Send the request again to the address a server redirects to." />
+                  </StackPanel>
+                  <CheckBox Grid.Column="1" IsChecked="{Binding FollowRedirects}" Content="On" VerticalAlignment="Top"
+                            AutomationProperties.Name="Follow redirects" />
+                </Grid>
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Verify TLS certificates" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                               Text="Turning this off accepts any server certificate. Anyone on the network could read or change your requests, including credentials. Keep it on unless you have a reason not to." />
+                  </StackPanel>
+                  <CheckBox Grid.Column="1" IsChecked="{Binding VerifyTlsCertificates}" Content="On" VerticalAlignment="Top"
+                            AutomationProperties.Name="Verify TLS certificates" />
+                </Grid>
+              </StackPanel>
+
+              <StackPanel Spacing="12">
+                <TextBlock Text="Responses" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Largest response to keep (MB)" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A longer response is cut off at this size and marked as truncated." />
+                  </StackPanel>
+                  <NumericUpDown Grid.Column="1" Value="{Binding MaxResponseMegabytes}" Minimum="1" Maximum="10240" Increment="10"
+                                 VerticalAlignment="Top" AutomationProperties.Name="Largest response in megabytes" />
+                </Grid>
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Wrap long lines" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Wrap long lines in the response body. The Wrap button in the response uses this too." />
+                  </StackPanel>
+                  <CheckBox Grid.Column="1" IsChecked="{Binding WrapResponse}" Content="On" VerticalAlignment="Top"
+                            AutomationProperties.Name="Wrap long lines" />
+                </Grid>
+              </StackPanel>
+
+              <StackPanel Spacing="12">
+                <TextBlock Text="Workspace" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Workspace folder" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Open a workspace folder, or copy this workspace into a new one, such as a git repository." />
+                  </StackPanel>
+                  <Grid Grid.Column="1" ColumnDefinitions="*,Auto" VerticalAlignment="Top">
+                    <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               Text="{Binding WorkspaceFolderPath}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Change…" Click="OnChangeFolderClick"
+                            AutomationProperties.Name="Change workspace folder" />
+                  </Grid>
+                </Grid>
+              </StackPanel>
+            </StackPanel>
+          </ScrollViewer>
         </DockPanel>
       </Border>
 
@@ -662,6 +744,13 @@
                    Text="{Binding SpecPreview}" IsVisible="{Binding HasSpecPreview}" AutomationProperties.Name="Changes preview" />
         </DockPanel>
       </Border>
+    </Border>
+
+    <!-- Shown over every page: the Settings page can be closed, and this must stay visible while checks are off. -->
+    <Border VerticalAlignment="Top" HorizontalAlignment="Stretch" Margin="326,6,160,0" Classes="warningbar" Padding="12,4"
+            IsVisible="{Binding ShowTlsWarning}" AutomationProperties.Name="Certificate checks are off">
+      <TextBlock Foreground="{DynamicResource Warning}" FontSize="12" TextTrimming="CharacterEllipsis"
+                 Text="Certificate checks are off. Requests will be sent without verifying the server. Turn them on in Settings." />
     </Border>
   </Grid>
 </Window>

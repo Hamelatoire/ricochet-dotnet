@@ -13,6 +13,7 @@ namespace Ricochet.Core;
 [JsonSerializable(typeof(List<HistoryEntry>))]
 [JsonSerializable(typeof(List<KeyValue>))]
 [JsonSerializable(typeof(BulkProgress))]
+[JsonSerializable(typeof(PersonalSettings))]
 [JsonSerializable(typeof(WorkspaceMarkerFile))]
 [JsonSerializable(typeof(CollectionFile))]
 [JsonSerializable(typeof(FolderFile))]
@@ -33,6 +34,24 @@ public sealed record PersonalState
 
     /// <summary>Where each bulk run stopped, so it can resume after the last id it processed.</summary>
     public IReadOnlyList<BulkProgress> Bulk { get; set; } = [];
+
+    /// <summary>Preferences for how this machine sends requests and shows responses (ADR 0007).</summary>
+    public PersonalSettings Settings { get; set; } = new();
+}
+
+/// <summary>
+/// Personal preferences. Missing values in state.json take these defaults, so a new option needs no migration.
+/// The CLI does not read these; it has its own options.
+/// </summary>
+public sealed record PersonalSettings
+{
+    public int RequestTimeoutSeconds { get; set; } = 120;
+    public bool FollowRedirects { get; set; } = true;
+
+    /// <summary>When off, the app accepts any server certificate. The app warns while this is off.</summary>
+    public bool VerifyTlsCertificates { get; set; } = true;
+    public int MaxResponseMegabytes { get; set; } = 100;
+    public bool WrapResponse { get; set; } = true;
 }
 
 /// <summary>The ids pasted for a Request's bulk run, and the last one that was processed.</summary>
@@ -95,6 +114,22 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     {
         lock (_gate)
             SaveState(_state with { Theme = theme });
+    }
+
+    /// <summary>This machine's preferences. Read them with the store lock, as the other personal state.</summary>
+    public PersonalSettings Settings
+    {
+        get
+        {
+            lock (_gate)
+                return _state.Settings;
+        }
+    }
+
+    public void SaveSettings(PersonalSettings settings)
+    {
+        lock (_gate)
+            SaveState(_state with { Settings = settings });
     }
 
     /// <summary>The bulk run progress saved for each Request.</summary>

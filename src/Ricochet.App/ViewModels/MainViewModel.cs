@@ -29,6 +29,8 @@ public sealed partial class MainViewModel : ObservableObject
         _store = store;
         _vault = vault;
         _storedSecrets = LoadSecrets();
+        _settings = store.Settings;
+        ApplySettings();
 
         var loaded = store.Load();
         _themeChoice = ThemeSettings.ChoiceName(store.Theme);
@@ -224,7 +226,57 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool HasStorageWarning => StorageWarning.Length > 0;
 
-    [ObservableProperty] private bool _wrapResponse = true;
+    // Personal settings (ADR 0007). Each change is saved and applied at once, so there is no Save button.
+    private PersonalSettings _settings = new();
+
+    // Decimal, so that the numeric boxes can bind to them directly.
+    public decimal RequestTimeoutSeconds
+    {
+        get => _settings.RequestTimeoutSeconds;
+        set => ChangeSettings(s => s with { RequestTimeoutSeconds = (int)Math.Clamp(value, 1m, 3600m) }, nameof(RequestTimeoutSeconds));
+    }
+
+    public bool FollowRedirects
+    {
+        get => _settings.FollowRedirects;
+        set => ChangeSettings(s => s with { FollowRedirects = value }, nameof(FollowRedirects));
+    }
+
+    public bool VerifyTlsCertificates
+    {
+        get => _settings.VerifyTlsCertificates;
+        set => ChangeSettings(s => s with { VerifyTlsCertificates = value }, nameof(VerifyTlsCertificates));
+    }
+
+    public decimal MaxResponseMegabytes
+    {
+        get => _settings.MaxResponseMegabytes;
+        set => ChangeSettings(s => s with { MaxResponseMegabytes = (int)Math.Clamp(value, 1m, 10240m) }, nameof(MaxResponseMegabytes));
+    }
+
+    public bool WrapResponse
+    {
+        get => _settings.WrapResponse;
+        set => ChangeSettings(s => s with { WrapResponse = value }, nameof(WrapResponse));
+    }
+
+    /// <summary>Shown on every page while certificate checks are off, because that exposes credentials.</summary>
+    public bool ShowTlsWarning => !_settings.VerifyTlsCertificates;
+
+    private void ChangeSettings(Func<PersonalSettings, PersonalSettings> change, string propertyName)
+    {
+        _settings = change(_settings);
+        _store.SaveSettings(_settings);
+        ApplySettings();
+        OnPropertyChanged(propertyName);
+        OnPropertyChanged(nameof(ShowTlsWarning));
+    }
+
+    private void ApplySettings() => _sender.Configure(
+        TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds),
+        _settings.FollowRedirects,
+        _settings.VerifyTlsCertificates,
+        _settings.MaxResponseMegabytes * 1024L * 1024L);
 
     [RelayCommand]
     private void DismissStorageWarning() => StorageWarning = "";
@@ -462,15 +514,32 @@ public sealed partial class MainViewModel : ObservableObject
         EditingEnvironment = HasActiveEnvironment ? ActiveEnvironment : EditingEnvironment ?? EditableEnvironments.FirstOrDefault();
         IsVariablesPageOpen = false;
         IsBulkPageOpen = false;
+        IsSettingsPageOpen = false;
         IsEnvironmentsPageOpen = true;
     }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
+    private bool _isSettingsPageOpen;
+
+    [RelayCommand]
+    private void OpenSettingsPage()
+    {
+        IsEnvironmentsPageOpen = false;
+        IsVariablesPageOpen = false;
+        IsBulkPageOpen = false;
+        IsSettingsPageOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseSettingsPage() => IsSettingsPageOpen = false;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
     private bool _isVariablesPageOpen;
 
     /// <summary>True while either page covers the request, so the request is hidden behind it.</summary>
-    public bool IsSidePageOpen => IsEnvironmentsPageOpen || IsVariablesPageOpen || IsBulkPageOpen;
+    public bool IsSidePageOpen => IsEnvironmentsPageOpen || IsVariablesPageOpen || IsBulkPageOpen || IsSettingsPageOpen;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEditingVariablesCollection))]
@@ -538,6 +607,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void ShowVariablesPage(TreeNodeViewModel? collection)
     {
         IsEnvironmentsPageOpen = false;
+        IsSettingsPageOpen = false;
         IsBulkPageOpen = false;
         EditingVariablesCollection = collection ?? CurrentCollection ?? EditingVariablesCollection ?? Collections.FirstOrDefault();
         VariablesEnvironment = HasActiveEnvironment ? ActiveEnvironment
@@ -557,6 +627,7 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task CloseEnvironmentsPageAsync()
     {
         IsEnvironmentsPageOpen = false;
+        IsSettingsPageOpen = false;
         await PersistAsync();
     }
 
@@ -626,6 +697,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         IsEnvironmentsPageOpen = false;
+        IsSettingsPageOpen = false;
         SelectedHistory = null;
         _currentNode = value;
         CurrentCollection = value.Root;
@@ -638,6 +710,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         IsEnvironmentsPageOpen = false;
+        IsSettingsPageOpen = false;
         SelectedNode = null;
         _currentNode = null; // Saving from history creates a new request.
         CurrentCollection = Collections.FirstOrDefault(c => c.Id == value.CollectionId);
@@ -743,6 +816,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void NewRequest()
     {
         IsEnvironmentsPageOpen = false;
+        IsSettingsPageOpen = false;
         SelectedNode = null;
         SelectedHistory = null;
         _currentNode = null;
@@ -760,7 +834,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         // The request is hidden behind the page, so the shortcut must not send it unseen.
-        if (IsEnvironmentsPageOpen || IsVariablesPageOpen)
+        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen)
             return;
 
         using var cts = new CancellationTokenSource();
@@ -854,7 +928,7 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task SaveAsync()
     {
         // The request is hidden behind the page, so the shortcut saves what is on screen.
-        if (IsEnvironmentsPageOpen || IsVariablesPageOpen)
+        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen)
         {
             await PersistAsync();
             return;
@@ -1065,7 +1139,7 @@ public sealed partial class MainViewModel : ObservableObject
     public bool HasSpecError => SpecError.Length > 0;
     public bool HasSpecPreview => SpecPreview.Length > 0;
 
-    private static readonly Lazy<HttpClient> SpecClient = new(RequestSender.CreateDefaultClient);
+    private static readonly Lazy<HttpClient> SpecClient = new(() => RequestSender.CreateDefaultClient());
     private OpenApiResult? _pendingSpec;
 
     [RelayCommand]
