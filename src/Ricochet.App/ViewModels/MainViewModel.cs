@@ -297,7 +297,29 @@ public sealed partial class MainViewModel : ObservableObject
         _folderWatcher = _store.Watch(() => Dispatcher.UIThread.Post(CheckForOutsideChanges));
         OnPropertyChanged(nameof(WorkspaceFolderPath));
         OnPropertyChanged(nameof(WorkspaceFolderName));
+        RefreshRepositoryStatusCommand.Execute(null);
     }
+
+    // The branch of the Workspace's git repository, read-only (ADR 0011). Refreshed when the folder changes and when the window is activated.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRepositoryStatus), nameof(RepositoryStatusText))]
+    private GitStatus? _repositoryStatus;
+
+    public bool HasRepositoryStatus => RepositoryStatus is not null;
+
+    public string RepositoryStatusText => RepositoryStatus switch
+    {
+        null => "",
+        { Ahead: null } status => status.Branch,
+        var status => $"{status.Branch}  ↑{status.Ahead} ↓{status.Behind}",
+    };
+
+    public string RepositoryStatusTip =>
+        "Compared with what git last fetched, so it can be out of date. Fetch and pull with your own git tools.";
+
+    [RelayCommand]
+    private async Task RefreshRepositoryStatusAsync() =>
+        RepositoryStatus = await GitStatusReader.ReadAsync(_store.FolderPath);
 
     private void ShowIssues(IReadOnlyList<WorkspaceIssue> issues)
     {

@@ -39,6 +39,8 @@ public partial class MainWindow : Window
         UrlEditor.TextArea.TextView.LineTransformers.Add(new VariableColorizer(new SolidColorBrush(Color.Parse("#FF7A50"))));
         UrlEditor.TextChanged += OnUrlEditorTextChanged;
         UrlEditor.AddHandler(InputElement.KeyDownEvent, OnUrlEditorKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+        // The branch can change outside the app, so it's read again whenever the window comes to the front.
+        Activated += (_, _) => _viewModel?.RefreshRepositoryStatusCommand.Execute(null);
         Opened += (_, _) =>
         {
             // The Bulk run page must never be showing when the window first appears, so the request is always visible.

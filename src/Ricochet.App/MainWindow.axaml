@@ -52,6 +52,9 @@
               <TextBlock Text="Environments" />
             </StackPanel>
           </Button>
+          <TextBlock DockPanel.Dock="Bottom" Classes="muted" FontSize="11" Margin="21,2,0,0" TextTrimming="CharacterEllipsis"
+                     IsVisible="{Binding HasRepositoryStatus}" Text="{Binding RepositoryStatusText}"
+                     ToolTip.Tip="{Binding RepositoryStatusTip}" AutomationProperties.Name="Git branch" />
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,8,0,0">
             <PathIcon Grid.Column="0" Data="{DynamicResource IconFolder}" Width="13" Height="13" Margin="0,0,8,0" Foreground="{DynamicResource TextMuted}" />
             <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
