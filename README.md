@@ -17,6 +17,12 @@ Ricochet follows your system's light or dark setting. Choose **System**, **Light
 | --- | --- |
 | ![Ricochet in the light theme](docs/screenshots/theme-light.png) | ![Ricochet in the dark theme](docs/screenshots/theme-dark.png) |
 
+## Settings
+
+Choose **Settings** at the bottom of the sidebar for preferences that stay on this machine: request timeout, following redirects, certificate checks, the largest response to keep, and wrapping long lines. They are never saved in the workspace, so a `git pull` cannot change them. While certificate checks are off, a warning shows on every page. See [ADR 0007](docs/adr/0007-personal-settings-page.md).
+
+![The Settings page](docs/screenshots/settings-page-light.png)
+
 ## Collections from an OpenAPI URL
 
 Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in JSON, and press **Fetch**. Ricochet shows what it will add or change before you press **Apply**. Each operation becomes a request, grouped into folders by tag. Running the same address again updates that collection and keeps the headers, bodies, tests and saved values you added. See [ADR 0014](docs/adr/0014-collections-from-openapi-url.md).
