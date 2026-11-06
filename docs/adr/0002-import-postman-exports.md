@@ -15,7 +15,7 @@ We follow Postman's order, so imported requests resolve to the same values: an E
 - **Imported:** folder structure and order, method, URL with path variables, headers, Collection Variables, and raw, urlencoded, GraphQL and text form-data bodies.
 - **Auth:** bearer, basic and API key are imported. Inheritance is resolved during import, so each Request holds the auth it will use and later edits to one Request cannot change another. Other types, including OAuth 2, are reported and the Request is left with no auth.
 - **Scripts are kept but not run:** pre-request and test scripts would require an embedded JavaScript engine and a Postman-compatible `pm` API, which is a large commitment for a tool whose goal is to be fast and small. They stay in the Workspace, so running them later would not need a re-import.
-- **Dynamic variables are not resolved:** placeholders like `{{$guid}}` stay as written.
+- **Dynamic variables:** `{{$guid}}`, `{{$timestamp}}` and `{{$randomInt}}` resolve to built-in functions ([ADR 0008](0008-built-in-functions-for-generated-values.md)). Other dynamic variables stay as written and are listed in the import report.
 - **Not carried over:** file uploads, disabled form fields and query parameters, saved example responses and descriptions.
 - **Files only:** no Postman account sign-in or API sync, so the app needs no credentials and no network access to import.
 - **Not an import:** repeatable updates from an OpenAPI URL are a Spec link, described in [ADR 0014](0014-collections-from-openapi-url.md). This ADR's one-time import is unchanged.

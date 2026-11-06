@@ -227,12 +227,21 @@ public class PostmanImporterTests
     [Fact]
     public void Dynamic_variables_stay_as_written_and_are_reported()
     {
-        var result = ImportRequest("""{ "url": "http://x.test/{{$guid}}", "body": { "mode": "raw", "raw": "{{$timestamp}} {{normal}}" } }""");
-        Assert.Equal("http://x.test/{{$guid}}", OnlyRequest(result).Url);
+        var result = ImportRequest("""{ "url": "http://x.test/{{$randomColor}}", "body": { "mode": "raw", "raw": "{{$isbn}} {{normal}}" } }""");
+        Assert.Equal("http://x.test/{{$randomColor}}", OnlyRequest(result).Url);
         var issue = result.Issues.Single(i => i.Category == ImportCategories.DynamicVariables);
-        Assert.Contains("$guid", issue.Detail);
-        Assert.Contains("$timestamp", issue.Detail);
+        Assert.Contains("$randomColor", issue.Detail);
+        Assert.Contains("$isbn", issue.Detail);
         Assert.DoesNotContain("normal", issue.Detail);
+    }
+
+    [Fact]
+    public void Dynamic_variables_with_a_built_in_function_are_not_reported()
+    {
+        // $guid, $timestamp and $randomInt resolve to built-in functions (ADR 0008), so nothing is left out.
+        var result = ImportRequest("""{ "url": "http://x.test/{{$guid}}", "body": { "mode": "raw", "raw": "{{$timestamp}} {{$randomInt}}" } }""");
+        Assert.Equal("http://x.test/{{$guid}}", OnlyRequest(result).Url);
+        Assert.DoesNotContain(result.Issues, i => i.Category == ImportCategories.DynamicVariables);
     }
 
     [Fact]

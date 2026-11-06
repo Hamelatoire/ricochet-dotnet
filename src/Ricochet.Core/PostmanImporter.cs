@@ -600,7 +600,12 @@ public static partial class PostmanImporter
             if (request.Auth is { } auth)
                 texts.AddRange([auth.Token, auth.Username, auth.Password, auth.KeyValue]);
 
-            var names = texts.SelectMany(text => DynamicVariable().Matches(text)).Select(m => m.Groups[1].Value).Distinct().ToList();
+            // The names with a built-in function (ADR 0008) now resolve, so only the others are reported.
+            var names = texts.SelectMany(text => DynamicVariable().Matches(text))
+                .Select(m => m.Groups[1].Value)
+                .Where(name => !BuiltInFunctions.IsPostmanAlias(name))
+                .Distinct()
+                .ToList();
             if (names.Count > 0)
                 _issues.Add(new ImportIssue(ImportCategories.DynamicVariables, path, string.Join(", ", names)));
         }

@@ -5,12 +5,12 @@ using System.Text.RegularExpressions;
 
 namespace Ricochet.Core;
 
-/// <summary>Replaces {{name}} placeholders. Unknown names are left as written so the problem stays visible.</summary>
+/// <summary>
+/// Replaces {{name}} placeholders with variables and built-in functions (ADR 0008).
+/// Unknown names are left as written so the problem stays visible.
+/// </summary>
 public static partial class VariableResolver
 {
-    // A variable's value may itself contain placeholders. The limit stops a cycle from looping forever.
-    private const int MaxNesting = 10;
-
     [GeneratedRegex(@"\{\{([^{}]+)\}\}")]
     private static partial Regex Placeholder();
 
@@ -28,16 +28,34 @@ public static partial class VariableResolver
                 lookup[variable.Key.Trim()] = variable.Value;
         }
 
-        string Resolve(string text)
-        {
-            for (var depth = 0; depth < MaxNesting; depth++)
-            {
-                var next = Placeholder().Replace(text, m => lookup.GetValueOrDefault(m.Groups[1].Value.Trim(), m.Value));
-                if (next == text)
-                    break;
-                text = next;
-            }
+        // A variable is expanded once per send, so every use of it sees the same generated values (ADR 0008).
+        var expanded = new Dictionary<(string Name, bool Functions), string>();
+        var inProgress = new HashSet<string>();
 
+        // Functions run only where the value is sent. Assertions and Captures never run them (ADR 0008).
+        string Expand(string text, bool functions) =>
+            Placeholder().Replace(text, m => Replacement(m.Groups[1].Value.Trim(), m.Value, functions));
+
+        string Replacement(string name, string original, bool functions)
+        {
+            if (lookup.TryGetValue(name, out var value))
+                return VariableText(name, value, functions);
+
+            return functions ? BuiltInFunctions.TryEvaluate(name) ?? original : original;
+        }
+
+        string VariableText(string name, string value, bool functions)
+        {
+            if (expanded.TryGetValue((name, functions), out var done))
+                return done;
+
+            // A variable that refers back to itself is left as written, so the cycle shows up as a missing value.
+            if (!inProgress.Add(name))
+                return "{{" + name + "}}";
+
+            var text = Expand(value, functions);
+            inProgress.Remove(name);
+            expanded[(name, functions)] = text;
             return text;
         }
 
@@ -46,7 +64,7 @@ public static partial class VariableResolver
         string ResolveBody(string text)
         {
             if (!text.TrimStart().StartsWith('{') && !text.TrimStart().StartsWith('['))
-                return Resolve(text);
+                return Expand(text, functions: true);
 
             var result = new StringBuilder();
             var inString = false;
@@ -73,15 +91,14 @@ public static partial class VariableResolver
                 AppendLiteral(text[last..match.Index]);
                 last = match.Index + match.Length;
 
-                var name = match.Groups[1].Value.Trim();
-                if (!lookup.TryGetValue(name, out var value))
+                var replacement = Replacement(match.Groups[1].Value.Trim(), match.Value, functions: true);
+                if (replacement == match.Value)
                 {
                     result.Append(match.Value);
                     continue;
                 }
 
-                var resolved = Resolve(value);
-                result.Append(inString ? JsonEncodedText.Encode(resolved, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString() : resolved);
+                result.Append(inString ? JsonEncodedText.Encode(replacement, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString() : replacement);
             }
 
             AppendLiteral(text[last..]);
@@ -90,21 +107,21 @@ public static partial class VariableResolver
 
         return request with
         {
-            Url = Resolve(request.Url),
+            Url = Expand(request.Url, functions: true),
             Body = ResolveBody(request.Body),
-            Headers = request.Headers.Select(h => h with { Key = Resolve(h.Key), Value = Resolve(h.Value) }).ToList(),
+            Headers = request.Headers.Select(h => h with { Key = Expand(h.Key, functions: true), Value = Expand(h.Value, functions: true) }).ToList(),
             Auth = request.Auth is { } auth
                 ? auth with
                 {
-                    Token = Resolve(auth.Token),
-                    Username = Resolve(auth.Username),
-                    Password = Resolve(auth.Password),
-                    KeyName = Resolve(auth.KeyName),
-                    KeyValue = Resolve(auth.KeyValue),
+                    Token = Expand(auth.Token, functions: true),
+                    Username = Expand(auth.Username, functions: true),
+                    Password = Expand(auth.Password, functions: true),
+                    KeyName = Expand(auth.KeyName, functions: true),
+                    KeyValue = Expand(auth.KeyValue, functions: true),
                 }
                 : null,
-            Assertions = request.Assertions?.Select(a => a with { Path = Resolve(a.Path), Expected = Resolve(a.Expected) }).ToList(),
-            Captures = request.Captures?.Select(c => c with { Path = Resolve(c.Path) }).ToList(),
+            Assertions = request.Assertions?.Select(a => a with { Path = Expand(a.Path, functions: false), Expected = Expand(a.Expected, functions: false) }).ToList(),
+            Captures = request.Captures?.Select(c => c with { Path = Expand(c.Path, functions: false) }).ToList(),
         };
     }
 
