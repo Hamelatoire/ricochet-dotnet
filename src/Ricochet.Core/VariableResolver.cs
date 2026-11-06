@@ -5,6 +5,9 @@ using System.Text.RegularExpressions;
 
 namespace Ricochet.Core;
 
+/// <summary>The request to send, and the copy History keeps: built-in function values filled in, Variables left as written.</summary>
+public sealed record ResolvedRequests(ApiRequest Sent, ApiRequest History);
+
 /// <summary>
 /// Replaces {{name}} placeholders with variables and built-in functions (ADR 0008).
 /// Unknown names are left as written so the problem stays visible.
@@ -18,7 +21,14 @@ public static partial class VariableResolver
     public static IReadOnlyList<KeyValue> Layer(params IEnumerable<KeyValue>?[] lowestPriorityFirst) =>
         lowestPriorityFirst.SelectMany(scope => scope ?? []).ToList();
 
-    public static ApiRequest Apply(ApiRequest request, IEnumerable<KeyValue> variables)
+    /// <summary>The request to send, with every placeholder replaced.</summary>
+    public static ApiRequest Apply(ApiRequest request, IEnumerable<KeyValue> variables) => Resolve(request, variables).Sent;
+
+    /// <summary>
+    /// Resolves once, so the request sent and the History copy hold the same generated values. The History copy keeps
+    /// Variables as written, so a Secret's value never reaches History through it.
+    /// </summary>
+    public static ResolvedRequests Resolve(ApiRequest request, IEnumerable<KeyValue> variables)
     {
         var lookup = new Dictionary<string, string>();
         foreach (var variable in variables)
@@ -33,15 +43,38 @@ public static partial class VariableResolver
         var inProgress = new HashSet<string>();
 
         // Functions run only where the value is sent. Assertions and Captures never run them (ADR 0008).
-        string Expand(string text, bool functions) =>
-            Placeholder().Replace(text, m => Replacement(m.Groups[1].Value.Trim(), m.Value, functions));
-
-        string Replacement(string name, string original, bool functions)
+        (string Sent, string Shown) Expand(string text, bool functions)
         {
-            if (lookup.TryGetValue(name, out var value))
-                return VariableText(name, value, functions);
+            var sent = new StringBuilder();
+            var shown = new StringBuilder();
+            var last = 0;
+            foreach (Match match in Placeholder().Matches(text))
+            {
+                sent.Append(text, last, match.Index - last);
+                shown.Append(text, last, match.Index - last);
+                last = match.Index + match.Length;
 
-            return functions ? BuiltInFunctions.TryEvaluate(name) ?? original : original;
+                var replacement = Replacement(match.Groups[1].Value.Trim(), match.Value, functions);
+                sent.Append(replacement.Sent);
+                shown.Append(replacement.Shown);
+            }
+
+            sent.Append(text, last, text.Length - last);
+            shown.Append(text, last, text.Length - last);
+            return (sent.ToString(), shown.ToString());
+        }
+
+        // Sent is the value to send. Shown is what History keeps: a variable stays as written, a function shows its value.
+        (string Sent, string Shown) Replacement(string name, string original, bool functions)
+        {
+            if (lookup.ContainsKey(name))
+                return (VariableText(name, lookup[name], functions), original);
+
+            if (!functions)
+                return (original, original);
+
+            var value = BuiltInFunctions.TryEvaluate(name);
+            return value is null ? (original, original) : (value, value);
         }
 
         string VariableText(string name, string value, bool functions)
@@ -53,7 +86,7 @@ public static partial class VariableResolver
             if (!inProgress.Add(name))
                 return "{{" + name + "}}";
 
-            var text = Expand(value, functions);
+            var text = Expand(value, functions).Sent;
             inProgress.Remove(name);
             expanded[(name, functions)] = text;
             return text;
@@ -61,12 +94,13 @@ public static partial class VariableResolver
 
         // In a JSON body, a value inside a string is escaped, so a quote in it can't end the string early.
         // A value outside a string is inserted as written, because it may be a whole JSON object.
-        string ResolveBody(string text)
+        (string Sent, string Shown) ResolveBody(string text)
         {
             if (!text.TrimStart().StartsWith('{') && !text.TrimStart().StartsWith('['))
                 return Expand(text, functions: true);
 
-            var result = new StringBuilder();
+            var sent = new StringBuilder();
+            var shown = new StringBuilder();
             var inString = false;
             var escaped = false;
 
@@ -82,7 +116,8 @@ public static partial class VariableResolver
                         inString = !inString;
                 }
 
-                result.Append(literal);
+                sent.Append(literal);
+                shown.Append(literal);
             }
 
             var last = 0;
@@ -92,37 +127,72 @@ public static partial class VariableResolver
                 last = match.Index + match.Length;
 
                 var replacement = Replacement(match.Groups[1].Value.Trim(), match.Value, functions: true);
-                if (replacement == match.Value)
+                if (replacement.Sent == match.Value)
                 {
-                    result.Append(match.Value);
+                    sent.Append(match.Value);
+                    shown.Append(match.Value);
                     continue;
                 }
 
-                result.Append(inString ? JsonEncodedText.Encode(replacement, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString() : replacement);
+                sent.Append(inString ? JsonEncodedText.Encode(replacement.Sent, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString() : replacement.Sent);
+                shown.Append(replacement.Shown);
             }
 
             AppendLiteral(text[last..]);
-            return result.ToString();
+            return (sent.ToString(), shown.ToString());
         }
 
-        return request with
+        var url = Expand(request.Url, functions: true);
+        var body = ResolveBody(request.Body);
+        var headers = request.Headers.Select(h => (Header: h, Key: Expand(h.Key, true), Value: Expand(h.Value, true))).ToList();
+        var auth = request.Auth is null
+            ? null
+            : new
+            {
+                Token = Expand(request.Auth.Token, true),
+                Username = Expand(request.Auth.Username, true),
+                Password = Expand(request.Auth.Password, true),
+                KeyName = Expand(request.Auth.KeyName, true),
+                KeyValue = Expand(request.Auth.KeyValue, true),
+            };
+
+        // Assertions and Captures never run functions, so their text is the same in both copies.
+        var assertions = request.Assertions?.Select(x => x with { Path = Expand(x.Path, false).Sent, Expected = Expand(x.Expected, false).Sent }).ToList();
+        var captures = request.Captures?.Select(c => c with { Path = Expand(c.Path, false).Sent }).ToList();
+
+        var sent = request with
         {
-            Url = Expand(request.Url, functions: true),
-            Body = ResolveBody(request.Body),
-            Headers = request.Headers.Select(h => h with { Key = Expand(h.Key, functions: true), Value = Expand(h.Value, functions: true) }).ToList(),
-            Auth = request.Auth is { } auth
-                ? auth with
-                {
-                    Token = Expand(auth.Token, functions: true),
-                    Username = Expand(auth.Username, functions: true),
-                    Password = Expand(auth.Password, functions: true),
-                    KeyName = Expand(auth.KeyName, functions: true),
-                    KeyValue = Expand(auth.KeyValue, functions: true),
-                }
-                : null,
-            Assertions = request.Assertions?.Select(a => a with { Path = Expand(a.Path, functions: false), Expected = Expand(a.Expected, functions: false) }).ToList(),
-            Captures = request.Captures?.Select(c => c with { Path = Expand(c.Path, functions: false) }).ToList(),
+            Url = url.Sent,
+            Body = body.Sent,
+            Headers = headers.Select(h => h.Header with { Key = h.Key.Sent, Value = h.Value.Sent }).ToList(),
+            Auth = request.Auth is null ? null : request.Auth with
+            {
+                Token = auth!.Token.Sent,
+                Username = auth.Username.Sent,
+                Password = auth.Password.Sent,
+                KeyName = auth.KeyName.Sent,
+                KeyValue = auth.KeyValue.Sent,
+            },
+            Assertions = assertions,
+            Captures = captures,
         };
+
+        var history = request with
+        {
+            Url = url.Shown,
+            Body = body.Shown,
+            Headers = headers.Select(h => h.Header with { Key = h.Key.Shown, Value = h.Value.Shown }).ToList(),
+            Auth = request.Auth is null ? null : request.Auth with
+            {
+                Token = auth!.Token.Shown,
+                Username = auth.Username.Shown,
+                Password = auth.Password.Shown,
+                KeyName = auth.KeyName.Shown,
+                KeyValue = auth.KeyValue.Shown,
+            },
+        };
+
+        return new ResolvedRequests(sent, history);
     }
 
     /// <summary>Names still written as placeholders in the parts of a request that will actually be sent.</summary>

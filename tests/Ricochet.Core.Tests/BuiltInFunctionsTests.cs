@@ -140,4 +140,48 @@ public class BuiltInFunctionsTests
 
         Assert.Matches(new Regex(@"^\{""when"":""\d{4}""\}$"), resolved.Body);
     }
+
+    [Fact]
+    public void History_shows_the_same_generated_value_that_was_sent()
+    {
+        var resolution = VariableResolver.Resolve(Request(url: "http://x.test/{{uuid.v4()}}"), []);
+
+        Assert.Equal(resolution.Sent.Url, resolution.History.Url);
+        Assert.True(Guid.TryParse(resolution.History.Url.Replace("http://x.test/", ""), out _));
+    }
+
+    [Fact]
+    public void History_keeps_variables_as_written()
+    {
+        var resolution = VariableResolver.Resolve(
+            Request(url: "http://x.test/{{client_id}}"),
+            [new KeyValue("client_id", "abc")]);
+
+        Assert.Equal("http://x.test/abc", resolution.Sent.Url);
+        Assert.Equal("http://x.test/{{client_id}}", resolution.History.Url);
+    }
+
+    [Fact]
+    public void A_Secret_value_never_reaches_History()
+    {
+        var request = Request() with { Auth = new RequestAuth { Kind = AuthKinds.Bearer, Token = "{{token}}" } };
+
+        var resolution = VariableResolver.Resolve(request, [new KeyValue("token", "s3cret-value", IsSecret: true)]);
+
+        Assert.Equal("s3cret-value", resolution.Sent.Auth!.Token);
+        Assert.Equal("{{token}}", resolution.History.Auth!.Token);
+        Assert.DoesNotContain("s3cret-value", System.Text.Json.JsonSerializer.Serialize(resolution.History));
+    }
+
+    [Fact]
+    public void A_variable_holding_a_function_shows_as_the_variable_in_History_but_keeps_one_value()
+    {
+        var resolution = VariableResolver.Resolve(
+            Request(url: "http://x.test/{{client_id}}/{{client_id}}"),
+            [new KeyValue("client_id", "{{uuid.v4()}}")]);
+
+        var sentParts = resolution.Sent.Url.Split('/');
+        Assert.Equal(sentParts[3], sentParts[4]);
+        Assert.Equal("http://x.test/{{client_id}}/{{client_id}}", resolution.History.Url);
+    }
 }

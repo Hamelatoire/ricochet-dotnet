@@ -865,6 +865,8 @@ public sealed partial class MainViewModel : ObservableObject
         ClearResponse();
 
         var request = CurrentRequest();
+        // History keeps this copy, with generated values filled in and Variables as written (ADR 0008).
+        var historyRequest = request;
         var collectionId = CurrentCollection?.Id;
         var unresolved = "";
         try
@@ -874,7 +876,9 @@ public sealed partial class MainViewModel : ObservableObject
                 CurrentCollection?.Variables.ToEntries(),
                 ActiveEnvironment.Variables.ToEntries(),
                 CapturedFor(collectionId));
-            var resolved = VariableResolver.Apply(request, variables);
+            var resolution = VariableResolver.Resolve(request, variables);
+            var resolved = resolution.Sent;
+            historyRequest = resolution.History;
             var names = VariableResolver.FindPlaceholders(resolved);
             if (names.Count > 0)
                 unresolved = $"No value for: {string.Join(", ", names)}";
@@ -899,7 +903,7 @@ public sealed partial class MainViewModel : ObservableObject
             Notice = JoinNotices(ScriptNotice(), unresolved, CredentialNotice(request), response.Truncated
                 ? $"Response too large: showing the first {FormatSize(response.Body.Length)}."
                 : "");
-            AddHistory(request, response.StatusCode, (long)response.Elapsed.TotalMilliseconds, collectionId);
+            AddHistory(historyRequest, response.StatusCode, (long)response.Elapsed.TotalMilliseconds, collectionId);
         }
         catch (OperationCanceledException)
         {
@@ -910,7 +914,7 @@ public sealed partial class MainViewModel : ObservableObject
             StatusText = "Failed";
             IsFailure = true;
             Notice = JoinNotices(ex.Message, unresolved, CredentialNotice(request), ScriptNotice());
-            AddHistory(request, statusCode: null, elapsedMs: 0, collectionId);
+            AddHistory(historyRequest, statusCode: null, elapsedMs: 0, collectionId);
         }
         finally
         {
