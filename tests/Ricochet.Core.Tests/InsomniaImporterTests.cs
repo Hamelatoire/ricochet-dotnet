@@ -248,6 +248,50 @@ public class InsomniaImporterTests
     }
 
     [Fact]
+    public void Unknown_auth_types_are_reported_and_not_imported()
+    {
+        const string json = """
+            { "__export_format": 4, "resources": [
+              { "_id": "wrk_a", "_type": "workspace", "name": "Auth", "metaSortKey": 1 },
+              { "_id": "fld_a", "_type": "request_group", "parentId": "wrk_a", "name": "Signed", "metaSortKey": 2,
+                "authentication": { "type": "digest", "username": "tester" } },
+              { "_id": "req_a", "_type": "request", "parentId": "fld_a", "name": "Call", "method": "GET", "url": "https://x.example.test/a",
+                "metaSortKey": 3, "authentication": { "type": "inherit" } },
+              { "_id": "req_b", "_type": "request", "parentId": "wrk_a", "name": "Other", "method": "GET", "url": "https://x.example.test/b",
+                "metaSortKey": 4, "authentication": { "type": "ntlm" } }
+            ] }
+            """;
+
+        var result = Import(json);
+        var items = OnlyWorkspace(result).Collection.Items;
+
+        Assert.Null(FindRequest(items, "Call").Auth);
+        Assert.Null(FindRequest(items, "Other").Auth);
+        Assert.Contains(result.Issues, i => i.Category == ImportCategories.UnsupportedAuth && i.Location == "Auth / Signed" && i.Detail == "digest");
+        Assert.Contains(result.Issues, i => i.Category == ImportCategories.UnsupportedAuth && i.Location == "Auth / Other" && i.Detail == "ntlm");
+        Assert.Equal(2, result.Issues.Count(i => i.Category == ImportCategories.UnsupportedAuth));
+    }
+
+    [Fact]
+    public void Requests_without_a_name_are_imported_as_untitled()
+    {
+        const string json = """
+            { "__export_format": 4, "resources": [
+              { "_id": "wrk_n", "_type": "workspace", "name": "Nameless", "metaSortKey": 1 },
+              { "_id": "req_n1", "_type": "request", "parentId": "wrk_n", "method": "GET", "url": "https://x.example.test/1", "metaSortKey": 2 },
+              { "_id": "req_n2", "_type": "request", "parentId": "wrk_n", "name": "", "method": "DELETE", "url": "https://x.example.test/2", "metaSortKey": 3 }
+            ] }
+            """;
+
+        var result = Import(json);
+        var items = OnlyWorkspace(result).Collection.Items;
+
+        Assert.Equal(["Untitled", "Untitled"], items.Select(i => i.Name));
+        Assert.Equal(["GET", "DELETE"], items.Select(i => i.Request!.Method));
+        Assert.Contains("2 requests", result.Summary);
+    }
+
+    [Fact]
     public void Report_text_groups_issues_by_category()
     {
         var text = Import().ToReportText();
