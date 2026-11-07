@@ -36,6 +36,8 @@ internal static class Program
           --xunit <file>         Also write an xUnit XML report.
           --timeout <seconds>    Time limit for each request. Default: 120.
           --bail                 Stop at the first failure.
+          --cookies              Keep cookies between the requests of each run, as a browser does. Cookies are
+                                 kept in memory only and are never written to a file. Each run starts with none.
           --insecure             Skip TLS certificate checks. Only for servers you trust, such as a local test server.
           --help                 Show this help.
 
@@ -63,6 +65,7 @@ internal static class Program
         public int TimeoutSeconds { get; set; } = 120;
         public bool Bail { get; set; }
         public bool Insecure { get; set; }
+        public bool Cookies { get; set; }
         public List<KeyValue> Variables { get; } = [];
     }
 
@@ -154,6 +157,7 @@ internal static class Program
             EnvironmentName = options.Environment,
             Overrides = [.. dotEnv.Variables, .. VariablesFromEnvironment(), .. options.Variables],
             StopOnFirstFailure = options.Bail,
+            KeepCookies = options.Cookies,
         };
 
         RunReport report;
@@ -325,6 +329,9 @@ internal static class Program
                     break;
                 case "--insecure":
                     options.Insecure = true;
+                    break;
+                case "--cookies":
+                    options.Cookies = true;
                     break;
                 case "--collection":
                     options.Collection = Value();
