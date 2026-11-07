@@ -142,7 +142,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The environments without the "No environment" choice, which has nothing to edit.</summary>
     public ObservableCollection<EnvironmentViewModel> EditableEnvironments { get; }
 
-    public KeyValueListViewModel Headers { get; } = new();
+    public KeyValueListViewModel Headers { get; } = new(keyPlaceholder: "Header name", valuePlaceholder: "Header value");
     public KeyValueListViewModel Globals { get; } = new(allowSecrets: true);
 
     [ObservableProperty] private string _requestName = "";
