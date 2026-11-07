@@ -28,6 +28,8 @@ internal static class Program
           --exclude-tag <name>   Skip requests with this tag. Repeatable; wins over --tag.
           --env <name>           Use this environment.
           --var <name=value>     Set a variable, overriding every scope. Repeatable.
+          --data <file>          Run the collection once per row of a .csv or .json data file. Each row's columns
+                                 are variables for that run, and each run's results are printed under its row number.
           --xunit <file>         Also write an xUnit XML report.
           --timeout <seconds>    Time limit for each request. Default: 120.
           --bail                 Stop at the first failure.
@@ -41,8 +43,8 @@ internal static class Program
 
         Exit codes:
           0  Everything passed.
-          1  A request or assertion failed.
-          2  The run could not happen, for example because a workspace file is unreadable.
+          1  A request or assertion failed, in any data row.
+          2  The run could not happen, for example because a workspace file or the data file is unreadable.
         """;
 
     private sealed class Arguments
@@ -54,6 +56,7 @@ internal static class Program
         public List<string> ExcludeTags { get; } = [];
         public string? Environment { get; set; }
         public string? Xunit { get; set; }
+        public string? DataFile { get; set; }
         public int TimeoutSeconds { get; set; } = 120;
         public bool Bail { get; set; }
         public bool Insecure { get; set; }
@@ -101,6 +104,9 @@ internal static class Program
         if (!WorkspaceFolder.LooksLikeWorkspace(options.Folder))
             return CannotRun($"\"{Path.GetFullPath(options.Folder)}\" is not a Ricochet workspace folder.");
 
+        // Read before the Workspace, so a bad data file fails fast. Problems throw RunSetupException, which exits 2.
+        var dataRows = options.DataFile is null ? null : ReadDataRows(options.DataFile);
+
         var folder = new WorkspaceFolder(Path.GetFullPath(options.Folder));
         var (workspace, issues) = folder.Load();
 
@@ -127,32 +133,54 @@ internal static class Program
         if (options.Insecure)
             Console.Error.WriteLine("Warning: TLS certificate checks are off (--insecure). Requests are not verified.");
 
-        var runner = new CollectionRunner(new RequestSender(
+        var sender = new RequestSender(
             RequestSender.CreateDefaultClient(verifyCertificates: !options.Insecure),
-            TimeSpan.FromSeconds(options.TimeoutSeconds)));
-        var report = await runner.RunAsync(
-            workspace,
-            new RunOptions
-            {
-                CollectionName = options.Collection,
-                FolderName = options.FolderName,
-                IncludeTags = FolderTags.Normalize(options.Tags) ?? [],
-                ExcludeTags = FolderTags.Normalize(options.ExcludeTags) ?? [],
-                EnvironmentName = options.Environment,
-                Overrides = [.. dotEnv.Variables, .. VariablesFromEnvironment(), .. options.Variables],
-                StopOnFirstFailure = options.Bail,
-            },
-            result =>
-            {
-                if (result.Collection != currentCollection)
-                {
-                    currentCollection = result.Collection;
-                    Console.WriteLine(result.Collection);
-                }
+            TimeSpan.FromSeconds(options.TimeoutSeconds));
+        var runOptions = new RunOptions
+        {
+            CollectionName = options.Collection,
+            FolderName = options.FolderName,
+            IncludeTags = FolderTags.Normalize(options.Tags) ?? [],
+            ExcludeTags = FolderTags.Normalize(options.ExcludeTags) ?? [],
+            EnvironmentName = options.Environment,
+            Overrides = [.. dotEnv.Variables, .. VariablesFromEnvironment(), .. options.Variables],
+            StopOnFirstFailure = options.Bail,
+        };
 
-                PrintResult(result, colors);
-            },
-            cancellationToken);
+        RunReport report;
+        if (dataRows is null)
+        {
+            report = await new CollectionRunner(sender).RunAsync(
+                workspace,
+                runOptions,
+                result =>
+                {
+                    if (result.Collection != currentCollection)
+                    {
+                        currentCollection = result.Collection;
+                        Console.WriteLine(result.Collection);
+                    }
+
+                    PrintResult(result, colors);
+                },
+                cancellationToken);
+        }
+        else
+        {
+            // Each row is its own run, printed under its row number. Row values are overrides, so they are masked like --var values.
+            var rowReports = await new DataRowRunner(sender).RunAsync(
+                workspace,
+                runOptions,
+                dataRows,
+                row => PrintRow(row, dataRows.Count, colors),
+                cancellationToken);
+
+            var stoppedEarly = options.Bail && rowReports.Count < dataRows.Count;
+            report = DataRowReports.Combine(rowReports, stoppedEarly);
+
+            Console.WriteLine();
+            Console.WriteLine($"Data rows: {rowReports.Count} run, {rowReports.Count(r => r.Report.Passed)} passed, {rowReports.Count(r => !r.Report.Passed)} failed.");
+        }
 
         Console.WriteLine();
         Console.WriteLine(RunReports.Summary(report));
@@ -173,6 +201,48 @@ internal static class Program
         }
 
         return report.Passed ? ExitPassed : ExitTestsFailed;
+    }
+
+    private static void PrintRow(DataRowReport row, int rowCount, Colors colors)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"Row {row.Row} of {rowCount}  {colors.Verdict(row.Report.Passed)}");
+
+        string? currentCollection = null;
+        foreach (var result in row.Report.Results)
+        {
+            if (result.Collection != currentCollection)
+            {
+                currentCollection = result.Collection;
+                Console.WriteLine(result.Collection);
+            }
+
+            PrintResult(result, colors);
+        }
+
+        Console.WriteLine($"  {RunReports.Summary(row.Report)}");
+    }
+
+    // Data file values are read from a file the user chose, so they are never printed here. Only the row number is shown.
+    private static IReadOnlyList<IReadOnlyList<KeyValue>> ReadDataRows(string path)
+    {
+        var format = DataFileParser.FormatFor(path);
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new RunSetupException($"Could not read the data file \"{path}\": {ex.Message}");
+        }
+
+        var rows = DataFileParser.Parse(text, format);
+        if (rows.Count == 0)
+            throw new RunSetupException($"The data file \"{path}\" has no rows to run.");
+
+        return rows;
     }
 
     private static void PrintResult(RequestRunResult result, Colors colors)
@@ -268,6 +338,10 @@ internal static class Program
                 case "--xunit":
                     options.Xunit = Value();
                     if (options.Xunit is null) { error = Missing(); return false; }
+                    break;
+                case "--data":
+                    options.DataFile = Value();
+                    if (options.DataFile is null) { error = Missing(); return false; }
                     break;
                 case "--timeout":
                     if (!int.TryParse(Value(), out var seconds) || seconds <= 0)
