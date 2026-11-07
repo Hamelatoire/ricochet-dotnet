@@ -56,6 +56,7 @@ public sealed partial class MainViewModel : ObservableObject
         Collections.CollectionChanged += (_, _) => ApplyTagFilter();
         History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
+        InitializeTabs();
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
         Captures.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
@@ -95,6 +96,7 @@ public sealed partial class MainViewModel : ObservableObject
                 EditingEnvironment = EditableEnvironments.FirstOrDefault();
         };
         _selectedAuth = AuthOptions[0];
+        RestoreTabs(store);
 
         // Last, because saving needs everything above. Moves data out of older formats,
         // including credentials from before Secrets existed.
@@ -496,6 +498,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         Globals.Load(shared.Globals);
         CurrentCollection = Collections.FirstOrDefault(c => c.Id == collectionId);
+        RemapTabs();
 
         if (currentId is null)
             return;
@@ -1052,15 +1055,13 @@ public sealed partial class MainViewModel : ObservableObject
             IsVariablesPageOpen = IsBulkPageOpen = false;
 
         // Matching the current node means it was just saved, so the editor and response are already right.
-        if (value?.Request is not { } request || value == _currentNode)
+        if (value?.Request is null || value == _currentNode)
             return;
 
         IsEnvironmentsPageOpen = false;
         IsSettingsPageOpen = false;
         SelectedHistory = null;
-        _currentNode = value;
-        CurrentCollection = value.Root;
-        LoadRequest(request);
+        ShowInTab(value);
     }
 
     partial void OnSelectedHistoryChanged(HistoryEntry? value)
@@ -1071,6 +1072,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsEnvironmentsPageOpen = false;
         IsSettingsPageOpen = false;
         SelectedNode = null;
+        StashActiveEdits();
+        DeactivateTabs();
         _currentNode = null; // Saving from history creates a new request.
         CurrentCollection = Collections.FirstOrDefault(c => c.Id == value.CollectionId);
         LoadRequest(value.Request);
@@ -1221,6 +1224,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsSettingsPageOpen = false;
         SelectedNode = null;
         SelectedHistory = null;
+        StashActiveEdits();
+        DeactivateTabs();
         _currentNode = null;
         CurrentCollection = null;
         LoadRequest(new ApiRequest());
@@ -1437,6 +1442,13 @@ public sealed partial class MainViewModel : ObservableObject
             CurrentCollection = target;
             SelectedHistory = null;
             SelectedNode = node;
+            OpenSavedTab(node);
+        }
+
+        if (ActiveTab is { } saved)
+        {
+            saved.Draft = null;
+            saved.IsDirty = false;
         }
 
         var literals = SecretRules.FindLikelyLiterals(request);
@@ -1485,6 +1497,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async void DeleteNode(TreeNodeViewModel node)
     {
+        RemoveTabsWithin(node);
         if (EditingVariablesCollection?.IsWithin(node) == true)
             EditingVariablesCollection = null;
 

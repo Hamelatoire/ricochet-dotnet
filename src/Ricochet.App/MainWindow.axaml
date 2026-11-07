@@ -19,6 +19,16 @@
     <KeyBinding Gesture="Meta+S" Command="{Binding SaveCommand}" />
     <KeyBinding Gesture="Ctrl+N" Command="{Binding NewRequestCommand}" />
     <KeyBinding Gesture="Meta+N" Command="{Binding NewRequestCommand}" />
+    <KeyBinding Gesture="Ctrl+K" Command="{Binding OpenPaletteCommand}" />
+    <KeyBinding Gesture="Meta+K" Command="{Binding OpenPaletteCommand}" />
+    <KeyBinding Gesture="Ctrl+P" Command="{Binding FindRequestCommand}" />
+    <KeyBinding Gesture="Meta+P" Command="{Binding FindRequestCommand}" />
+    <KeyBinding Gesture="Ctrl+L" Command="{Binding FocusUrlCommand}" />
+    <KeyBinding Gesture="Meta+L" Command="{Binding FocusUrlCommand}" />
+    <KeyBinding Gesture="Ctrl+E" Command="{Binding FocusEnvironmentCommand}" />
+    <KeyBinding Gesture="Meta+E" Command="{Binding FocusEnvironmentCommand}" />
+    <KeyBinding Gesture="Ctrl+W" Command="{Binding CloseActiveTabCommand}" />
+    <KeyBinding Gesture="Meta+W" Command="{Binding CloseActiveTabCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding CloseTopPanelCommand}" />
   </Window.KeyBindings>
 
@@ -519,6 +529,38 @@
       <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsSidePageOpen}">
         <Border Grid.Row="0" Classes="card" Padding="20,16,20,6">
         <DockPanel>
+          <!-- Open Requests (ADR 0041). A tab keeps its unsent edits, and a mark shows the ones that are not saved. -->
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,12" IsVisible="{Binding HasOpenTabs}">
+            <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+              <ItemsControl ItemsSource="{Binding OpenTabs}" AutomationProperties.Name="Open requests">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="4" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:RequestTabViewModel">
+                    <Border Classes="requesttab" Classes.active="{Binding IsActive}" CornerRadius="6" Padding="2,0">
+                      <StackPanel Orientation="Horizontal" Spacing="0">
+                        <Button Classes="ghost" Command="{Binding ActivateCommand}" Padding="8,5" FontSize="12"
+                                AutomationProperties.Name="{Binding Node.Name}" ToolTip.Tip="{Binding Node.Name}">
+                          <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Text="{Binding Node.Name}" MaxWidth="180" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <TextBlock Text="•" IsVisible="{Binding IsDirty}" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"
+                                       ToolTip.Tip="Unsaved edits" AutomationProperties.Name="Unsaved edits" />
+                          </StackPanel>
+                        </Button>
+                        <Button Classes="ghost" Content="×" Command="{Binding CloseCommand}" Padding="6,4" FontSize="12"
+                                AutomationProperties.Name="Close tab" ToolTip.Tip="Close this tab (Ctrl+W)" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+            <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Text="{Binding OpenTabsLabel}" />
+          </Grid>
           <Border DockPanel.Dock="Top" Classes="banner warning" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">
             <Grid ColumnDefinitions="*,Auto,Auto">
               <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
@@ -546,7 +588,7 @@
             <TextBox Grid.Column="0" Classes="bare" FontSize="18" FontWeight="SemiBold" Padding="0,4"
                      Text="{Binding RequestName}" PlaceholderText="Untitled request" />
             <ComboBox Grid.Column="1" Width="200" Margin="12,0" ItemsSource="{Binding Environments}"
-                      SelectedItem="{Binding ActiveEnvironment}" AutomationProperties.Name="Environment"
+                      x:Name="EnvironmentPicker" SelectedItem="{Binding ActiveEnvironment}" AutomationProperties.Name="Environment"
                       ToolTip.Tip="Active environment">
               <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:EnvironmentViewModel">
@@ -905,6 +947,52 @@
         </Border>
       </Grid>
     </Grid>
+
+    <!-- Command palette (ADR 0040). Escape closes it, Up and Down move through the list, Enter runs the highlighted entry. -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsPaletteOpen}">
+      <Border.KeyBindings>
+        <KeyBinding Gesture="Escape" Command="{Binding ClosePaletteCommand}" />
+        <KeyBinding Gesture="Up" Command="{Binding MovePaletteUpCommand}" />
+        <KeyBinding Gesture="Down" Command="{Binding MovePaletteDownCommand}" />
+        <KeyBinding Gesture="Enter" Command="{Binding RunPaletteEntryCommand}" />
+      </Border.KeyBindings>
+      <Border Classes="dialog" Width="560" MaxHeight="480" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,90,0,0"
+              AutomationProperties.Name="Command palette">
+        <DockPanel>
+          <TextBox x:Name="PaletteQueryBox" DockPanel.Dock="Top" Text="{Binding PaletteQuery}" Margin="0,0,0,10"
+                   Watermark="Type a command or a request name" AutomationProperties.Name="Command palette search" />
+          <TextBlock DockPanel.Dock="Bottom" Classes="muted" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"
+                     Text="Up and Down to choose, Enter to run, Escape to close" />
+          <ListBox x:Name="PaletteList" ItemsSource="{Binding PaletteResults}" SelectedItem="{Binding PaletteSelected}"
+                   AutomationProperties.Name="Command palette results" DoubleTapped="OnPaletteDoubleTapped">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:PaletteEntryViewModel">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" Classes="muted" FontSize="12" Margin="16,0,0,0" VerticalAlignment="Center" Text="{Binding Detail}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+    </Border>
+
+    <!-- Closing a tab with edits that are not saved (ADR 0041) -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding HasTabAwaitingClose}">
+      <Border Classes="dialog" Width="520">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="brand" Text="Close this tab?" />
+          <TextBlock TextWrapping="Wrap" Text="{Binding TabCloseMessage}" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="Cancel" Command="{Binding CancelTabCloseCommand}" AutomationProperties.Name="Keep the tab open" />
+            <Button Content="Discard edits" Command="{Binding DiscardAndCloseTabCommand}" AutomationProperties.Name="Discard edits and close the tab" />
+            <Button Content="Save and close" Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="SemiBold"
+                    Command="{Binding SaveAndCloseTabCommand}" AutomationProperties.Name="Save and close the tab" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
 
     <!-- Confirm copying the workspace into a folder -->
     <Border Background="{DynamicResource Scrim}" IsVisible="{Binding HasPendingCopy}">

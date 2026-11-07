@@ -43,6 +43,12 @@ public sealed record PersonalState
 
     /// <summary>Where the main window was when the app last closed. Null means the default size and position.</summary>
     public WindowPlacement? Window { get; set; }
+
+    /// <summary>The Requests open as tabs, by id, in tab order (ADR 0041). Null when none are open.</summary>
+    public IReadOnlyList<string>? OpenTabs { get; set; }
+
+    /// <summary>The id of the tab that was showing. Null when none was.</summary>
+    public string? ActiveTab { get; set; }
 }
 
 /// <summary>
@@ -182,6 +188,37 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     {
         lock (_gate)
             SaveState(_state with { Window = placement });
+    }
+
+    /// <summary>The Requests that were open as tabs when the app last ran, in order (ADR 0041).</summary>
+    public IReadOnlyList<string> OpenTabIds
+    {
+        get
+        {
+            lock (_gate)
+                return _state.OpenTabs ?? [];
+        }
+    }
+
+    /// <summary>The tab that was showing when the app last ran, if any.</summary>
+    public string? ActiveTabId
+    {
+        get
+        {
+            lock (_gate)
+                return _state.ActiveTab;
+        }
+    }
+
+    /// <summary>Remembers which Requests are open as tabs. Unsent edits are not kept here, only the tabs themselves.</summary>
+    public void SetOpenTabs(IReadOnlyList<string> openTabs, string? activeTab)
+    {
+        lock (_gate)
+            SaveState(_state with
+            {
+                OpenTabs = openTabs.Count > 0 ? openTabs.ToList() : null,
+                ActiveTab = openTabs.Count > 0 ? activeTab : null,
+            });
     }
 
     /// <summary>The bulk run progress saved for each Request.</summary>
