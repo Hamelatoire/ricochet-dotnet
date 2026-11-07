@@ -600,6 +600,35 @@
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
+            <TabItem Header="{Binding ExamplesTabTitle}">
+              <ScrollViewer>
+                <StackPanel Spacing="10" Margin="0,14,10,12">
+                  <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="2,0,0,4" IsVisible="{Binding !HasExamples}"
+                             Text="Send this request, then use Save as example under the response to keep a response for documentation or as a mock server's reply. Secrets are masked." />
+                  <ItemsControl ItemsSource="{Binding Examples}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Spacing="8" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ResponseExampleRowViewModel">
+                        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10">
+                          <TextBlock Grid.Column="0" Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                          <Border Grid.Column="1" Classes="badge" Classes.success="{Binding IsSuccess}" Classes.failure="{Binding !IsSuccess}" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding StatusText}" />
+                          </Border>
+                          <Button Grid.Column="2" Content="Show" Command="{Binding ShowCommand}" Padding="10,3" FontSize="12"
+                                  AutomationProperties.Name="Show example" />
+                          <Button Grid.Column="3" Classes="mini" Command="{Binding RemoveCommand}" ToolTip.Tip="Remove this example"
+                                  AutomationProperties.Name="Remove example"><PathIcon Data="{DynamicResource IconClose}" /></Button>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </ScrollViewer>
+            </TabItem>
             <TabItem Header="Variables">
               <TabControl Margin="0,6,0,0">
                 <TabItem Header="Environment" FontSize="12">
@@ -666,16 +695,22 @@
             <TextBlock Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Center" Text="Sending…" IsVisible="{Binding IsSending}" />
 
             <DockPanel IsVisible="{Binding HasStatus}">
-              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto">
+              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto,Auto">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
                   <Border Classes="badge" Classes.success="{Binding IsSuccess}" Classes.failure="{Binding IsFailure}">
                     <TextBlock Text="{Binding StatusText}" />
                   </Border>
                   <TextBlock Classes="muted" VerticalAlignment="Center" FontSize="12" Text="{Binding TimingText}" />
                 </StackPanel>
-                <ToggleButton Grid.Column="1" Classes="small" Content="Wrap" IsChecked="{Binding WrapResponse}"
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding CanSaveExample}">
+                  <TextBox Text="{Binding ExampleName}" PlaceholderText="Example name" Width="170" FontSize="12" Padding="6,3"
+                           AutomationProperties.Name="Example name" ToolTip.Tip="Name for the saved example" />
+                  <Button Content="Save as example" Command="{Binding SaveExampleCommand}" Padding="10,3" FontSize="12"
+                          AutomationProperties.Name="Save as example" ToolTip.Tip="Save this response as an example on the request. Secrets are masked." />
+                </StackPanel>
+                <ToggleButton Grid.Column="2" Classes="small" Content="Wrap" IsChecked="{Binding WrapResponse}"
                               AutomationProperties.Name="Wrap lines" ToolTip.Tip="Wrap long lines" />
-                <Button Grid.Column="2" Classes="ghost" Content="Copy" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                <Button Grid.Column="3" Classes="ghost" Content="Copy" Padding="10,3" Margin="4,0,0,0" FontSize="12"
                         Click="OnCopyResponseClick" AutomationProperties.Name="Copy response" ToolTip.Tip="Copy the response body" />
               </Grid>
               <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Notice}" Foreground="{DynamicResource Warning}"
