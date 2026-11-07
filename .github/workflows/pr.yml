@@ -51,3 +51,13 @@ jobs:
 
       - name: Check the CLI starts
         run: out/cli/ricochet --help
+
+      # The installer is built here too, so a change that breaks it is found before it merges.
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
+        env:
+          MSYS_NO_PATHCONV: "1"
+        run: |
+          rm -f out/app/*.pdb out/cli/*.pdb
+          choco install innosetup --no-progress -y
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=0.0.0" installer/ricochet.iss

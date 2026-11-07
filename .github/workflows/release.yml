@@ -104,6 +104,16 @@ jobs:
             cd "$GITHUB_WORKSPACE"
           done
 
+      # Built from the same published files as the zips, so the installer and the zips match.
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          MSYS_NO_PATHCONV: "1"
+        run: |
+          choco install innosetup --no-progress -y
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=${VERSION#v}" "/DVersionTag=$VERSION" installer/ricochet.iss
+
       - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.rid }}

@@ -9,6 +9,16 @@ A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, 
 
 Working today: sending requests with headers, bodies and auth (bearer, basic, API key), collections with folders, environments, scoped `{{variables}}`, secrets in OS secure storage, tests with a CI command, history, and formatted JSON responses.
 
+## Install on Windows
+
+Download `ricochet-setup-<version>-win-x64.exe` from the [latest release](https://github.com/Hamelatoire/ricochet-dotnet/releases/latest) and run it. The installer puts Ricochet in your own programs folder, so it needs no administrator rights. It can also add a desktop shortcut and put the `ricochet` command on your `PATH`, and both are off until you choose them. Uninstalling removes the program and leaves your workspace and settings alone.
+
+| Install mode | License | Finished |
+| --- | --- | --- |
+| ![The install mode dialog](docs/screenshots/installer-mode.png) | ![The license page](docs/screenshots/installer-license.png) | ![The final page](docs/screenshots/installer-finish.png) |
+
+Release builds aren't signed yet, so Windows may warn before running the installer. The zips for each platform on the same page need no installer.
+
 ## Themes
 
 Ricochet follows your system's light or dark setting. Choose **System**, **Light** or **Dark** in the Theme box at the bottom of the sidebar. See [ADR 0013](docs/adr/0013-light-and-dark-theme.md).
@@ -97,7 +107,7 @@ On Windows, if linking fails with `'vswhere.exe' is not recognized`, add `C:\Pro
 
 ## Release
 
-Merging a pull request into `main` runs the tests and builds the app and the CLI on Windows, Linux and macOS, then attaches them to a GitHub release with the next patch version, such as `v0.1.1`.
+Merging a pull request into `main` runs the tests and builds the app and the CLI on Windows, Linux and macOS, then attaches them to a GitHub release with the next patch version, such as `v0.1.1`. The Windows build also gets an installer, made from `installer/ricochet.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php). The pull request check builds it too, so a change that breaks it is found before it merges.
 
 To choose the version yourself, such as a new minor version, push a tag instead:
 
