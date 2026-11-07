@@ -64,9 +64,11 @@ public sealed record RunReport(IReadOnlyList<RequestRunResult> Results, bool Sto
 }
 
 /// <summary>Runs Requests in order and checks their assertions. Reads the Workspace and never changes it.</summary>
-public sealed class CollectionRunner(RequestSender sender)
+public sealed class CollectionRunner(RequestSender sender, ExternalSecretResolver? secrets = null)
 {
     private const string Mask = "***";
+
+    private readonly ExternalSecretResolver _secrets = secrets ?? new ExternalSecretResolver();
 
     // Masking very short values would scramble unrelated output, such as a status code.
     private const int MinMaskedLength = 4;
@@ -194,12 +196,24 @@ public sealed class CollectionRunner(RequestSender sender)
 
     private async Task<RequestRunResult> RunOneAsync(Planned item, Workspace workspace, ApiEnvironment? environment, List<KeyValue> captured, RunOptions options, RequestSender.RunCookies? runCookies, CancellationToken cancellationToken)
     {
-        var variables = VariableResolver.Layer(workspace.Globals, item.Collection.Variables, VariableResolver.FolderScope(item.Collection, item.ItemId),
+        var layered = VariableResolver.Layer(workspace.Globals, item.Collection.Variables, VariableResolver.FolderScope(item.Collection, item.ItemId),
             environment?.Variables, captured, options.Overrides);
+        var variables = (IReadOnlyList<KeyValue>)layered;
         var resolved = VariableResolver.Apply(item.Request, variables);
 
         RequestRunResult Failed(string error, int? status = null, long elapsed = 0) =>
             new(item.Collection.Name, item.Path, item.Request.Method, status, elapsed, [], MaskIn(error, SecretsToMask(variables, options.Overrides, captured, resolved)), item.HasScripts);
+
+        // Secret references are read just before sending, and only the send uses the values (ADR 0025).
+        try
+        {
+            variables = await VariableResolver.ResolveReferencesAsync(item.Request, layered, _secrets, cancellationToken);
+            resolved = VariableResolver.Apply(item.Request, variables);
+        }
+        catch (RequestFailedException ex)
+        {
+            return Failed(ex.Message);
+        }
 
         // Sending a literal {{token}} would fail confusingly, and could reach the wrong place.
         var missing = VariableResolver.FindPlaceholders(resolved);

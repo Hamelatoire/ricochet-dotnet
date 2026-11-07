@@ -14,6 +14,7 @@ public sealed record AuthOption(string Kind, string Label);
 public sealed partial class MainViewModel : ObservableObject
 {
     private readonly RequestSender _sender;
+    private readonly ExternalSecretResolver _secrets = new();
     private readonly WorkspaceStore _store;
     private readonly EnvironmentViewModel _noEnvironment;
     private CancellationTokenSource? _sendCts;
@@ -1175,7 +1176,9 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             envProblems = DotEnvNotice(dotEnv);
-            var resolution = VariableResolver.Resolve(request, variables, answers);
+            // Secret references are read only for this send. The request and History keep them as written (ADR 0025).
+            var sendVariables = await VariableResolver.ResolveReferencesAsync(request, variables, _secrets, cts.Token);
+            var resolution = VariableResolver.Resolve(request, sendVariables, answers);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
             var names = VariableResolver.FindPlaceholders(resolved);
@@ -1185,7 +1188,7 @@ public sealed partial class MainViewModel : ObservableObject
             var response = await _sender.SendAsync(resolved, cts.Token);
             var formatted = await Task.Run(() => ResponseFormatter.Format(response), cts.Token);
             ShowResponse(response, formatted);
-            _lastExchange = (resolved, variables, CapturedFor(collectionId), response);
+            _lastExchange = (resolved, sendVariables, CapturedFor(collectionId), response);
             CanSaveExample = true;
             var testResults = await Task.Run(() => AssertionEvaluator.Evaluate(resolved.Assertions, response), cts.Token);
             foreach (var result in testResults)
