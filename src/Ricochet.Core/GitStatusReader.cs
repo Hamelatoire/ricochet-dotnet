@@ -54,7 +54,7 @@ public static class GitStatusReader
     /// <summary>
     /// Finds git on PATH, and never in the Workspace folder, so a git program shipped inside a shared folder is never run.
     /// </summary>
-    private static string? FindGit(string folder)
+    internal static string? FindGit(string folder)
     {
         var names = OperatingSystem.IsWindows() ? new[] { "git.exe" } : new[] { "git" };
         var workspace = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
