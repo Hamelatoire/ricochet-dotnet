@@ -324,6 +324,74 @@ public class PostmanImporterTests
     }
 
     [Fact]
+    public void Requests_in_nested_folders_inherit_auth_through_each_level_and_are_counted()
+    {
+        var result = Import(CollectionJson("""
+            { "name": "Outer", "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "outer" } ] }, "item": [
+                { "name": "Inner", "auth": { "type": "noauth" }, "item": [
+                    { "name": "Deep", "request": { "method": "GET", "url": "http://x.test/deep" } } ] },
+                { "name": "Inner2", "item": [
+                    { "name": "Deep2", "request": { "method": "GET", "url": "http://x.test/deep2" } } ] }
+            ] }
+            """));
+
+        var outer = result.Collection!.Items.Single();
+        var deep = outer.Children[0].Children.Single();
+        var deep2 = outer.Children[1].Children.Single();
+        Assert.Equal("Deep", deep.Name);
+        Assert.Null(deep.Request!.Auth);
+        Assert.Equal(AuthKinds.Bearer, deep2.Request!.Auth!.Kind);
+        Assert.Equal("outer", deep2.Request.Auth.Token);
+        Assert.Contains("2 requests, 3 folders", result.Summary);
+    }
+
+    [Fact]
+    public void Disabled_header_is_kept_disabled_and_is_not_reported()
+    {
+        var result = ImportRequest("""{ "url": "u", "header": [ { "key": "X-Debug", "value": "1", "disabled": true }, { "key": "X-Live", "value": "2" } ] }""");
+
+        var request = OnlyRequest(result);
+        Assert.Contains(request.Headers, h => h.Key == "X-Debug" && h.Value == "1" && !h.Enabled);
+        Assert.Contains(request.Headers, h => h.Key == "X-Live" && h.Enabled);
+        Assert.Empty(result.Issues);
+    }
+
+    [Fact]
+    public void File_form_field_and_file_body_are_reported_with_their_location_and_not_imported()
+    {
+        var result = Import(CollectionJson("""
+            { "name": "Upload", "request": { "url": "u", "method": "POST", "body": { "mode": "formdata", "formdata": [
+                { "key": "avatar", "type": "file", "src": "a.png" } ] } } },
+            { "name": "Blob", "request": { "url": "u", "method": "PUT", "body": { "mode": "file", "file": { "src": "b.bin" } } } }
+            """));
+
+        var items = result.Collection!.Items;
+        Assert.Equal("", items[0].Request!.Body);
+        Assert.DoesNotContain(items[0].Request!.Headers, h => h.Key == "Content-Type");
+        Assert.Equal("", items[1].Request!.Body);
+        Assert.Contains(result.Issues, i => i.Category == ImportCategories.DroppedBody && i.Location == "Shop / Upload" && i.Detail == "file form field \"avatar\"");
+        Assert.Contains(result.Issues, i => i.Category == ImportCategories.DroppedBody && i.Location == "Shop / Blob" && i.Detail == "file upload");
+        Assert.Equal(2, result.Issues.Count(i => i.Category == ImportCategories.DroppedBody));
+    }
+
+    [Fact]
+    public void Secret_environment_value_is_moved_out_of_the_workspace_file()
+    {
+        var result = Import("""
+            { "name": "Staging", "_postman_variable_scope": "environment", "values": [
+                { "key": "api_key", "value": "live-key-value", "type": "secret", "enabled": true } ] }
+            """);
+
+        var environment = result.Environment!;
+        Assert.True(environment.Variables.Single().IsSecret);
+        Assert.Contains(result.Issues, i => i.Category == ImportCategories.Secrets && i.Detail == "api_key");
+
+        var (clean, secrets) = WorkspaceSecrets.Split(new Workspace { Environments = [environment] });
+        Assert.Equal("", clean.Environments[0].Variables.Single().Value);
+        Assert.Equal("live-key-value", Assert.Single(secrets).Value);
+    }
+
+    [Fact]
     public async Task Imported_request_sends_with_scoped_variables_applied()
     {
         var result = Import(CollectionJson("""
