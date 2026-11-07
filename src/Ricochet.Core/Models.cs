@@ -83,6 +83,9 @@ public sealed record Collection
 
     /// <summary>Set on a Collection kept up to date from an OpenAPI URL (ADR 0014). Null otherwise.</summary>
     public string? SpecUrl { get; set; }
+
+    /// <summary>Folders and requests the user has hidden (ADR 0032). They stay in Items, and are skipped by runs.</summary>
+    public IReadOnlyList<string>? HiddenItemIds { get; set; }
 }
 
 public sealed record ApiEnvironment

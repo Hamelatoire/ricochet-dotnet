@@ -24,6 +24,7 @@ public sealed record CollectionFile
     public IReadOnlyList<StoredScript> Scripts { get; set; } = [];
     public IReadOnlyList<string> Order { get; set; } = [];
     public string? SpecUrl { get; set; }
+    public IReadOnlyList<string>? HiddenItemIds { get; set; }
 }
 
 public sealed record FolderFile
@@ -229,6 +230,7 @@ public sealed class WorkspaceFolder(string root)
                 Variables = file.Variables ?? [],
                 Scripts = file.Scripts ?? [],
                 SpecUrl = file.SpecUrl,
+                HiddenItemIds = file.HiddenItemIds,
                 Items = ReadChildren(relative, file.Order ?? [], issues),
             });
         }
@@ -459,6 +461,7 @@ public sealed class WorkspaceFolder(string root)
                 Variables = collection.Variables,
                 Scripts = collection.Scripts,
                 SpecUrl = collection.SpecUrl,
+                HiddenItemIds = collection.HiddenItemIds,
                 Order = collection.Items.Select(i => i.Id).ToList(),
             }, WorkspaceJsonContext.Default.CollectionFile);
 
