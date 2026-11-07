@@ -71,9 +71,6 @@
           <TabControl>
             <TabItem Header="Collections">
               <Panel>
-                <TextBlock Classes="muted" TextWrapping="Wrap" Margin="2,10,8,0"
-                           Text="Save a request or import from Postman to get started."
-                           IsVisible="{Binding !Collections.Count}" />
                 <TreeView x:Name="CollectionsTree" ItemsSource="{Binding Collections}" SelectedItem="{Binding SelectedNode}"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           AutomationProperties.Name="Collection tree">
@@ -134,6 +131,13 @@
                     </TreeDataTemplate>
                   </TreeView.ItemTemplate>
                 </TreeView>
+                <!-- Empty workspace: after the tree so it sits on top of it. -->
+                <StackPanel Margin="2,10,8,0" Spacing="10" HorizontalAlignment="Left" IsVisible="{Binding !Collections.Count}">
+                  <TextBlock Classes="muted" TextWrapping="Wrap" MaxWidth="260"
+                             Text="No requests yet. Create one, or import a Postman collection." />
+                  <Button Content="New request" Command="{Binding NewRequestCommand}" ToolTip.Tip="New request (Ctrl+N)"
+                          AutomationProperties.Name="New request" />
+                </StackPanel>
               </Panel>
             </TabItem>
             <TabItem Header="History">
@@ -211,8 +215,16 @@
             <Button Grid.Column="1" Content="Clear log" Command="{Binding ClearBulkLogCommand}"
                     IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Clear the bulk run log" />
           </Grid>
-          <ListBox ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
-                   AutomationProperties.Name="Bulk run log" />
+          <Panel>
+            <ListBox ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
+                     AutomationProperties.Name="Bulk run log" />
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10" IsVisible="{Binding !BulkLog.Count}">
+              <TextBlock Classes="muted" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="360"
+                         Text="Nothing has run yet. Paste the ids above, then press Start to send this request for each one." />
+              <Button Classes="primary" Content="Start" HorizontalAlignment="Center" Command="{Binding StartBulkCommand}"
+                      IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Start bulk run" />
+            </StackPanel>
+          </Panel>
         </DockPanel>
       </Border>
 
@@ -662,6 +674,8 @@
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="4" IsVisible="{Binding ShowEmptyState}">
               <TextBlock Classes="muted" HorizontalAlignment="Center" Text="Send a request to see the response" />
               <TextBlock Classes="muted" HorizontalAlignment="Center" FontSize="11" Opacity="0.7" Text="Enter or Ctrl+Enter to send" />
+              <Button Content="New request" Margin="0,10,0,0" HorizontalAlignment="Center" Command="{Binding NewRequestCommand}"
+                      ToolTip.Tip="New request (Ctrl+N)" AutomationProperties.Name="New request from the response pane" />
             </StackPanel>
             <TextBlock Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Center" Text="Sending…" IsVisible="{Binding IsSending}" />
 
