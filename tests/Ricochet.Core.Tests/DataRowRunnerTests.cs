@@ -121,4 +121,44 @@ public class DataRowRunnerTests
 
         await Assert.ThrowsAsync<RunSetupException>(() => runner.RunAsync(Shop(), new RunOptions { CollectionName = "Nope" }, rows));
     }
+
+    [Fact]
+    public async Task A_row_value_that_is_a_secret_is_masked_in_the_error_of_its_run()
+    {
+        // The connection error echoes the URL, which carries the row's token, so the report must not show the token.
+        var handler = new HttpMessageHandlerStub(request => throw new HttpRequestException($"refused: {request.RequestUri}"));
+        var runner = new DataRowRunner(new RequestSender(new HttpClient(handler)));
+        var workspace = new Workspace
+        {
+            Collections =
+            [
+                new Collection
+                {
+                    Name = "Shop",
+                    Items =
+                    [
+                        new CollectionItem
+                        {
+                            Name = "User",
+                            Request = new ApiRequest { Name = "User", Method = "GET", Url = "https://api.example.test/users/{{name}}?key={{token}}" },
+                        },
+                    ],
+                },
+            ],
+        };
+        IReadOnlyList<IReadOnlyList<KeyValue>> rows = [Row(("name", "ann"), ("token", "tok-9f8e7d6c"))];
+
+        var reports = await runner.RunAsync(workspace, new RunOptions { CollectionName = "Shop" }, rows);
+
+        var error = reports[0].Report.Results[0].Error;
+        Assert.DoesNotContain("tok-9f8e7d6c", error);
+        Assert.Contains("***", error);
+    }
+
+    // Lets a test choose what each send does, such as throwing as a dropped connection would.
+    private sealed class HttpMessageHandlerStub(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(respond(request));
+    }
 }

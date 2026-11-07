@@ -141,4 +141,72 @@ public class DataFileParserTests
     {
         Assert.Throws<RunSetupException>(() => DataFileParser.FormatFor("users.xlsx"));
     }
+
+    [Fact]
+    public void Csv_quoted_field_with_commas_and_crlf_line_breaks_keeps_the_next_row_aligned()
+    {
+        var rows = Csv("name,address,age\r\n\"Ann\",\"1 Main St, Apt 2\r\nSpringfield\",32\r\nbob,\"x\",41\r\n");
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(["name=Ann", "address=1 Main St, Apt 2\r\nSpringfield", "age=32"], Pairs(rows[0]));
+        Assert.Equal(["name=bob", "address=x", "age=41"], Pairs(rows[1]));
+    }
+
+    [Fact]
+    public void Csv_error_after_a_multi_line_quoted_value_names_the_physical_line()
+    {
+        // Line 2 is one record that spans lines 2 and 3; line 4 is short.
+        var error = Assert.Throws<RunSetupException>(() => Csv("name,note\n\"ann\",\"one\ntwo\"\nbob\n"));
+
+        Assert.Contains("Line 4", error.Message);
+    }
+
+    [Fact]
+    public void Csv_row_missing_a_column_refuses_the_whole_file_and_gives_both_counts()
+    {
+        var error = Assert.Throws<RunSetupException>(() => Csv("name,region,age\nann,eu,32\nbob,us\n"));
+
+        Assert.Contains("Line 3", error.Message);
+        Assert.Contains("has 2 values", error.Message);
+        Assert.Contains("the header has 3", error.Message);
+    }
+
+    [Fact]
+    public void Csv_empty_file_is_refused_because_it_has_no_header()
+    {
+        var error = Assert.Throws<RunSetupException>(() => Csv(""));
+
+        Assert.Contains("header", error.Message);
+    }
+
+    [Fact]
+    public void Json_numbers_and_booleans_keep_their_exact_text_and_strings_stay_as_written()
+    {
+        var rows = Json("""[{"id":-12,"ratio":1e3,"big":12345678901234567890,"ok":false,"text":"true","zero":0.0}]""");
+
+        Assert.Equal(["id=-12", "ratio=1e3", "big=12345678901234567890", "ok=false", "text=true", "zero=0.0"], Pairs(rows[0]));
+    }
+
+    [Fact]
+    public void Json_row_may_leave_out_a_key_and_only_that_row_lacks_it()
+    {
+        var rows = Json("""[{"name":"ann","region":"eu"},{"name":"bob"}]""");
+
+        Assert.Equal(["name=ann", "region=eu"], Pairs(rows[0]));
+        Assert.Equal(["name=bob"], Pairs(rows[1]));
+    }
+
+    [Fact]
+    public void Json_empty_file_is_refused_as_not_valid_json()
+    {
+        var error = Assert.Throws<RunSetupException>(() => Json(""));
+
+        Assert.Contains("not valid JSON", error.Message);
+    }
+
+    [Fact]
+    public void Json_empty_array_has_no_rows()
+    {
+        Assert.Empty(Json("[]"));
+    }
 }
