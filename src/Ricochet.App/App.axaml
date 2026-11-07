@@ -36,6 +36,10 @@
         <SolidColorBrush x:Key="Warning" Color="#FBBF24" />
         <SolidColorBrush x:Key="WarningBackground" Color="#2A2210" />
         <SolidColorBrush x:Key="WarningBorder" Color="#4A3C15" />
+        <SolidColorBrush x:Key="FailureBorder" Color="#5A2A2E" />
+        <SolidColorBrush x:Key="Info" Color="#60A5FA" />
+        <SolidColorBrush x:Key="InfoBackground" Color="#14233A" />
+        <SolidColorBrush x:Key="InfoBorder" Color="#21395E" />
         <SolidColorBrush x:Key="SecretOnBackground" Color="#33211A" />
         <SolidColorBrush x:Key="UrlBarBackground" Color="#1D2026" />
         <SolidColorBrush x:Key="Scrim" Color="#B3050608" />
@@ -99,6 +103,10 @@
         <SolidColorBrush x:Key="Warning" Color="#B45309" />
         <SolidColorBrush x:Key="WarningBackground" Color="#FEF3DC" />
         <SolidColorBrush x:Key="WarningBorder" Color="#F5D58A" />
+        <SolidColorBrush x:Key="FailureBorder" Color="#F5B5AE" />
+        <SolidColorBrush x:Key="Info" Color="#1D4ED8" />
+        <SolidColorBrush x:Key="InfoBackground" Color="#E6EFFD" />
+        <SolidColorBrush x:Key="InfoBorder" Color="#B7CCF2" />
         <SolidColorBrush x:Key="SecretOnBackground" Color="#FBE3D9" />
         <SolidColorBrush x:Key="UrlBarBackground" Color="#EEF0F4" />
         <SolidColorBrush x:Key="Scrim" Color="#8C15171C" />
@@ -293,13 +301,37 @@
       <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
     </Style>
 
-    <!-- Warning bar -->
-    <Style Selector="Border.warningbar">
-      <Setter Property="Background" Value="{DynamicResource WarningBackground}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource WarningBorder}" />
+    <!-- Banners: one shape for every notice. Add the variant class (info, warning or error) for its colours. -->
+    <Style Selector="Border.banner">
+      <Setter Property="Background" Value="{DynamicResource InfoBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource InfoBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="10" />
       <Setter Property="Padding" Value="14,10" />
+    </Style>
+    <Style Selector="Border.banner.info TextBlock, Border.banner.info SelectableTextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Info}" />
+    </Style>
+    <Style Selector="Border.banner.warning">
+      <Setter Property="Background" Value="{DynamicResource WarningBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource WarningBorder}" />
+    </Style>
+    <Style Selector="Border.banner.warning TextBlock, Border.banner.warning SelectableTextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Warning}" />
+    </Style>
+    <Style Selector="Border.banner.error">
+      <Setter Property="Background" Value="{DynamicResource FailureBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource FailureBorder}" />
+    </Style>
+    <Style Selector="Border.banner.error TextBlock, Border.banner.error SelectableTextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Failure}" />
+    </Style>
+    <Style Selector="Border.banner Button.banner-action">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Margin" Value="8,0,0,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
     <!-- Buttons -->

@@ -705,6 +705,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool HasNotice => Notice.Length > 0;
 
+    [RelayCommand]
+    private void DismissNotice() => Notice = "";
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasImportReport))]
     private string _importReport = "";
@@ -1185,6 +1188,9 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSpecPreview))] private string _specPreview = "";
 
     public bool HasSpecError => SpecError.Length > 0;
+
+    [RelayCommand]
+    private void DismissSpecError() => SpecError = "";
     public bool HasSpecPreview => SpecPreview.Length > 0;
 
     private static readonly Lazy<HttpClient> SpecClient = new(() => RequestSender.CreateDefaultClient());
