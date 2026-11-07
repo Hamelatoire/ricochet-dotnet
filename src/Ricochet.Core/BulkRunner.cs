@@ -41,7 +41,8 @@ public sealed class BulkRunner(RequestSender sender)
         IReadOnlyList<string> ids,
         Action<BulkItemResult> onResult,
         CancellationToken cancellationToken = default,
-        int maxParallel = 1)
+        int maxParallel = 1,
+        IReadOnlyList<KeyValue>? overrides = null)
     {
         if (maxParallel < 1)
             throw new ArgumentOutOfRangeException(nameof(maxParallel), "At least one thread is needed.");
@@ -70,7 +71,7 @@ public sealed class BulkRunner(RequestSender sender)
                 {
                     try
                     {
-                        var result = (await RunOneAsync(workspace, collection, environment, template, placeholder, id)) with { Position = index };
+                        var result = (await RunOneAsync(workspace, collection, environment, template, placeholder, id, overrides ?? [])) with { Position = index };
                         lock (resultLock)
                             onResult(result);
                     }
@@ -92,9 +93,9 @@ public sealed class BulkRunner(RequestSender sender)
     }
 
     private async Task<BulkItemResult> RunOneAsync(Workspace workspace, Collection collection, ApiEnvironment? environment,
-        ApiRequest template, string placeholder, string id)
+        ApiRequest template, string placeholder, string id, IReadOnlyList<KeyValue> overrides)
     {
-        var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, [new KeyValue(placeholder, id)]);
+        var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, overrides, [new KeyValue(placeholder, id)]);
         var resolved = VariableResolver.Apply(template, variables);
         var secrets = CollectionRunner.SecretsToMask(variables, [], [], resolved);
 
