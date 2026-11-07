@@ -1020,7 +1020,14 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>The name is already changed on the node, so this only saves it.</summary>
-    private async void RenameNode(TreeNodeViewModel node) => await PersistAsync();
+    private async void RenameNode(TreeNodeViewModel node)
+    {
+        // A hidden item can't stay selected, since the tree no longer shows it.
+        if (node.IsHidden && SelectedNode?.IsWithin(node) == true)
+            SelectedNode = null;
+
+        await PersistAsync();
+    }
 
     /// <summary>Adds an empty folder inside the node, then opens its name for editing.</summary>
     private async void AddFolder(TreeNodeViewModel parent)
