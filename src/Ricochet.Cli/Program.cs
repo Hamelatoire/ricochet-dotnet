@@ -19,6 +19,7 @@ internal static class Program
         Usage:
           ricochet run [folder] [options]
           ricochet export <collection> --postman <file> | --openapi <file>   (see ricochet export --help)
+          ricochet docs <collection> <file.html> [--force]   (see ricochet docs --help)
           ricochet zip export <workspace> <file.zip> | zip import <file.zip> <new-folder>   (see ricochet zip --help)
 
         Arguments:
@@ -79,6 +80,9 @@ internal static class Program
 
         if (args[0] == "export")
             return ExportCommand(args.Skip(1).ToList());
+
+        if (args[0] == "docs")
+            return DocsCommand(args.Skip(1).ToList());
 
         if (args[0] == "zip")
             return ZipCommand(args.Skip(1).ToList());
@@ -579,6 +583,86 @@ internal static class Program
         }
 
         return true;
+    }
+
+    private const string DocsUsage = """
+        Ricochet: write one collection as a self-contained HTML page for people who do not use Ricochet (ADR 0028).
+
+        Usage:
+          ricochet docs <collection> <file.html> [options]
+
+        Arguments:
+          collection             The name of the collection to document.
+          file.html              The page to write. It must be outside the workspace folder.
+
+        Options:
+          --workspace <folder>   The workspace folder. Defaults to the current folder.
+          --force                Overwrite a file that already exists.
+          --help                 Show this help.
+
+        Secret values are shown as ***. The page has no scripts and makes no network calls.
+
+        Exit codes:
+          0  The page was written.
+          2  The page could not be written, for example because the collection does not exist,
+             a file already exists without --force, or the workspace is unreadable.
+        """;
+
+    private static int DocsCommand(List<string> args)
+    {
+        if (args.Any(a => a is "--help" or "-h"))
+        {
+            Console.WriteLine(DocsUsage);
+            return ExitPassed;
+        }
+
+        var force = args.Remove("--force");
+        var workspace = ".";
+        var positional = new List<string>();
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] == "--workspace")
+            {
+                if (i + 1 >= args.Count) return CannotRun("--workspace needs a folder.");
+                workspace = args[++i];
+            }
+            else if (args[i].StartsWith('-'))
+            {
+                return CannotRun($"Unknown option \"{args[i]}\". Try: ricochet docs --help");
+            }
+            else
+            {
+                positional.Add(args[i]);
+            }
+        }
+
+        if (positional.Count != 2)
+            return CannotRun("ricochet docs needs a collection and a file. Try: ricochet docs --help");
+
+        if (!WorkspaceFolder.LooksLikeWorkspace(workspace))
+            return CannotRun($"\"{Path.GetFullPath(workspace)}\" is not a Ricochet workspace folder.");
+
+        var folder = new WorkspaceFolder(Path.GetFullPath(workspace));
+        var (loaded, issues) = folder.Load();
+        if (issues.Count > 0)
+        {
+            foreach (var issue in issues)
+                Console.Error.WriteLine($"{issue.Path}: {issue.Problem}");
+            return CannotRun("Some workspace files could not be used. Fix them and try again.");
+        }
+
+        try
+        {
+            var collection = ExportFiles.FindCollection(loaded.Collections, positional[0]);
+            var target = ExportFiles.Check(positional[1], folder.Root, force);
+            ExportFiles.Write(target, CollectionDocumentation.Render(collection), folder.Root, force);
+            Console.WriteLine($"Wrote documentation for {collection.Name} to {target}");
+            return ExitPassed;
+        }
+        catch (ExportFileException ex)
+        {
+            return CannotRun(ex.Message);
+        }
     }
 
     private const string ZipUsage = """
