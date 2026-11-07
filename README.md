@@ -1,5 +1,7 @@
 # Ricochet
 
+<img src="src/Ricochet.App/Assets/ricochet-256.png" alt="The Ricochet logo" width="96" align="right">
+
 A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, Avalonia and Native AOT.
 
 - Decisions: [docs/adr](docs/adr)
@@ -16,6 +18,10 @@ Download `ricochet-setup-<version>-win-x64.exe` from the [latest release](https:
 | Install mode | License | Finished |
 | --- | --- | --- |
 | ![The install mode dialog](docs/screenshots/installer-mode.png) | ![The license page](docs/screenshots/installer-license.png) | ![The final page](docs/screenshots/installer-finish.png) |
+
+Once running, Ricochet shows its icon in the taskbar (zoomed in here):
+
+![Ricochet's icon in the Windows taskbar](docs/screenshots/app-icon-taskbar.png)
 
 Release builds aren't signed yet, so Windows may warn before running the installer. The zips for each platform on the same page need no installer.
 

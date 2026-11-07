@@ -37,6 +37,8 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=Ricochet
 UninstallDisplayIcon={app}\Ricochet.exe
+; The icon of the setup program itself, and of its window.
+SetupIconFile=..\src\Ricochet.App\Assets\ricochet.ico
 ; Closes a running Ricochet while updating it, so its files can be replaced.
 CloseApplications=yes
 RestartApplications=no

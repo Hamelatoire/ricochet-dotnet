@@ -7,6 +7,7 @@
         x:Class="Ricochet.App.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="Ricochet"
+        Icon="/Assets/ricochet.ico"
         Width="1360" Height="900" MinWidth="860" MinHeight="600"
         WindowStartupLocation="CenterScreen"
         ExtendClientAreaToDecorationsHint="True"
