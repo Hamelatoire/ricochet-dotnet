@@ -23,25 +23,40 @@ public sealed partial class MainViewModel : ObservableObject
     private IReadOnlyDictionary<string, string> _storedSecrets;
     private IDisposable? _folderWatcher;
 
+    /// <summary>The mock server dialog (ADR 0027). It is not part of the Workspace, so it is not saved.</summary>
+    public MockServerViewModel Mock { get; } = new();
+
+    // The last response and what produced it, kept so it can be saved as an example (ADR 0023).
+    private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _lastExchange;
+
     public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault)
     {
         _sender = sender;
         _store = store;
         _vault = vault;
         _storedSecrets = LoadSecrets();
+        _clientCertificatePassword = PersonalSecrets.ClientCertificatePassword(_storedSecrets) ?? "";
+        // Load first: settings and the theme are read from the state that Load reads.
+        var loaded = store.Load();
         _settings = store.Settings;
         ApplySettings();
 
-        var loaded = store.Load();
         _themeChoice = ThemeSettings.ChoiceName(store.Theme);
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
             workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder)));
-        History = new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
+        // A collection added later must follow the tag filter too (ADR 0030).
+        Collections.CollectionChanged += (_, _) => ApplyTagFilter();
+        History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
         Captures.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
+        Examples.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(ExamplesTabTitle));
+            OnPropertyChanged(nameof(HasExamples));
+        };
         TestResults.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(ResponseTestsTabTitle));
@@ -133,6 +148,9 @@ public sealed partial class MainViewModel : ObservableObject
         new(AuthKinds.Bearer, "Bearer token"),
         new(AuthKinds.Basic, "Basic"),
         new(AuthKinds.ApiKey, "API key"),
+        new(AuthKinds.Digest, "Digest"),
+        new(AuthKinds.OAuth1, "OAuth 1.0"),
+        new(AuthKinds.AwsSigV4, "AWS Signature v4"),
     ];
 
     public ObservableCollection<TreeNodeViewModel> Collections { get; }
@@ -142,7 +160,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The environments without the "No environment" choice, which has nothing to edit.</summary>
     public ObservableCollection<EnvironmentViewModel> EditableEnvironments { get; }
 
-    public KeyValueListViewModel Headers { get; } = new();
+    public KeyValueListViewModel Headers { get; } = new(keyPlaceholder: "Header name", valuePlaceholder: "Header value");
     public KeyValueListViewModel Globals { get; } = new(allowSecrets: true);
 
     [ObservableProperty] private string _requestName = "";
@@ -154,13 +172,25 @@ public sealed partial class MainViewModel : ObservableObject
     private string _body = "";
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsBearerAuth), nameof(IsBasicAuth), nameof(IsApiKeyAuth), nameof(IsNoAuth), nameof(AuthTabTitle))]
+    [NotifyPropertyChangedFor(nameof(IsBearerAuth), nameof(IsBasicAuth), nameof(IsApiKeyAuth), nameof(IsNoAuth), nameof(AuthTabTitle),
+        nameof(IsUserPasswordAuth), nameof(IsOAuth1Auth), nameof(IsAwsAuth), nameof(IsDigestAuth))]
     private AuthOption _selectedAuth;
 
     public ObservableCollection<AssertionRowViewModel> Assertions { get; } = [];
     public ObservableCollection<TestResultRow> TestResults { get; } = [];
 
     public ObservableCollection<CaptureRowViewModel> Captures { get; } = [];
+
+    /// <summary>The examples saved on the current Request (ADR 0023).</summary>
+    public ObservableCollection<ResponseExampleRowViewModel> Examples { get; } = [];
+
+    [ObservableProperty] private string _exampleName = "";
+
+    /// <summary>True once there is a response that can be saved as an example.</summary>
+    [ObservableProperty] private bool _canSaveExample;
+
+    public bool HasExamples => Examples.Count > 0;
+    public string ExamplesTabTitle => Examples.Count > 0 ? $"Examples  {Examples.Count}" : "Examples";
 
     /// <summary>Names only, because captures are often tokens. Their values live in memory, never in a file.</summary>
     public ObservableCollection<string> CapturedNames { get; } = [];
@@ -260,6 +290,63 @@ public sealed partial class MainViewModel : ObservableObject
         set => ChangeSettings(s => s with { WrapResponse = value }, nameof(WrapResponse));
     }
 
+    /// <summary>An HTTP proxy, or empty for the operating system's proxy (ADR 0026).</summary>
+    public string ProxyUrl
+    {
+        get => _settings.ProxyUrl;
+        set => ChangeSettings(s => s with { ProxyUrl = value }, nameof(ProxyUrl));
+    }
+
+    /// <summary>A .pfx or .p12 file, or empty for none. Only the path is saved; the file is not copied.</summary>
+    public string ClientCertificatePath
+    {
+        get => _settings.ClientCertificatePath;
+        set => ChangeSettings(s => s with { ClientCertificatePath = value }, nameof(ClientCertificatePath));
+    }
+
+    private string _clientCertificatePassword = "";
+
+    /// <summary>The certificate's password. It is a Secret: kept in secure storage, never in state.json or the workspace (ADR 0026).</summary>
+    public string ClientCertificatePassword
+    {
+        get => _clientCertificatePassword;
+        set
+        {
+            if (value == _clientCertificatePassword)
+                return;
+
+            _clientCertificatePassword = value;
+            try
+            {
+                var secrets = PersonalSecrets.WithClientCertificatePassword(_storedSecrets, value);
+                _vault.Save(secrets);
+                _storedSecrets = secrets;
+            }
+            catch (SecretVaultException ex)
+            {
+                StorageWarning = $"{ex.Message} The certificate password will last only until you close Ricochet.";
+            }
+
+            ApplySettings();
+            OnPropertyChanged(nameof(ClientCertificatePassword));
+        }
+    }
+
+    private string _connectionProblem = "";
+
+    /// <summary>Why the proxy or client certificate cannot be used, shown on the settings page. Empty when they can.</summary>
+    public string ConnectionProblem
+    {
+        get => _connectionProblem;
+        private set
+        {
+            if (SetProperty(ref _connectionProblem, value))
+                OnPropertyChanged(nameof(HasConnectionProblem));
+        }
+    }
+
+    public bool HasConnectionProblem => ConnectionProblem.Length > 0;
+
     /// <summary>Shown on every page while certificate checks are off, because that exposes credentials.</summary>
     public bool ShowTlsWarning => !_settings.VerifyTlsCertificates;
 
@@ -272,11 +359,14 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowTlsWarning));
     }
 
-    private void ApplySettings() => _sender.Configure(
+    private void ApplySettings() => ConnectionProblem = _sender.Configure(
         TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds),
         _settings.FollowRedirects,
         _settings.VerifyTlsCertificates,
-        _settings.MaxResponseMegabytes * 1024L * 1024L);
+        _settings.MaxResponseMegabytes * 1024L * 1024L,
+        _settings.ProxyUrl,
+        _settings.ClientCertificatePath,
+        _clientCertificatePassword) ?? "";
 
     [RelayCommand]
     private void DismissStorageWarning() => StorageWarning = "";
@@ -284,6 +374,18 @@ public sealed partial class MainViewModel : ObservableObject
     public IReadOnlyList<string> ThemeChoices { get; } = ThemeSettings.Choices;
 
     /// <summary>System, Light or Dark. Kept on this machine only, in state.json.</summary>
+    /// <summary>Shows only the folders and requests with this tag, or inside a folder that has it (ADR 0030). Empty shows everything.</summary>
+    [ObservableProperty] private string _tagFilter = "";
+
+    partial void OnTagFilterChanged(string value) => ApplyTagFilter();
+
+    private void ApplyTagFilter()
+    {
+        var filter = (TagFilter ?? "").Trim();
+        foreach (var node in Collections)
+            node.ApplyTagFilter(filter);
+    }
+
     [ObservableProperty] private string _themeChoice = ThemeSettings.SystemChoice;
 
     partial void OnThemeChoiceChanged(string value) => _store.SetTheme(ThemeSettings.StoredValue(value));
@@ -487,10 +589,24 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _authKeyValue = "";
     [ObservableProperty] private bool _authKeyInQuery;
 
+    // Digest uses the username and password above. These are the settings of the signing kinds (ADR 0024).
+    [ObservableProperty] private string _authConsumerKey = "";
+    [ObservableProperty] private string _authConsumerSecret = "";
+    [ObservableProperty] private string _authTokenSecret = "";
+    [ObservableProperty] private string _authAwsAccessKeyId = "";
+    [ObservableProperty] private string _authAwsSecretAccessKey = "";
+    [ObservableProperty] private string _authAwsSessionToken = "";
+    [ObservableProperty] private string _authAwsRegion = "";
+    [ObservableProperty] private string _authAwsService = "";
+
     public bool IsNoAuth => SelectedAuth.Kind == AuthKinds.None;
     public bool IsBearerAuth => SelectedAuth.Kind == AuthKinds.Bearer;
     public bool IsBasicAuth => SelectedAuth.Kind == AuthKinds.Basic;
     public bool IsApiKeyAuth => SelectedAuth.Kind == AuthKinds.ApiKey;
+    public bool IsDigestAuth => SelectedAuth.Kind == AuthKinds.Digest;
+    public bool IsOAuth1Auth => SelectedAuth.Kind == AuthKinds.OAuth1;
+    public bool IsAwsAuth => SelectedAuth.Kind == AuthKinds.AwsSigV4;
+    public bool IsUserPasswordAuth => IsBasicAuth || IsDigestAuth;
 
     /// <summary>
     /// The value a {{name}} in the URL currently resolves to, for the hover tip. Null when it has no value
@@ -504,8 +620,21 @@ public sealed partial class MainViewModel : ObservableObject
             return null;
         if (match.IsSecret)
             return "Secret, hidden";
+        if (match.IsPrompt)
+            return "Asked each time it is sent";
         return match.Value;
     }
+
+    /// <summary>Every Variable a send of the open Request can see, lowest priority first, layered the same way a send layers them (ADR 0009).</summary>
+    public IReadOnlyList<KeyValue> VariablesInScope() => VariablesInScope(DotEnv.Read(_store.FolderPath));
+
+    private IReadOnlyList<KeyValue> VariablesInScope(DotEnv.Result dotEnv) =>
+        VariableResolver.Layer(
+            Globals.ToEntries(),
+            CurrentCollection?.Variables.ToEntries(),
+            ActiveEnvironment.Variables.ToEntries(),
+            CapturedFor(CurrentCollection?.Id),
+            dotEnv.Variables);
 
     [ObservableProperty] private TreeNodeViewModel? _selectedNode;
     [ObservableProperty] private HistoryEntry? _selectedHistory;
@@ -571,6 +700,31 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseSettingsPage() => IsSettingsPageOpen = false;
 
+    /// <summary>
+    /// Escape: closes the topmost thing that is open, using the same path as its own Cancel, Done or Close button.
+    /// Dialogs come first, then a rename in the sidebar, then the side pages. Only one thing closes per press.
+    /// </summary>
+    [RelayCommand]
+    private void CloseTopPanel()
+    {
+        if (HasPendingCopy)
+            CancelCopy();
+        else if (HasImportReport)
+            CloseImportReport();
+        else if (IsSpecDialogOpen)
+            CloseSpecDialog();
+        else if (AllNodes(Collections).FirstOrDefault(n => n.IsRenaming) is { } renaming)
+            renaming.CancelRenameCommand.Execute(null);
+        else if (IsBulkPageOpen)
+            CloseBulkPage();
+        else if (IsVariablesPageOpen)
+            CloseVariablesPageCommand.Execute(null);
+        else if (IsEnvironmentsPageOpen)
+            CloseEnvironmentsPageCommand.Execute(null);
+        else if (IsSettingsPageOpen)
+            CloseSettingsPage();
+    }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
     private bool _isVariablesPageOpen;
@@ -621,7 +775,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         foreach (var variable in EditingVariablesCollection.Variables.Items.Where(row => row.Key.Trim().Length > 0))
-            VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret,
+            VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret, variable.IsPrompt,
                 VariablesEnvironment.Variables, VariablesEnvironment.Name, MoveVariable));
     }
 
@@ -634,7 +788,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         // The environment keeps a value it already has. Otherwise it takes the collection's default.
-        environment.Variables.AddIfMissing(variable.Key, variable.Value, variable.IsSecret);
+        environment.Variables.AddIfMissing(variable.Key, variable.Value, variable.IsSecret, variable.IsPrompt);
         defaults.Items.Remove(variable);
         await PersistAsync();
     }
@@ -694,16 +848,40 @@ public sealed partial class MainViewModel : ObservableObject
     public bool ShowEmptyState => !IsSending && !HasStatus;
 
     [ObservableProperty] private string _timingText = "";
-    [ObservableProperty] private bool _isSuccess;
-    [ObservableProperty] private bool _isFailure;
+
+    /// <summary>The colour family of the status code, which picks the status badge's colour.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSuccess), nameof(IsRedirect), nameof(IsClientError), nameof(IsServerError), nameof(IsFailure))]
+    private ResponseStatusClass _statusClass;
+
+    /// <summary>Set when the request could not be sent at all, so there is no status code.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsFailure))]
+    private bool _sendFailed;
+
+    public bool IsSuccess => StatusClass == ResponseStatusClass.Success;
+    public bool IsRedirect => StatusClass == ResponseStatusClass.Redirect;
+    public bool IsClientError => StatusClass == ResponseStatusClass.ClientError;
+    public bool IsServerError => StatusClass == ResponseStatusClass.ServerError;
+    public bool IsFailure => SendFailed || IsServerError;
+
     [ObservableProperty] private string _responseHeaders = "";
     [ObservableProperty] private string _responseBody = "";
+
+    /// <summary>The body as received, before any pretty-printing, for saving to a file.</summary>
+    public byte[] ResponseBytes { get; private set; } = [];
+
+    /// <summary>A file name for saving <see cref="ResponseBytes"/>, from the response's media type.</summary>
+    public string ResponseFileName { get; private set; } = ResponseStatus.SuggestedBodyFileName(null);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasNotice))]
     private string _notice = "";
 
     public bool HasNotice => Notice.Length > 0;
+
+    [RelayCommand]
+    private void DismissNotice() => Notice = "";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasImportReport))]
@@ -772,6 +950,9 @@ public sealed partial class MainViewModel : ObservableObject
         Captures.Clear();
         foreach (var capture in request.Captures ?? [])
             Captures.Add(NewCaptureRow(capture));
+        Examples.Clear();
+        foreach (var example in request.Examples ?? [])
+            Examples.Add(NewExampleRow(example));
         ClearResponse();
         Notice = ScriptNotice();
     }
@@ -786,11 +967,37 @@ public sealed partial class MainViewModel : ObservableObject
         AuthKeyName = auth.KeyName;
         AuthKeyValue = auth.KeyValue;
         AuthKeyInQuery = auth.KeyInQuery;
+
+        var details = auth.Details ?? new AuthDetails();
+        AuthConsumerKey = details.ConsumerKey;
+        AuthConsumerSecret = details.ConsumerSecret;
+        AuthTokenSecret = details.TokenSecret;
+        AuthAwsAccessKeyId = details.AwsAccessKeyId;
+        AuthAwsSecretAccessKey = details.AwsSecretAccessKey;
+        AuthAwsSessionToken = details.AwsSessionToken;
+        AuthAwsRegion = details.AwsRegion;
+        AuthAwsService = details.AwsService;
     }
 
-    private RequestAuth? CurrentAuth() => SelectedAuth.Kind == AuthKinds.None
-        ? null
-        : new RequestAuth
+    private RequestAuth? CurrentAuth()
+    {
+        if (SelectedAuth.Kind == AuthKinds.None)
+            return null;
+
+        // Details are only written when one is set, so a Request with none keeps its file as it was.
+        var details = new AuthDetails
+        {
+            ConsumerKey = AuthConsumerKey,
+            ConsumerSecret = AuthConsumerSecret,
+            TokenSecret = AuthTokenSecret,
+            AwsAccessKeyId = AuthAwsAccessKeyId,
+            AwsSecretAccessKey = AuthAwsSecretAccessKey,
+            AwsSessionToken = AuthAwsSessionToken,
+            AwsRegion = AuthAwsRegion,
+            AwsService = AuthAwsService,
+        };
+
+        return new RequestAuth
         {
             Kind = SelectedAuth.Kind,
             Token = AuthToken,
@@ -799,7 +1006,9 @@ public sealed partial class MainViewModel : ObservableObject
             KeyName = AuthKeyName,
             KeyValue = AuthKeyValue,
             KeyInQuery = AuthKeyInQuery,
+            Details = details == new AuthDetails() ? null : details,
         };
+    }
 
     private string ScriptNotice() => _currentNode?.HasScripts == true
         ? "This request has Postman scripts, on it or on a parent, which are not run. It may rely on values they would set."
@@ -812,6 +1021,9 @@ public sealed partial class MainViewModel : ObservableObject
             { Kind: AuthKinds.Bearer, Token: "" } => "a token",
             { Kind: AuthKinds.Basic, Password: "" } => "a password",
             { Kind: AuthKinds.ApiKey, KeyValue: "" } => "an API key value",
+            { Kind: AuthKinds.Digest, Password: "" } => "a password",
+            { Kind: AuthKinds.OAuth1, Details.ConsumerSecret: "" } => "a consumer secret",
+            { Kind: AuthKinds.AwsSigV4, Details.AwsSecretAccessKey: "" } => "an AWS secret access key",
             _ => null,
         };
 
@@ -820,6 +1032,10 @@ public sealed partial class MainViewModel : ObservableObject
             WorkspaceSecrets.HasHiddenValues(request) ? $"Headers showing {SecretRules.HiddenValue} were removed from History, so enter them again." : "");
     }
 
+    /// <summary>Says which lines of the .env file were skipped, so that a missing value isn't a mystery.</summary>
+    internal static string DotEnvNotice(DotEnv.Result dotEnv) =>
+        string.Join('\n', dotEnv.SkippedLines.Select(line => $"{DotEnv.FileName} line {line} was skipped, because it is not KEY=VALUE."));
+
     private static string JoinNotices(params string[] notices) =>
         string.Join('\n', notices.Where(n => n.Length > 0));
 
@@ -827,13 +1043,17 @@ public sealed partial class MainViewModel : ObservableObject
     {
         StatusText = "";
         TimingText = "";
-        IsSuccess = false;
-        IsFailure = false;
+        StatusClass = ResponseStatusClass.Neutral;
+        SendFailed = false;
         ResponseHeaders = "";
         ResponseIsJson = false;
         ResponseBody = "";
+        ResponseBytes = [];
+        ResponseFileName = ResponseStatus.SuggestedBodyFileName(null);
         Notice = "";
         TestResults.Clear();
+        _lastExchange = null;
+        CanSaveExample = false;
     }
 
     private ApiRequest CurrentRequest() => new()
@@ -847,6 +1067,7 @@ public sealed partial class MainViewModel : ObservableObject
         Auth = CurrentAuth(),
         Assertions = Assertions.Count > 0 ? Assertions.Select(a => a.ToAssertion()).ToList() : null,
         Captures = Captures.Count > 0 ? Captures.Select(c => c.ToCapture()).ToList() : null,
+        Examples = Examples.Count > 0 ? Examples.Select(e => e.Example).ToList() : null,
     };
 
     [RelayCommand]
@@ -871,27 +1092,39 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         // The request is hidden behind the page, so the shortcut must not send it unseen.
-        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen)
+        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen || IsPromptDialogOpen)
             return;
+
+        var request = CurrentRequest();
+        var collectionId = CurrentCollection?.Id;
+
+        // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
+        var dotEnv = DotEnv.Read(_store.FolderPath);
+        var variables = VariablesInScope(dotEnv);
+
+        // Values for prompt Variables are asked first, for this send only (ADR 0019). Cancelling the prompt sends nothing.
+        var prompts = VariableResolver.FindPromptVariables(request, variables);
+        IReadOnlyDictionary<string, string>? answers = null;
+        if (prompts.Count > 0)
+        {
+            answers = await AskForPromptValuesAsync(prompts);
+            if (answers is null)
+                return;
+        }
 
         using var cts = new CancellationTokenSource();
         _sendCts = cts;
         IsSending = true;
         ClearResponse();
 
-        var request = CurrentRequest();
         // History keeps this copy, with generated values filled in and Variables as written (ADR 0008).
         var historyRequest = request;
-        var collectionId = CurrentCollection?.Id;
         var unresolved = "";
+        var envProblems = "";
         try
         {
-            var variables = VariableResolver.Layer(
-                Globals.ToEntries(),
-                CurrentCollection?.Variables.ToEntries(),
-                ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId));
-            var resolution = VariableResolver.Resolve(request, variables);
+            envProblems = DotEnvNotice(dotEnv);
+            var resolution = VariableResolver.Resolve(request, variables, answers);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
             var names = VariableResolver.FindPlaceholders(resolved);
@@ -901,6 +1134,8 @@ public sealed partial class MainViewModel : ObservableObject
             var response = await _sender.SendAsync(resolved, cts.Token);
             var formatted = await Task.Run(() => ResponseFormatter.Format(response), cts.Token);
             ShowResponse(response, formatted);
+            _lastExchange = (resolved, variables, CapturedFor(collectionId), response);
+            CanSaveExample = true;
             var testResults = await Task.Run(() => AssertionEvaluator.Evaluate(resolved.Assertions, response), cts.Token);
             foreach (var result in testResults)
             {
@@ -915,7 +1150,7 @@ public sealed partial class MainViewModel : ObservableObject
             foreach (var failure in captureOutcome.Failures)
                 TestResults.Add(new TestResultRow("FAIL", $"{failure.Description}: {failure.Message}", false));
 
-            Notice = JoinNotices(ScriptNotice(), unresolved, CredentialNotice(request), response.Truncated
+            Notice = JoinNotices(ScriptNotice(), unresolved, envProblems, CredentialNotice(request), response.Truncated
                 ? $"Response too large: showing the first {FormatSize(response.Body.Length)}."
                 : "");
             AddHistory(historyRequest, response.StatusCode, (long)response.Elapsed.TotalMilliseconds, collectionId);
@@ -927,7 +1162,7 @@ public sealed partial class MainViewModel : ObservableObject
         catch (RequestFailedException ex)
         {
             StatusText = "Failed";
-            IsFailure = true;
+            SendFailed = true;
             Notice = JoinNotices(ex.Message, unresolved, CredentialNotice(request), ScriptNotice());
             AddHistory(historyRequest, statusCode: null, elapsedMs: 0, collectionId);
         }
@@ -943,12 +1178,13 @@ public sealed partial class MainViewModel : ObservableObject
     private void ShowResponse(ApiResponse response, FormattedBody formatted)
     {
         StatusText = $"{response.StatusCode} {response.ReasonPhrase}".Trim();
-        IsSuccess = response.StatusCode is >= 200 and < 400;
-        IsFailure = !IsSuccess;
+        StatusClass = ResponseStatus.Classify(response.StatusCode);
         TimingText = $"{response.Elapsed.TotalMilliseconds:N0} ms  ·  {FormatSize(response.Body.Length)}";
         ResponseHeaders = string.Join('\n', response.Headers.Select(h => $"{h.Key}: {h.Value}"));
         ResponseIsJson = formatted.IsJson;
         ResponseBody = formatted.Text;
+        ResponseBytes = response.Body;
+        ResponseFileName = ResponseStatus.SuggestedBodyFileName(response.MediaType);
     }
 
     private static string FormatSize(long bytes) => bytes switch
@@ -960,9 +1196,68 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void AddHistory(ApiRequest request, int? statusCode, long elapsedMs, string? collectionId)
     {
-        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
+        // Examples belong to the Request in the Workspace, not to each send of it.
+        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request with { Examples = null }, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
         while (History.Count > Workspace.MaxHistory)
             History.RemoveAt(History.Count - 1);
+    }
+
+    private ResponseExampleRowViewModel NewExampleRow(ResponseExample example) =>
+        new(example, row => _ = RemoveExampleAsync(row), ShowExample);
+
+    /// <summary>Saves the last response on the saved Request. Unsaved edits to the form stay unsaved.</summary>
+    [RelayCommand]
+    private async Task SaveExampleAsync()
+    {
+        if (_lastExchange is not { } last)
+            return;
+
+        if (_currentNode?.Request is not { } saved)
+        {
+            Notice = "Save the request first, then save a response as an example.";
+            return;
+        }
+
+        var name = ExampleName.Trim().Length > 0 ? ExampleName : $"Example {Examples.Count + 1}";
+        ResponseExample example;
+        try
+        {
+            example = ResponseExamples.Create(name, last.Sent, last.Variables, last.Captured, last.Response);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Notice = ex.Message;
+            return;
+        }
+
+        _currentNode.Request = saved with { Examples = (saved.Examples ?? []).Append(example).ToList() };
+        Examples.Add(NewExampleRow(example));
+        ExampleName = "";
+        Notice = $"Saved example \"{example.Name}\". Credentials were masked.";
+        await PersistAsync();
+    }
+
+    private async Task RemoveExampleAsync(ResponseExampleRowViewModel row)
+    {
+        Examples.Remove(row);
+        if (_currentNode?.Request is { } saved)
+        {
+            var remaining = (saved.Examples ?? []).Where(e => e.Id != row.Example.Id).ToList();
+            _currentNode.Request = saved with { Examples = remaining.Count > 0 ? remaining : null };
+        }
+
+        await PersistAsync();
+    }
+
+    /// <summary>Shows a saved example in the response panel. It is not a new response, so it can't be saved again.</summary>
+    private void ShowExample(ResponseExample example)
+    {
+        ClearResponse();
+        var response = new ApiResponse(example.StatusCode, example.ReasonPhrase, example.Headers,
+            System.Text.Encoding.UTF8.GetBytes(example.Body), example.MediaType, null, TimeSpan.Zero, false);
+        ShowResponse(response, ResponseFormatter.Format(response));
+        TimingText = $"Saved example \"{example.Name}\"";
+        Notice = "This is a saved example, not a new response.";
     }
 
     [RelayCommand]
@@ -1112,18 +1407,70 @@ public sealed partial class MainViewModel : ObservableObject
         await PersistAsync();
     }
 
-    /// <summary>Imports each file on its own, so one bad file does not stop the others.</summary>
+    /// <summary>The data dump whose exports the user is choosing from, or null. Shown over the window (ADR 0038).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsDumpChoiceOpen))]
+    private DumpChoiceViewModel? _dumpChoice;
+
+    public bool IsDumpChoiceOpen => DumpChoice is not null;
+
+    /// <summary>Imports each file on its own, so one bad file does not stop the others. A data dump opens a choice instead.</summary>
     public async Task ImportFilesAsync(IReadOnlyList<string> paths)
     {
-        var parsed = await Task.Run(() => paths.Select(ParseFile).ToList());
+        var dumps = paths.Where(IsDumpPath).ToList();
+        var parsed = await Task.Run(() => paths.Where(p => !IsDumpPath(p)).Select(ParseFile).ToList());
 
         var report = new List<string>();
         foreach (var (name, result, error) in parsed)
             report.Add(result is null ? $"{name}\nNot imported. {error}" : $"{name}\n{ApplyImport(result)}");
 
+        if (dumps.Count > 1)
+            report.Add($"Import one data dump at a time. Not imported: {string.Join(", ", dumps.Skip(1).Select(Path.GetFileName))}");
+
+        if (dumps.Count > 0)
+        {
+            var (name, listing, error) = await Task.Run(() => ReadDumpFile(dumps[0]));
+            if (listing is null)
+                report.Add($"{name}\nNot imported. {error}");
+            else
+                DumpChoice = new DumpChoiceViewModel(name, listing, ImportDumpAsync, CloseDumpChoice);
+        }
+
         ImportReport = string.Join("\n\n", report);
         await PersistAsync();
     }
+
+    private static bool IsDumpPath(string path) => Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase);
+
+    private static (string Name, IReadOnlyList<DumpEntry>? Listing, string? Error) ReadDumpFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return (name, PostmanImporter.ReadDump(stream), null);
+        }
+        catch (Exception ex) when (ex is PostmanImportException or IOException or UnauthorizedAccessException)
+        {
+            return (name, null, ex.Message);
+        }
+    }
+
+    /// <summary>Imports only the exports the user kept ticked. Nothing else in the dump is touched.</summary>
+    private async Task ImportDumpAsync(DumpChoiceViewModel choice)
+    {
+        var results = PostmanImporter.Selected(choice.Listing, choice.SelectedFileNames);
+        var report = results.Count == 0
+            ? $"{choice.DumpName}\nNothing was selected, so nothing was imported."
+            : $"{choice.DumpName}\n\n{string.Join("\n\n", results.Select(ApplyImport))}";
+
+        DumpChoice = null;
+        ImportReport = report;
+        await PersistAsync();
+    }
+
+    [RelayCommand]
+    private void CloseDumpChoice() => DumpChoice = null;
 
     private static (string Name, ImportResult? Result, string? Error) ParseFile(string path)
     {
@@ -1178,6 +1525,35 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseImportReport() => ImportReport = "";
 
+    [ObservableProperty] private bool _isPromptDialogOpen;
+    public ObservableCollection<PromptVariableRowViewModel> PromptRows { get; } = [];
+    private TaskCompletionSource<IReadOnlyDictionary<string, string>?>? _promptAnswer;
+
+    private Task<IReadOnlyDictionary<string, string>?> AskForPromptValuesAsync(IReadOnlyList<PromptVariable> prompts)
+    {
+        PromptRows.Clear();
+        foreach (var prompt in prompts)
+            PromptRows.Add(new PromptVariableRowViewModel(prompt.Name, prompt.Default));
+
+        _promptAnswer = new TaskCompletionSource<IReadOnlyDictionary<string, string>?>();
+        IsPromptDialogOpen = true;
+        return _promptAnswer.Task;
+    }
+
+    [RelayCommand]
+    private void ConfirmPrompt() => FinishPrompt(PromptRows.ToDictionary(row => row.Name, row => row.Value));
+
+    [RelayCommand]
+    private void CancelPrompt() => FinishPrompt(null);
+
+    private void FinishPrompt(IReadOnlyDictionary<string, string>? answers)
+    {
+        IsPromptDialogOpen = false;
+        PromptRows.Clear();
+        _promptAnswer?.TrySetResult(answers);
+        _promptAnswer = null;
+    }
+
     [ObservableProperty] private bool _isSpecDialogOpen;
     [ObservableProperty] private string _specUrl = "";
     [ObservableProperty] private bool _isSpecBusy;
@@ -1185,6 +1561,9 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSpecPreview))] private string _specPreview = "";
 
     public bool HasSpecError => SpecError.Length > 0;
+
+    [RelayCommand]
+    private void DismissSpecError() => SpecError = "";
     public bool HasSpecPreview => SpecPreview.Length > 0;
 
     private static readonly Lazy<HttpClient> SpecClient = new(() => RequestSender.CreateDefaultClient());

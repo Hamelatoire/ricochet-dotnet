@@ -19,6 +19,7 @@
     <KeyBinding Gesture="Meta+S" Command="{Binding SaveCommand}" />
     <KeyBinding Gesture="Ctrl+N" Command="{Binding NewRequestCommand}" />
     <KeyBinding Gesture="Meta+N" Command="{Binding NewRequestCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding CloseTopPanelCommand}" />
   </Window.KeyBindings>
 
   <Grid>
@@ -53,6 +54,10 @@
               <TextBlock Text="Environments" />
             </StackPanel>
           </Button>
+          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,12" Command="{Binding Mock.OpenCommand}"
+                  AutomationProperties.Name="Mock server" ToolTip.Tip="Answer requests on this computer from an OpenAPI description (listens on 127.0.0.1 only)">
+            <TextBlock Text="Mock server" />
+          </Button>
           <TextBlock DockPanel.Dock="Bottom" Classes="muted" FontSize="11" Margin="21,2,0,0" TextTrimming="CharacterEllipsis"
                      IsVisible="{Binding HasRepositoryStatus}" Text="{Binding RepositoryStatusText}"
                      ToolTip.Tip="{Binding RepositoryStatusTip}" AutomationProperties.Name="Git branch" />
@@ -62,7 +67,7 @@
                        Text="{Binding WorkspaceFolderName}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
           </Grid>
           <Button DockPanel.Dock="Bottom" HorizontalAlignment="Stretch" Margin="0,8,0,0" Content="Settings" Command="{Binding OpenSettingsPageCommand}"
-                  AutomationProperties.Name="Settings" ToolTip.Tip="Timeouts, redirects, certificate checks, response size and the workspace folder" />
+                  AutomationProperties.Name="Settings" ToolTip.Tip="Timeouts, redirects, proxy, client certificate, certificate checks, response size and the workspace folder" />
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,8,0,0">
             <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Theme" />
             <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding ThemeChoice}"
@@ -70,10 +75,11 @@
           </Grid>
           <TabControl>
             <TabItem Header="Collections">
-              <Panel>
-                <TextBlock Classes="muted" TextWrapping="Wrap" Margin="2,10,8,0"
-                           Text="Save a request or import from Postman to get started."
-                           IsVisible="{Binding !Collections.Count}" />
+              <Grid RowDefinitions="Auto,*">
+                <TextBox Grid.Row="0" Text="{Binding TagFilter}" PlaceholderText="Filter by tag" Margin="0,8,0,8"
+                         AutomationProperties.Name="Filter by tag"
+                         ToolTip.Tip="Show only folders and requests with this tag, including those inside a folder that has it" />
+                <Panel Grid.Row="1">
                 <TreeView x:Name="CollectionsTree" ItemsSource="{Binding Collections}" SelectedItem="{Binding SelectedNode}"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           AutomationProperties.Name="Collection tree">
@@ -101,7 +107,7 @@
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding VisibleChildren}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
+                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
@@ -115,26 +121,49 @@
                                  AutomationProperties.Name="New name" ToolTip.Tip="Enter saves, Escape cancels">
                           <TextBox.KeyBindings>
                             <KeyBinding Gesture="Enter" Command="{Binding CommitRenameCommand}" />
-                            <KeyBinding Gesture="Escape" Command="{Binding CancelRenameCommand}" />
                           </TextBox.KeyBindings>
                         </TextBox>
-                        <Button Grid.Column="2" Classes="mini folderaction" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"
+                        <TextBlock Grid.Column="2" Classes="muted" FontSize="11" Margin="6,0,0,0" MaxWidth="120" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" Text="{Binding TagsLabel}" IsVisible="{Binding HasTags}"
+                                   ToolTip.Tip="{Binding TagsLabel}" />
+                        <TextBox Grid.Column="2" Classes="bare" Width="130" Margin="6,0,0,0" Text="{Binding TagsText}" IsVisible="{Binding IsEditingTags}"
+                                 VerticalAlignment="Center" Padding="2,2" FontSize="12" PlaceholderText="tag, tag"
+                                 views:FocusBehavior.FocusWhenVisible="True"
+                                 AutomationProperties.Name="Folder tags" ToolTip.Tip="Comma-separated. Enter saves, Escape cancels. Requests inside inherit them.">
+                          <TextBox.KeyBindings>
+                            <KeyBinding Gesture="Enter" Command="{Binding CommitTagsCommand}" />
+                            <KeyBinding Gesture="Escape" Command="{Binding CancelTagsCommand}" />
+                          </TextBox.KeyBindings>
+                        </TextBox>
+                        <Button Grid.Column="3" Classes="mini folderaction" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"
                                 Command="{Binding ToggleRenameCommand}" ToolTip.Tip="Rename" AutomationProperties.Name="Rename" />
-                        <Button Grid.Column="3" Classes="mini folderaction" Margin="4,0,0,0" Content="+" IsVisible="{Binding IsContainer}"
+                        <Button Grid.Column="4" Classes="mini folderaction" Margin="4,0,0,0" Content="#" IsVisible="{Binding TagsVisible}"
+                                Command="{Binding ToggleTagsCommand}" ToolTip.Tip="Tags. Requests inside inherit them, and runs can include or skip them."
+                                AutomationProperties.Name="Tags" />
+                        <Button Grid.Column="5" Classes="mini folderaction" Margin="4,0,0,0" Content="+" IsVisible="{Binding IsContainer}"
                                 Command="{Binding NewFolderCommand}" ToolTip.Tip="New folder" AutomationProperties.Name="New folder" />
-                        <Button Grid.Column="4" Classes="mini" Margin="4,0,0,0" Content="{Binding HideLabel}" IsVisible="{Binding HideVisible}"
+                        <Button Grid.Column="6" Classes="mini" Margin="4,0,0,0" Content="{Binding HideLabel}" IsVisible="{Binding HideVisible}"
                                 Command="{Binding HideOrShowCommand}" ToolTip.Tip="Hide (keeps it in the workspace, skipped by runs)"
                                 AutomationProperties.Name="Hide" />
-                        <Button Grid.Column="4" Margin="4,0,0,0" Padding="8,2" FontSize="12" Content="{Binding HideLabel}" IsVisible="{Binding ShowHiddenVisible}"
+                        <Button Grid.Column="6" Margin="4,0,0,0" Padding="8,2" FontSize="12" Content="{Binding HideLabel}" IsVisible="{Binding ShowHiddenVisible}"
                                 Command="{Binding HideOrShowCommand}" ToolTip.Tip="Show the hidden folders and requests again"
                                 AutomationProperties.Name="Show hidden" />
-                        <Button Grid.Column="5" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
-                                Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete" />
+                        <Button Grid.Column="7" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                                Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete (click again within 3 seconds to confirm)"
+                                AutomationProperties.Name="Delete" />
                       </Grid>
                     </TreeDataTemplate>
                   </TreeView.ItemTemplate>
                 </TreeView>
-              </Panel>
+                <!-- Empty workspace: after the tree so it sits on top of it. -->
+                <StackPanel Margin="2,10,8,0" Spacing="10" HorizontalAlignment="Left" IsVisible="{Binding !Collections.Count}">
+                  <TextBlock Classes="muted" TextWrapping="Wrap" MaxWidth="260"
+                             Text="No requests yet. Create one, or import a Postman collection." />
+                  <Button Content="New request" Command="{Binding NewRequestCommand}" ToolTip.Tip="New request (Ctrl+N)"
+                          AutomationProperties.Name="New request" />
+                </StackPanel>
+                </Panel>
+              </Grid>
             </TabItem>
             <TabItem Header="History">
               <ListBox ItemsSource="{Binding History}" SelectedItem="{Binding SelectedHistory}">
@@ -195,15 +224,28 @@
                      FontFamily="Consolas,Menlo,monospace" PlaceholderText="Paste ids here, one per line"
                      AutomationProperties.Name="Ids to run" IsEnabled="{Binding !IsBulkRunning}" />
           </Grid>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,*" Margin="0,0,0,8">
-            <Button Grid.Column="0" Classes="primary" Content="Start" Command="{Binding StartBulkCommand}"
-                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Start from the first id" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,*" Margin="0,0,0,6">
+            <Button Grid.Column="0" Content="Start" Command="{Binding StartBulkCommand}"
+                    Classes.primary="{Binding !BulkHasResumePoint}"
+                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Start from the first id"
+                    ToolTip.Tip="Send every id, starting from the first one" />
             <Button Grid.Column="1" Content="Resume" Margin="8,0,0,0" Command="{Binding ResumeBulkCommand}"
+                    Classes.primary="{Binding BulkHasResumePoint}"
                     IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Resume after the last id processed"
                     ToolTip.Tip="Continue after the last id that was processed for this request" />
             <Button Grid.Column="2" Content="Stop" Margin="8,0,0,0" Command="{Binding StopBulkCommand}"
-                    IsEnabled="{Binding IsBulkRunning}" AutomationProperties.Name="Stop" />
+                    IsEnabled="{Binding IsBulkRunning}" AutomationProperties.Name="Stop"
+                    ToolTip.Tip="Stop after the ids already in flight" />
             <TextBlock Grid.Column="3" Classes="muted" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis" Text="{Binding BulkStatus}" />
+          </Grid>
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12"
+                     Text="{Binding BulkActionHint}" AutomationProperties.Name="What the buttons will do" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <ProgressBar Grid.Column="0" Height="8" VerticalAlignment="Center" ShowProgressText="False"
+                         Minimum="0" Maximum="{Binding BulkProgressMaximum}" Value="{Binding BulkProcessed}"
+                         AutomationProperties.Name="Bulk run progress" />
+            <TextBlock Grid.Column="1" Margin="12,0,0,0" FontSize="12" VerticalAlignment="Center"
+                       Text="{Binding BulkProgressText}" />
           </Grid>
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
             <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center"
@@ -211,8 +253,16 @@
             <Button Grid.Column="1" Content="Clear log" Command="{Binding ClearBulkLogCommand}"
                     IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Clear the bulk run log" />
           </Grid>
-          <ListBox ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
-                   AutomationProperties.Name="Bulk run log" />
+          <Panel>
+            <ListBox x:Name="BulkLogList" ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
+                     AutomationProperties.Name="Bulk run log" />
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10" IsVisible="{Binding !BulkLog.Count}">
+              <TextBlock Classes="muted" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="360"
+                         Text="Nothing has run yet. Paste the ids above, then press Start to send this request for each one." />
+              <Button Classes="primary" Content="Start" HorizontalAlignment="Center" Command="{Binding StartBulkCommand}"
+                      IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Start bulk run" />
+            </StackPanel>
+          </Panel>
         </DockPanel>
       </Border>
 
@@ -381,6 +431,40 @@
               </StackPanel>
 
               <StackPanel Spacing="12">
+                <TextBlock Text="Network" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Proxy address" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Send requests through this HTTP proxy, such as proxy.example.com:8080. Empty uses the operating system's proxy. Proxy logins are not supported yet." />
+                  </StackPanel>
+                  <TextBox Grid.Column="1" Text="{Binding ProxyUrl, UpdateSourceTrigger=LostFocus}" Watermark="Operating system's proxy"
+                           VerticalAlignment="Top" AutomationProperties.Name="Proxy address" />
+                </Grid>
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Client certificate file" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A .pfx or .p12 file sent to servers that ask for one. The file stays where it is; only its path is saved." />
+                  </StackPanel>
+                  <Grid Grid.Column="1" ColumnDefinitions="*,Auto" VerticalAlignment="Top">
+                    <TextBox Grid.Column="0" Text="{Binding ClientCertificatePath, UpdateSourceTrigger=LostFocus}" Watermark="No certificate"
+                             AutomationProperties.Name="Client certificate file" />
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Browse…" Click="OnBrowseCertificateClick"
+                            AutomationProperties.Name="Browse for client certificate" />
+                  </Grid>
+                </Grid>
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Client certificate password" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Kept in your operating system's secure storage, never in the workspace. Leave empty if the file has no password." />
+                  </StackPanel>
+                  <TextBox Grid.Column="1" PasswordChar="•" Text="{Binding ClientCertificatePassword, UpdateSourceTrigger=LostFocus}"
+                           VerticalAlignment="Top" AutomationProperties.Name="Client certificate password" />
+                </Grid>
+                <SelectableTextBlock Text="{Binding ConnectionProblem}" IsVisible="{Binding HasConnectionProblem}" Foreground="{DynamicResource Failure}"
+                                     FontSize="12" TextWrapping="Wrap" />
+              </StackPanel>
+
+              <StackPanel Spacing="12">
                 <TextBlock Text="Responses" FontWeight="SemiBold" />
                 <Grid ColumnDefinitions="260,*">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
@@ -424,27 +508,27 @@
       <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsSidePageOpen}">
         <Border Grid.Row="0" Classes="card" Padding="20,16,20,6">
         <DockPanel>
-          <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">
+          <Border DockPanel.Dock="Top" Classes="banner warning" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">
             <Grid ColumnDefinitions="*,Auto,Auto">
               <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                 <TextBlock Text="Old plain-text copies of your data may still hold credentials. Your work has been moved, so you can delete them."
-                           Foreground="{DynamicResource Warning}" FontSize="12" TextWrapping="Wrap" />
-                <SelectableTextBlock Text="{Binding PlainTextCopies}" Foreground="{DynamicResource Warning}" Opacity="0.8"
+                           FontSize="12" TextWrapping="Wrap" />
+                <SelectableTextBlock Text="{Binding PlainTextCopies}" Opacity="0.8"
                                      FontSize="11.5" FontFamily="{DynamicResource MonoFont}" TextWrapping="Wrap" />
               </StackPanel>
-              <Button Grid.Column="1" Content="{Binding DeleteCopiesLabel}" Margin="10,0,0,0" FontSize="12" VerticalAlignment="Center"
+              <Button Grid.Column="1" Content="{Binding DeleteCopiesLabel}" Classes="banner-action"
                       Command="{Binding DeletePlainTextCopiesCommand}" AutomationProperties.Name="Delete plain-text copies" />
-              <Button Grid.Column="2" Classes="mini" Margin="6,0,0,0"
-                      Command="{Binding DismissPlainTextCopiesCommand}" ToolTip.Tip="Hide until next launch"><PathIcon Data="{DynamicResource IconClose}" /></Button>
+              <Button Grid.Column="2" Classes="banner-action" Content="Dismiss"
+                      Command="{Binding DismissPlainTextCopiesCommand}" ToolTip.Tip="Hide until next launch" />
             </Grid>
           </Border>
-          <Border DockPanel.Dock="Top" Classes="warningbar" Margin="0,0,0,16" IsVisible="{Binding HasStorageWarning}">
+          <Border DockPanel.Dock="Top" Classes="banner warning" Margin="0,0,0,16" IsVisible="{Binding HasStorageWarning}">
             <Grid ColumnDefinitions="*,Auto">
-              <SelectableTextBlock Grid.Column="0" Text="{Binding StorageWarning}" Foreground="{DynamicResource Warning}"
+              <SelectableTextBlock Grid.Column="0" Text="{Binding StorageWarning}"
                                    FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"
                                    AutomationProperties.Name="Storage warning" />
-              <Button Grid.Column="1" Classes="mini" Margin="8,0,0,0"
-                      Command="{Binding DismissStorageWarningCommand}" ToolTip.Tip="Dismiss"><PathIcon Data="{DynamicResource IconClose}" /></Button>
+              <Button Grid.Column="1" Classes="banner-action" Content="Dismiss"
+                      Command="{Binding DismissStorageWarningCommand}" ToolTip.Tip="Dismiss" />
             </Grid>
           </Border>
           <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,16">
@@ -479,6 +563,28 @@
               <Button Grid.Column="3" Classes="primary" Width="96" Content="{Binding SendButtonText}"
                       Command="{Binding SendOrCancelCommand}" AutomationProperties.Name="Send"
                       ToolTip.Tip="Send (Ctrl+Enter)" />
+              <!-- Offered after typing {{. The editor keeps the focus, so the list is driven by the keys handled in code. -->
+              <Popup x:Name="SuggestPopup" Placement="Bottom" IsLightDismissEnabled="False">
+                <Border Background="{DynamicResource RaisedBackground}" BorderBrush="{DynamicResource StrongLine}"
+                        BorderThickness="1" CornerRadius="6" Padding="4" Margin="0,4,0,0">
+                  <ListBox x:Name="SuggestList" MinWidth="320" MaxHeight="240" Background="Transparent" BorderThickness="0"
+                           FontFamily="{DynamicResource MonoFont}" FontSize="13" AutomationProperties.Name="Suggestions">
+                    <ListBox.Styles>
+                      <Style Selector="ListBoxItem">
+                        <Setter Property="Focusable" Value="False" />
+                      </Style>
+                    </ListBox.Styles>
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="core:ChipSuggestion">
+                        <Grid ColumnDefinitions="*,Auto" Margin="6,2">
+                          <TextBlock Grid.Column="0" Text="{Binding Name}" />
+                          <TextBlock Grid.Column="1" Text="{Binding Kind}" Opacity="0.6" Margin="16,0,0,0" />
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </Border>
+              </Popup>
             </Grid>
           </Border>
 
@@ -504,14 +610,32 @@
                   </ComboBox>
                   <TextBlock Classes="muted" Text="This request sends no credentials." IsVisible="{Binding IsNoAuth}" />
                   <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthToken}"
-                           PlaceholderText="Token" PasswordChar="•" IsVisible="{Binding IsBearerAuth}" />
-                  <StackPanel Spacing="6" IsVisible="{Binding IsBasicAuth}">
+                           PlaceholderText="Token, sent as Authorization: Bearer" PasswordChar="•" IsVisible="{Binding IsBearerAuth}" />
+                  <StackPanel Spacing="6" IsVisible="{Binding IsUserPasswordAuth}">
+
                     <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthUsername}" PlaceholderText="Username" />
                     <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthPassword}" PlaceholderText="Password" PasswordChar="•" />
                   </StackPanel>
+                  <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Width="420" HorizontalAlignment="Left" IsVisible="{Binding IsDigestAuth}"
+                             Text="Sends once, reads the server's challenge, then sends again with a signature. MD5 or SHA-256 with qop auth." />
+                  <StackPanel Spacing="6" IsVisible="{Binding IsOAuth1Auth}">
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthConsumerKey}" PlaceholderText="Consumer key" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthConsumerSecret}" PlaceholderText="Consumer secret" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthToken}" PlaceholderText="Access token" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthTokenSecret}" PlaceholderText="Token secret" PasswordChar="•" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Width="420" HorizontalAlignment="Left"
+                               Text="Signs each request with HMAC-SHA1. Leave the access token empty if you have none." />
+                  </StackPanel>
+                  <StackPanel Spacing="6" IsVisible="{Binding IsAwsAuth}">
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsAccessKeyId}" PlaceholderText="Access key id" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsSecretAccessKey}" PlaceholderText="Secret access key" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsSessionToken}" PlaceholderText="Session token (optional)" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsRegion}" PlaceholderText="Region, such as us-east-1" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsService}" PlaceholderText="Service, such as execute-api" />
+                  </StackPanel>
                   <StackPanel Spacing="6" IsVisible="{Binding IsApiKeyAuth}">
-                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyName}" PlaceholderText="Key name" />
-                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyValue}" PlaceholderText="Key value" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyName}" PlaceholderText="Header or query parameter name, such as X-Api-Key" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyValue}" PlaceholderText="The API key" PasswordChar="•" />
                     <CheckBox Content="Send in the query string instead of a header" IsChecked="{Binding AuthKeyInQuery}" />
                   </StackPanel>
                   <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding !IsNoAuth}"
@@ -600,6 +724,35 @@
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
+            <TabItem Header="{Binding ExamplesTabTitle}">
+              <ScrollViewer>
+                <StackPanel Spacing="10" Margin="0,14,10,12">
+                  <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="2,0,0,4" IsVisible="{Binding !HasExamples}"
+                             Text="Send this request, then use Save as example under the response to keep a response for documentation or as a mock server's reply. Secrets are masked." />
+                  <ItemsControl ItemsSource="{Binding Examples}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Spacing="8" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ResponseExampleRowViewModel">
+                        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10">
+                          <TextBlock Grid.Column="0" Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                          <Border Grid.Column="1" Classes="badge" Classes.success="{Binding IsSuccess}" Classes.failure="{Binding !IsSuccess}" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding StatusText}" />
+                          </Border>
+                          <Button Grid.Column="2" Content="Show" Command="{Binding ShowCommand}" Padding="10,3" FontSize="12"
+                                  AutomationProperties.Name="Show example" />
+                          <Button Grid.Column="3" Classes="mini" Command="{Binding RemoveCommand}" ToolTip.Tip="Remove this example"
+                                  AutomationProperties.Name="Remove example"><PathIcon Data="{DynamicResource IconClose}" /></Button>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </ScrollViewer>
+            </TabItem>
             <TabItem Header="Variables">
               <TabControl Margin="0,6,0,0">
                 <TabItem Header="Environment" FontSize="12">
@@ -662,24 +815,40 @@
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="4" IsVisible="{Binding ShowEmptyState}">
               <TextBlock Classes="muted" HorizontalAlignment="Center" Text="Send a request to see the response" />
               <TextBlock Classes="muted" HorizontalAlignment="Center" FontSize="11" Opacity="0.7" Text="Enter or Ctrl+Enter to send" />
+              <Button Content="New request" Margin="0,10,0,0" HorizontalAlignment="Center" Command="{Binding NewRequestCommand}"
+                      ToolTip.Tip="New request (Ctrl+N)" AutomationProperties.Name="New request from the response pane" />
             </StackPanel>
             <TextBlock Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Center" Text="Sending…" IsVisible="{Binding IsSending}" />
 
             <DockPanel IsVisible="{Binding HasStatus}">
-              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto">
+              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto,Auto">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
-                  <Border Classes="badge" Classes.success="{Binding IsSuccess}" Classes.failure="{Binding IsFailure}">
+                  <Border Classes="badge" Classes.success="{Binding IsSuccess}" Classes.redirect="{Binding IsRedirect}"
+                          Classes.warning="{Binding IsClientError}" Classes.failure="{Binding IsFailure}">
                     <TextBlock Text="{Binding StatusText}" />
                   </Border>
                   <TextBlock Classes="muted" VerticalAlignment="Center" FontSize="12" Text="{Binding TimingText}" />
                 </StackPanel>
-                <ToggleButton Grid.Column="1" Classes="small" Content="Wrap" IsChecked="{Binding WrapResponse}"
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding CanSaveExample}">
+                  <TextBox Text="{Binding ExampleName}" PlaceholderText="Example name" Width="170" FontSize="12" Padding="6,3"
+                           AutomationProperties.Name="Example name" ToolTip.Tip="Name for the saved example" />
+                  <Button Content="Save as example" Command="{Binding SaveExampleCommand}" Padding="10,3" FontSize="12"
+                          AutomationProperties.Name="Save as example" ToolTip.Tip="Save this response as an example on the request. Secrets are masked." />
+                </StackPanel>
+                <ToggleButton Grid.Column="2" Classes="small" Content="Wrap" IsChecked="{Binding WrapResponse}"
                               AutomationProperties.Name="Wrap lines" ToolTip.Tip="Wrap long lines" />
-                <Button Grid.Column="2" Classes="ghost" Content="Copy" Padding="10,3" Margin="4,0,0,0" FontSize="12"
-                        Click="OnCopyResponseClick" AutomationProperties.Name="Copy response" ToolTip.Tip="Copy the response body" />
+                <Button Grid.Column="3" Classes="ghost" Content="Copy body" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                        Click="OnCopyResponseClick" AutomationProperties.Name="Copy body" ToolTip.Tip="Copy the response body to the clipboard" />
+                <Button Grid.Column="4" Classes="ghost" Content="Save body…" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                        Click="OnSaveResponseClick" AutomationProperties.Name="Save body to file" ToolTip.Tip="Save the response body as a file, as received" />
               </Grid>
-              <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Notice}" Foreground="{DynamicResource Warning}"
-                                   FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" IsVisible="{Binding HasNotice}" />
+              <Border DockPanel.Dock="Top" Classes="banner warning" Margin="0,12,0,0" IsVisible="{Binding HasNotice}">
+                <Grid ColumnDefinitions="*,Auto">
+                  <SelectableTextBlock Grid.Column="0" Text="{Binding Notice}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Classes="banner-action" Content="Dismiss"
+                          Command="{Binding DismissNoticeCommand}" ToolTip.Tip="Dismiss this message" />
+                </Grid>
+              </Border>
               <TabControl Margin="0,10,0,0">
                 <TabItem Header="Body">
                   <ae:TextEditor x:Name="ResponseEditor" IsReadOnly="True" ShowLineNumbers="True"
@@ -689,8 +858,13 @@
                                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
                 </TabItem>
                 <TabItem Header="Headers">
-                  <TextBox Classes="mono bare" IsReadOnly="True" Text="{Binding ResponseHeaders}" AcceptsReturn="True"
-                           VerticalContentAlignment="Top" Margin="0,12,0,0" />
+                  <DockPanel>
+                    <Button DockPanel.Dock="Top" Classes="ghost" Content="Copy headers" HorizontalAlignment="Right"
+                            Padding="10,3" Margin="0,12,0,0" FontSize="12" Click="OnCopyHeadersClick"
+                            AutomationProperties.Name="Copy headers" ToolTip.Tip="Copy the response headers to the clipboard" />
+                    <TextBox Classes="mono bare" IsReadOnly="True" Text="{Binding ResponseHeaders}" AcceptsReturn="True"
+                             VerticalContentAlignment="Top" Margin="0,8,0,0" />
+                  </DockPanel>
                 </TabItem>
                 <TabItem Header="{Binding ResponseTestsTabTitle}" IsVisible="{Binding HasTestResults}">
                   <ScrollViewer>
@@ -749,6 +923,62 @@
       </Border>
     </Border>
 
+    <!-- Values for prompt Variables (ADR 0019): asked before a send, used for that send only, never saved -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsPromptDialogOpen}">
+      <Border Classes="dialog" Width="520" MaxHeight="600">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Values for this send" Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+                     Text="This request uses variables marked Prompt. Each value is used for this send only, and is not saved." />
+          <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Cancel" Command="{Binding CancelPromptCommand}" AutomationProperties.Name="Cancel send" />
+            <Button Classes="primary" Content="Send" Command="{Binding ConfirmPromptCommand}" AutomationProperties.Name="Send with these values" />
+          </StackPanel>
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding PromptRows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PromptVariableRowViewModel">
+                  <StackPanel Spacing="4" Margin="0,0,0,12">
+                    <TextBlock Text="{Binding Name}" FontFamily="{DynamicResource MonoFont}" FontSize="12" Classes="muted" />
+                    <TextBox Classes="mono" Text="{Binding Value}" PlaceholderText="Value" AutomationProperties.Name="{Binding Name, StringFormat='Value for {0}'}" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Border>
+
+    <!-- Choose which exports to import from a Postman data dump (ADR 0038) -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsDumpChoiceOpen}">
+      <Border Classes="dialog" Width="640" MaxHeight="620" x:DataType="vm:DumpChoiceViewModel" DataContext="{Binding DumpChoice}">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Choose what to import" Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+                     Text="{Binding DumpName, StringFormat='{}{0} holds these exports. All are selected. Untick any you do not want; only the ticked ones are imported.'}" />
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+            <TextBlock Grid.Column="0" Classes="muted" VerticalAlignment="Center" Text="{Binding Summary}"
+                       AutomationProperties.Name="Number of exports selected" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+              <Button Content="Cancel" Command="{Binding CancelCommand}" AutomationProperties.Name="Cancel the import" />
+              <Button Content="Import selected" Classes="primary" Command="{Binding ImportCommand}" IsEnabled="{Binding HasSelection}"
+                      AutomationProperties.Name="Import the selected exports" />
+            </StackPanel>
+          </Grid>
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding Entries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:DumpChoiceItem">
+                  <CheckBox Content="{Binding Label}" IsChecked="{Binding IsSelected}" Margin="0,4" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Border>
+
     <!-- From an OpenAPI URL (ADR 0014): fetch on request, preview, then apply -->
     <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsSpecDialogOpen}">
       <Border Classes="dialog" Width="640" MaxHeight="620">
@@ -763,8 +993,13 @@
                     IsEnabled="{Binding !IsSpecBusy}" AutomationProperties.Name="Fetch description" />
           </Grid>
           <TextBlock DockPanel.Dock="Top" Classes="muted" Text="Fetching…" IsVisible="{Binding IsSpecBusy}" Margin="0,0,0,8" />
-          <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding SpecError}" Foreground="{DynamicResource Failure}"
-                               FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" IsVisible="{Binding HasSpecError}" />
+          <Border DockPanel.Dock="Top" Classes="banner error" Margin="0,0,0,8" IsVisible="{Binding HasSpecError}">
+            <Grid ColumnDefinitions="*,Auto">
+              <SelectableTextBlock Grid.Column="0" Text="{Binding SpecError}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+              <Button Grid.Column="1" Classes="banner-action" Content="Dismiss"
+                      Command="{Binding DismissSpecErrorCommand}" ToolTip.Tip="Dismiss this message" />
+            </Grid>
+          </Border>
           <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
             <Button Content="Cancel" Command="{Binding CloseSpecDialogCommand}" AutomationProperties.Name="Cancel" />
             <Button Classes="primary" Content="Apply" Command="{Binding ApplySpecCommand}" IsVisible="{Binding HasSpecPreview}"
@@ -776,10 +1011,50 @@
       </Border>
     </Border>
 
+    <!-- Mock server (ADR 0027). Listens on 127.0.0.1 only, and only between Start and Stop. -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding Mock.IsOpen}">
+      <Border Classes="dialog" Width="640" MaxHeight="660">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Mock server" Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+                     Text="Answers requests from an OpenAPI description, so an API that is not built yet can still be called. Paths are served under the description's server path, for example /v1/pets. The server listens on 127.0.0.1 only, so no other computer can reach it. Closing this window leaves a running server running." />
+          <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Close" Command="{Binding Mock.CloseCommand}" AutomationProperties.Name="Close mock server" />
+          </StackPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+            <Button Grid.Column="0" Content="Load OpenAPI description…" Click="OnLoadMockDescriptionClick"
+                    AutomationProperties.Name="Load OpenAPI description from a file" />
+            <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis"
+                       Text="{Binding Mock.SourceText}" />
+          </Grid>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,Auto" Margin="0,0,0,12">
+            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Port" />
+            <TextBox Grid.Column="1" Classes="mono" Width="110" Text="{Binding Mock.PortText}" IsEnabled="{Binding Mock.IsStopped}"
+                     AutomationProperties.Name="Mock server port" />
+            <Button Grid.Column="2" Classes="primary" Content="Start" Margin="8,0,0,0" Command="{Binding Mock.StartCommand}"
+                    IsEnabled="{Binding Mock.CanStart}" AutomationProperties.Name="Start mock server" />
+            <Button Grid.Column="3" Content="Stop" Margin="8,0,0,0" Command="{Binding Mock.StopCommand}"
+                    IsEnabled="{Binding !Mock.IsStopped}" AutomationProperties.Name="Stop mock server" />
+          </Grid>
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="{Binding Mock.StatusText}" AutomationProperties.Name="Mock server status" />
+          <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Mock.Error}" Foreground="{DynamicResource Failure}"
+                               FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" IsVisible="{Binding Mock.ErrorVisible}" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" Text="Requests (path and status only)" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="ghost" Content="Clear log" Command="{Binding Mock.ClearLogCommand}" FontSize="12"
+                    AutomationProperties.Name="Clear mock server log" />
+          </Grid>
+          <TextBox Classes="mono" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="160"
+                   VerticalContentAlignment="Top" Text="{Binding Mock.LogText}" AutomationProperties.Name="Mock server log" />
+        </DockPanel>
+      </Border>
+    </Border>
+
     <!-- Shown over every page: the Settings page can be closed, and this must stay visible while checks are off. -->
-    <Border VerticalAlignment="Top" HorizontalAlignment="Stretch" Margin="326,6,160,0" Classes="warningbar" Padding="12,4"
+    <Border VerticalAlignment="Top" HorizontalAlignment="Stretch" Margin="326,6,160,0" Classes="banner warning" Padding="12,4"
             IsVisible="{Binding ShowTlsWarning}" AutomationProperties.Name="Certificate checks are off">
-      <TextBlock Foreground="{DynamicResource Warning}" FontSize="12" TextTrimming="CharacterEllipsis"
+      <TextBlock FontSize="12" TextTrimming="CharacterEllipsis"
                  Text="Certificate checks are off. Requests will be sent without verifying the server. Turn them on in Settings." />
     </Border>
   </Grid>

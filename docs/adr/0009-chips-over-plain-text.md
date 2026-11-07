@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted (built for the URL field; body, headers and auth are still plain text boxes)
 ---
 
 # Show Variables and functions as chips over plain text
@@ -26,3 +26,13 @@ In a long URL or body, `{{base_url}}` is easy to mistype and hard to spot, and n
 - Each field's undo, tab order, paste and screen reader behaviour must be retested, because a `TextBox` gave these for free. Pasted text in a single-line field must have its line breaks removed.
 - The UI automation scripts used to test the app read `TextBox` values, so they need updating.
 - Keeping AvaloniaEdit working under Native AOT becomes more important, since the main editing path now depends on it.
+
+## What was built
+
+- The URL field draws each `{{name}}` and `{{function()}}` as a chip: a tinted background, in a warning colour when the name has no value to send. The text is unchanged.
+- The caret steps over a chip, and Backspace or Delete removes it whole.
+- Typing `{{` opens a list of the Variables in scope, then the built-in functions. Up, Down, Enter, Tab and Escape drive it.
+- Hovering a chip shows its value, or only that a Secret is hidden.
+- The matching logic lives in `Ricochet.Core` (`PlaceholderChips`), with tests. The App only draws and handles keys.
+
+Not built yet: the body, headers, auth fields and Assertions. They still use plain text boxes, so they don't show chips or suggestions. Also not done: the chip's own rounded look (it is a background tint, since AvaloniaEdit can't round text runs).

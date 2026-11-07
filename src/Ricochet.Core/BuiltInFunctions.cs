@@ -20,6 +20,17 @@ public static partial class BuiltInFunctions
     /// <summary>True for a Postman dynamic variable name that a built-in function replaces, such as <c>$guid</c>.</summary>
     public static bool IsPostmanAlias(string name) => PostmanAliases.ContainsKey(name.Trim());
 
+    /// <summary>The functions as they are written inside the braces, offered as suggestions while typing (ADR 0009).</summary>
+    public static IReadOnlyList<string> Examples { get; } =
+    [
+        "uuid.v4()",
+        "timestamp.iso8601()",
+        "timestamp.unix()",
+        "timestamp.unixMillis()",
+        "timestamp.format('yyyy-MM-dd')",
+        "random.int(1, 100)",
+    ];
+
     [GeneratedRegex(@"^([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)\((.*)\)$", RegexOptions.Singleline)]
     private static partial Regex Call();
 

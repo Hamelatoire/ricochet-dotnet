@@ -28,6 +28,22 @@ public sealed class BulkRunner(RequestSender sender)
             .ToList();
 
     /// <summary>
+    /// The position a run resumes from: the one after <paramref name="lastId"/> in the pasted list.
+    /// Zero when there is no last id, or it is no longer in the list, so the run starts from the first id.
+    /// </summary>
+    public static int ResumeIndex(IReadOnlyList<string> ids, string? lastId)
+    {
+        if (lastId is null)
+            return 0;
+
+        for (var i = 0; i < ids.Count; i++)
+            if (ids[i] == lastId)
+                return i + 1;
+
+        return 0;
+    }
+
+    /// <summary>
     /// Runs the Request for each id, at most <paramref name="maxParallel"/> at a time. Ids start in the order pasted,
     /// but results arrive in completion order (see <see cref="BulkItemResult.Position"/>), one at a time.
     /// Cancelling starts no new ids; the ids in flight still finish. Returns true when every id was sent, and false when it was stopped.
@@ -41,7 +57,8 @@ public sealed class BulkRunner(RequestSender sender)
         IReadOnlyList<string> ids,
         Action<BulkItemResult> onResult,
         CancellationToken cancellationToken = default,
-        int maxParallel = 1)
+        int maxParallel = 1,
+        IReadOnlyList<KeyValue>? overrides = null)
     {
         if (maxParallel < 1)
             throw new ArgumentOutOfRangeException(nameof(maxParallel), "At least one thread is needed.");
@@ -70,7 +87,7 @@ public sealed class BulkRunner(RequestSender sender)
                 {
                     try
                     {
-                        var result = (await RunOneAsync(workspace, collection, environment, template, placeholder, id)) with { Position = index };
+                        var result = (await RunOneAsync(workspace, collection, environment, template, placeholder, id, overrides ?? [])) with { Position = index };
                         lock (resultLock)
                             onResult(result);
                     }
@@ -92,9 +109,9 @@ public sealed class BulkRunner(RequestSender sender)
     }
 
     private async Task<BulkItemResult> RunOneAsync(Workspace workspace, Collection collection, ApiEnvironment? environment,
-        ApiRequest template, string placeholder, string id)
+        ApiRequest template, string placeholder, string id, IReadOnlyList<KeyValue> overrides)
     {
-        var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, [new KeyValue(placeholder, id)]);
+        var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, overrides, [new KeyValue(placeholder, id)]);
         var resolved = VariableResolver.Apply(template, variables);
         var secrets = CollectionRunner.SecretsToMask(variables, [], [], resolved);
 

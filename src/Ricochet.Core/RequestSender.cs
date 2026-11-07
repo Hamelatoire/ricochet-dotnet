@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -15,15 +17,24 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     private HttpClient _client = client;
     private TimeSpan _timeout = timeout ?? TimeSpan.FromMinutes(2);
     private long _maxBodyBytes = maxBodyBytes;
+    private bool _followRedirects = true;
+    private bool _verifyCertificates = true;
+    private CookieContainer? _cookies; // Null unless cookies are kept (ADR 0012). Held in memory only.
+    private HttpClient? _clientWithoutCookies; // Used for a Request that writes its own Cookie header, so the stored cookies don't add to it.
+
+    /// <summary>Set when the proxy or client certificate settings cannot be used. Every request fails with it until they change.</summary>
+    private string? _configurationProblem;
+    private Uri? _proxy;
+    private X509Certificate2? _clientCertificate;
 
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*://")]
     private static partial Regex HasScheme();
 
     /// <summary>
-    /// A client configured for an API tool: no hidden cookie jar, and our own timeout handling.
+    /// A client configured for an API tool: no hidden cookie jar unless <paramref name="cookies"/> is given, and our own timeout handling.
     /// Turning off certificate verification accepts any certificate, so only do it on purpose.
     /// </summary>
-    public static HttpClient CreateDefaultClient(bool followRedirects = true, bool verifyCertificates = true)
+    public static HttpClient CreateDefaultClient(bool followRedirects = true, bool verifyCertificates = true, CookieContainer? cookies = null, Uri? proxy = null, X509Certificate2? clientCertificate = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -32,8 +43,27 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
             UseCookies = false,
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         };
-        if (!verifyCertificates)
-            handler.SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = (_, _, _, _) => true };
+        if (cookies is not null)
+        {
+            // The handler stores Set-Cookie from every hop of a redirect, and sends the cookies back on each hop.
+            handler.UseCookies = true;
+            handler.CookieContainer = cookies;
+        }
+        if (proxy is not null)
+        {
+            handler.UseProxy = true;
+            handler.Proxy = new WebProxy(proxy);
+        }
+
+        if (!verifyCertificates || clientCertificate is not null)
+        {
+            var ssl = new SslClientAuthenticationOptions();
+            if (!verifyCertificates)
+                ssl.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+            if (clientCertificate is not null)
+                ssl.ClientCertificates = new X509CertificateCollection { clientCertificate };
+            handler.SslOptions = ssl;
+        }
 
         return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
     }
@@ -41,14 +71,107 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     /// <summary>
     /// Applies new settings to the requests sent from now on. A request already in progress finishes with the
     /// settings it started with. The client it replaced is not disposed, so that request can still finish.
+    /// With <paramref name="keepCookies"/>, cookies set by responses are sent on later requests from this sender (ADR 0012).
+    /// Cookies already kept survive a call that keeps them on, and are dropped when it turns them off.
+    /// Returns the problem with the proxy or client certificate settings, to show beside them, or null when they are usable.
+    /// An empty proxy uses the operating system's proxy, and an empty certificate path sends no certificate (ADR 0026).
     /// </summary>
-    public void Configure(TimeSpan timeout, bool followRedirects, bool verifyCertificates, long maxBodyBytes)
+    public string? Configure(
+        TimeSpan timeout,
+        bool followRedirects,
+        bool verifyCertificates,
+        long maxBodyBytes,
+        string proxyUrl = "",
+        string clientCertificatePath = "",
+        string? clientCertificatePassword = null,
+        bool keepCookies = false)
     {
+        string? problem = null;
+        Uri? proxy = null;
+        X509Certificate2? certificate = null;
+
+        try
+        {
+            proxy = ParseProxy(proxyUrl);
+            if (clientCertificatePath.Trim().Length > 0)
+                certificate = LoadClientCertificate(clientCertificatePath, clientCertificatePassword);
+        }
+        catch (RequestFailedException ex)
+        {
+            problem = ex.Message;
+        }
+
         lock (_gate)
         {
             _timeout = timeout;
             _maxBodyBytes = maxBodyBytes;
-            _client = CreateDefaultClient(followRedirects, verifyCertificates);
+            _configurationProblem = problem;
+            _followRedirects = followRedirects;
+            _verifyCertificates = verifyCertificates;
+            _proxy = proxy;
+            _clientCertificate = certificate;
+            _cookies = keepCookies ? _cookies ?? new CookieContainer() : null;
+            _client = CreateDefaultClient(followRedirects, verifyCertificates, _cookies, proxy, certificate);
+            _clientWithoutCookies = _cookies is null ? null : CreateDefaultClient(followRedirects, verifyCertificates, null, proxy, certificate);
+        }
+
+        return problem;
+    }
+
+    /// <summary>
+    /// Forgets every cookie kept by this sender, so the requests sent from now on start logged out.
+    /// A request already in progress keeps the cookies it started with. Does nothing when cookies aren't kept.
+    /// </summary>
+    public void ResetCookies()
+    {
+        lock (_gate)
+        {
+            if (_cookies is null)
+                return;
+
+            _cookies = new CookieContainer();
+            _client = CreateDefaultClient(_followRedirects, _verifyCertificates, _cookies, _proxy, _clientCertificate);
+        }
+    }
+
+    /// <summary>
+    /// Reads a proxy address such as "proxy.example.com:8080". Empty means no explicit proxy. Credentials in the address are refused,
+    /// because they would be kept in plain text, and proxy logins are not supported yet.
+    /// </summary>
+    /// <exception cref="RequestFailedException">The address is not an http or https address.</exception>
+    public static Uri? ParseProxy(string text)
+    {
+        var value = text.Trim();
+        if (value.Length == 0)
+            return null;
+
+        if (!HasScheme().IsMatch(value))
+            value = "http://" + value;
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.Host.Length == 0)
+            throw new RequestFailedException($"Invalid proxy address: {text.Trim()}. Use a form such as http://proxy.example.com:8080.");
+
+        if (uri.UserInfo.Length > 0)
+            throw new RequestFailedException("Proxy logins are not supported yet. Remove the user name and password from the proxy address.");
+
+        return uri;
+    }
+
+    /// <summary>Loads a client certificate from a PKCS #12 file (.pfx or .p12). The password is kept only in memory.</summary>
+    /// <exception cref="RequestFailedException">The file is missing, or cannot be read with this password.</exception>
+    public static X509Certificate2 LoadClientCertificate(string path, string? password)
+    {
+        var fullPath = path.Trim();
+        if (!File.Exists(fullPath))
+            throw new RequestFailedException($"The client certificate file was not found: {fullPath}");
+
+        try
+        {
+            return X509CertificateLoader.LoadPkcs12FromFile(fullPath, string.IsNullOrEmpty(password) ? null : password);
+        }
+        catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
+        {
+            throw new RequestFailedException($"The client certificate could not be loaded from {fullPath}: {ex.Message}", ex);
         }
     }
 
@@ -57,23 +180,29 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     public async Task<ApiResponse> SendAsync(ApiRequest request, CancellationToken cancellationToken = default)
     {
         HttpClient client;
+        HttpClient? clientWithoutCookies;
         TimeSpan timeout;
         long maxBodyBytes;
+        string? problem;
         lock (_gate)
         {
             client = _client;
+            clientWithoutCookies = _clientWithoutCookies;
             timeout = _timeout;
             maxBodyBytes = _maxBodyBytes;
+            problem = _configurationProblem;
         }
+
+        if (problem is not null)
+            throw new RequestFailedException(problem);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
 
         try
         {
-            using var message = BuildMessage(request);
             var stopwatch = Stopwatch.StartNew();
-            using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+            using var response = await SendWithAuthAsync(client, clientWithoutCookies, request, timeoutCts.Token);
             var (body, truncated) = await ReadBodyAsync(response.Content, maxBodyBytes, timeoutCts.Token);
             stopwatch.Stop();
 
@@ -97,7 +226,46 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         }
     }
 
-    private static HttpRequestMessage BuildMessage(ApiRequest request)
+    /// <summary>
+    /// Sends the request. Digest needs the server's challenge first, so a 401 with a Digest challenge is answered with one
+    /// more send of the same request (ADR 0024). The body is built again, so it is sent in full both times.
+    /// </summary>
+    private static async Task<HttpResponseMessage> SendWithAuthAsync(HttpClient client, HttpClient? clientWithoutCookies, ApiRequest request, CancellationToken cancellationToken)
+    {
+        using var message = BuildMessage(request, null);
+        // A Request that writes its own Cookie header is sent without the stored cookies (ADR 0012).
+        var sendingClient = clientWithoutCookies is not null && message.Headers.Contains("Cookie") ? clientWithoutCookies : client;
+        var response = await sendingClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (request.Auth?.Kind != AuthKinds.Digest || response.StatusCode != HttpStatusCode.Unauthorized)
+            return response;
+
+        var challenge = DigestChallenge(response);
+        if (challenge is null)
+            return response;
+
+        response.Dispose();
+        using var retry = BuildMessage(request, challenge);
+        var retryClient = clientWithoutCookies is not null && retry.Headers.Contains("Cookie") ? clientWithoutCookies : client;
+        return await retryClient.SendAsync(retry, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+    }
+
+    /// <summary>The text after the "Digest" scheme of a WWW-Authenticate header, or null when there is none.</summary>
+    private static string? DigestChallenge(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("WWW-Authenticate", out var values))
+            return null;
+
+        foreach (var value in values)
+        {
+            var text = value.TrimStart();
+            if (text.StartsWith("Digest ", StringComparison.OrdinalIgnoreCase))
+                return text[7..];
+        }
+
+        return null;
+    }
+
+    private static HttpRequestMessage BuildMessage(ApiRequest request, string? digestChallenge)
     {
         var message = new HttpRequestMessage(new HttpMethod(request.Method), ApplyQueryAuth(ParseUrl(request.Url), request.Auth));
         var headers = request.Headers.Where(h => h.Enabled && h.Key.Trim().Length > 0).ToList();
@@ -124,7 +292,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
                 throw new RequestFailedException($"Invalid header: \"{key}\".");
         }
 
-        ApplyHeaderAuth(message, request.Auth);
+        ApplyAuth(message, request, digestChallenge);
         return message;
     }
 
@@ -139,23 +307,54 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         return builder.Uri;
     }
 
-    /// <summary>A header the user wrote explicitly wins over the request's auth settings.</summary>
-    private static void ApplyHeaderAuth(HttpRequestMessage message, RequestAuth? auth)
+    /// <summary>Adds the headers for the request's auth kind. Digest adds its header only once the server has sent a challenge.</summary>
+    private static void ApplyAuth(HttpRequestMessage message, ApiRequest request, string? digestChallenge)
     {
-        var (name, value) = auth?.Kind switch
-        {
-            AuthKinds.Bearer => ("Authorization", $"Bearer {auth.Token}"),
-            AuthKinds.Basic => ("Authorization", "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{auth.Username}:{auth.Password}"))),
-            AuthKinds.ApiKey when !auth.KeyInQuery && auth.KeyName.Length > 0 => (auth.KeyName, auth.KeyValue),
-            _ => ("", ""),
-        };
+        var auth = request.Auth;
+        if (auth is null)
+            return;
 
+        var uri = message.RequestUri!;
+        switch (auth.Kind)
+        {
+            case AuthKinds.Bearer:
+                AddAuthHeader(message, "Authorization", $"Bearer {auth.Token}");
+                break;
+            case AuthKinds.Basic:
+                AddAuthHeader(message, "Authorization", "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{auth.Username}:{auth.Password}")));
+                break;
+            case AuthKinds.ApiKey when !auth.KeyInQuery && auth.KeyName.Length > 0:
+                AddAuthHeader(message, auth.KeyName, auth.KeyValue);
+                break;
+            case AuthKinds.Digest when digestChallenge is not null:
+                AddAuthHeader(message, "Authorization",
+                    AuthSigning.DigestAuthorization(auth, message.Method.Method, uri.PathAndQuery, digestChallenge, RandomHex()));
+                break;
+            case AuthKinds.OAuth1:
+                List<KeyValuePair<string, string>> form = message.Content?.Headers.ContentType?.MediaType is "application/x-www-form-urlencoded"
+                    ? AuthSigning.ParseQuery(request.Body)
+                    : [];
+                AddAuthHeader(message, "Authorization",
+                    AuthSigning.OAuth1Authorization(auth, message.Method.Method, uri, form, RandomHex(), DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                break;
+            case AuthKinds.AwsSigV4:
+                foreach (var header in AuthSigning.AwsSigV4Headers(auth, message.Method.Method, uri, Encoding.UTF8.GetBytes(request.Body), DateTimeOffset.UtcNow))
+                    AddAuthHeader(message, header.Key, header.Value);
+                break;
+        }
+    }
+
+    /// <summary>A header the user wrote explicitly wins over the request's auth settings.</summary>
+    private static void AddAuthHeader(HttpRequestMessage message, string name, string value)
+    {
         if (name.Length == 0 || message.Headers.Contains(name))
             return;
 
         if (!message.Headers.TryAddWithoutValidation(name, value))
             throw new RequestFailedException($"Invalid auth header: \"{name}\".");
     }
+
+    private static string RandomHex() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
     private static Uri ParseUrl(string rawUrl)
     {
@@ -172,7 +371,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         return uri;
     }
 
-    private static string GuessContentType(string body)
+    internal static string GuessContentType(string body)
     {
         var start = body.AsSpan().TrimStart();
         return start.Length > 0 && start[0] is '{' or '[' ? "application/json" : "text/plain; charset=utf-8";

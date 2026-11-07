@@ -17,6 +17,7 @@ internal static class Program
 
         Usage:
           ricochet run [folder] [options]
+          ricochet export <collection> --postman <file> | --openapi <file>   (see ricochet export --help)
 
         Arguments:
           folder                 The workspace folder. Defaults to the current folder.
@@ -24,22 +25,27 @@ internal static class Program
         Options:
           --collection <name>    Run only this collection.
           --folder <name>        Run only requests inside folders with this name.
+          --tag <name>           Run only requests with this tag, given by their folders. Repeatable; any match counts.
+          --exclude-tag <name>   Skip requests with this tag. Repeatable; wins over --tag.
           --env <name>           Use this environment.
           --var <name=value>     Set a variable, overriding every scope. Repeatable.
+          --data <file>          Run the collection once per row of a .csv or .json data file. Each row's columns
+                                 are variables for that run, and each run's results are printed under its row number.
           --xunit <file>         Also write an xUnit XML report.
           --timeout <seconds>    Time limit for each request. Default: 120.
           --bail                 Stop at the first failure.
           --insecure             Skip TLS certificate checks. Only for servers you trust, such as a local test server.
           --help                 Show this help.
 
-        Variables can also come from environment variables named RICOCHET_VAR_<name>.
+        Variables can also come from a .env file in the workspace folder, or from environment
+        variables named RICOCHET_VAR_<name>. Environment variables win over .env, and --var wins over both.
         Prefer those for secrets in CI, because --var values can show up in process lists.
         Values set either way are masked in the output.
 
         Exit codes:
           0  Everything passed.
-          1  A request or assertion failed.
-          2  The run could not happen, for example because a workspace file is unreadable.
+          1  A request or assertion failed, in any data row.
+          2  The run could not happen, for example because a workspace file or the data file is unreadable.
         """;
 
     private sealed class Arguments
@@ -47,8 +53,11 @@ internal static class Program
         public string Folder { get; set; } = ".";
         public string? Collection { get; set; }
         public string? FolderName { get; set; }
+        public List<string> Tags { get; } = [];
+        public List<string> ExcludeTags { get; } = [];
         public string? Environment { get; set; }
         public string? Xunit { get; set; }
+        public string? DataFile { get; set; }
         public int TimeoutSeconds { get; set; } = 120;
         public bool Bail { get; set; }
         public bool Insecure { get; set; }
@@ -62,6 +71,9 @@ internal static class Program
             Console.WriteLine(Usage);
             return args.Length == 0 ? ExitCannotRun : ExitPassed;
         }
+
+        if (args[0] == "export")
+            return ExportCommand(args.Skip(1).ToList());
 
         if (args[0] != "run")
             return CannotRun($"Unknown command \"{args[0]}\". Try: ricochet --help");
@@ -96,6 +108,9 @@ internal static class Program
         if (!WorkspaceFolder.LooksLikeWorkspace(options.Folder))
             return CannotRun($"\"{Path.GetFullPath(options.Folder)}\" is not a Ricochet workspace folder.");
 
+        // Read before the Workspace, so a bad data file fails fast. Problems throw RunSetupException, which exits 2.
+        var dataRows = options.DataFile is null ? null : ReadDataRows(options.DataFile);
+
         var folder = new WorkspaceFolder(Path.GetFullPath(options.Folder));
         var (workspace, issues) = folder.Load();
 
@@ -109,6 +124,11 @@ internal static class Program
 
         workspace = WorkspaceSecrets.Merge(workspace, WorkspaceSecrets.ForWorkspace(LoadSecrets(), folder.Id));
 
+        // Lowest priority first: .env, then RICOCHET_VAR_ variables, then --var. Later entries win.
+        var dotEnv = DotEnv.Read(folder.Root);
+        foreach (var line in dotEnv.SkippedLines)
+            Console.Error.WriteLine($"Warning: {DotEnv.FileName} line {line} was skipped, because it is not KEY=VALUE.");
+
         var colors = new Colors(!Console.IsOutputRedirected && Environment.GetEnvironmentVariable("NO_COLOR") is null);
         string? currentCollection = null;
         var startedAt = DateTimeOffset.Now;
@@ -117,30 +137,54 @@ internal static class Program
         if (options.Insecure)
             Console.Error.WriteLine("Warning: TLS certificate checks are off (--insecure). Requests are not verified.");
 
-        var runner = new CollectionRunner(new RequestSender(
+        var sender = new RequestSender(
             RequestSender.CreateDefaultClient(verifyCertificates: !options.Insecure),
-            TimeSpan.FromSeconds(options.TimeoutSeconds)));
-        var report = await runner.RunAsync(
-            workspace,
-            new RunOptions
-            {
-                CollectionName = options.Collection,
-                FolderName = options.FolderName,
-                EnvironmentName = options.Environment,
-                Overrides = [.. VariablesFromEnvironment(), .. options.Variables],
-                StopOnFirstFailure = options.Bail,
-            },
-            result =>
-            {
-                if (result.Collection != currentCollection)
-                {
-                    currentCollection = result.Collection;
-                    Console.WriteLine(result.Collection);
-                }
+            TimeSpan.FromSeconds(options.TimeoutSeconds));
+        var runOptions = new RunOptions
+        {
+            CollectionName = options.Collection,
+            FolderName = options.FolderName,
+            IncludeTags = FolderTags.Normalize(options.Tags) ?? [],
+            ExcludeTags = FolderTags.Normalize(options.ExcludeTags) ?? [],
+            EnvironmentName = options.Environment,
+            Overrides = [.. dotEnv.Variables, .. VariablesFromEnvironment(), .. options.Variables],
+            StopOnFirstFailure = options.Bail,
+        };
 
-                PrintResult(result, colors);
-            },
-            cancellationToken);
+        RunReport report;
+        if (dataRows is null)
+        {
+            report = await new CollectionRunner(sender).RunAsync(
+                workspace,
+                runOptions,
+                result =>
+                {
+                    if (result.Collection != currentCollection)
+                    {
+                        currentCollection = result.Collection;
+                        Console.WriteLine(result.Collection);
+                    }
+
+                    PrintResult(result, colors);
+                },
+                cancellationToken);
+        }
+        else
+        {
+            // Each row is its own run, printed under its row number. Row values are overrides, so they are masked like --var values.
+            var rowReports = await new DataRowRunner(sender).RunAsync(
+                workspace,
+                runOptions,
+                dataRows,
+                row => PrintRow(row, dataRows.Count, colors),
+                cancellationToken);
+
+            var stoppedEarly = options.Bail && rowReports.Count < dataRows.Count;
+            report = DataRowReports.Combine(rowReports, stoppedEarly);
+
+            Console.WriteLine();
+            Console.WriteLine($"Data rows: {rowReports.Count} run, {rowReports.Count(r => r.Report.Passed)} passed, {rowReports.Count(r => !r.Report.Passed)} failed.");
+        }
 
         Console.WriteLine();
         Console.WriteLine(RunReports.Summary(report));
@@ -161,6 +205,48 @@ internal static class Program
         }
 
         return report.Passed ? ExitPassed : ExitTestsFailed;
+    }
+
+    private static void PrintRow(DataRowReport row, int rowCount, Colors colors)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"Row {row.Row} of {rowCount}  {colors.Verdict(row.Report.Passed)}");
+
+        string? currentCollection = null;
+        foreach (var result in row.Report.Results)
+        {
+            if (result.Collection != currentCollection)
+            {
+                currentCollection = result.Collection;
+                Console.WriteLine(result.Collection);
+            }
+
+            PrintResult(result, colors);
+        }
+
+        Console.WriteLine($"  {RunReports.Summary(row.Report)}");
+    }
+
+    // Data file values are read from a file the user chose, so they are never printed here. Only the row number is shown.
+    private static IReadOnlyList<IReadOnlyList<KeyValue>> ReadDataRows(string path)
+    {
+        var format = DataFileParser.FormatFor(path);
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new RunSetupException($"Could not read the data file \"{path}\": {ex.Message}");
+        }
+
+        var rows = DataFileParser.Parse(text, format);
+        if (rows.Count == 0)
+            throw new RunSetupException($"The data file \"{path}\" has no rows to run.");
+
+        return rows;
     }
 
     private static void PrintResult(RequestRunResult result, Colors colors)
@@ -243,6 +329,12 @@ internal static class Program
                     options.FolderName = Value();
                     if (options.FolderName is null) { error = Missing(); return false; }
                     break;
+                case "--tag":
+                case "--exclude-tag":
+                    var tag = Value();
+                    if (string.IsNullOrWhiteSpace(tag)) { error = Missing(); return false; }
+                    (arg == "--tag" ? options.Tags : options.ExcludeTags).Add(tag);
+                    break;
                 case "--env":
                     options.Environment = Value();
                     if (options.Environment is null) { error = Missing(); return false; }
@@ -250,6 +342,10 @@ internal static class Program
                 case "--xunit":
                     options.Xunit = Value();
                     if (options.Xunit is null) { error = Missing(); return false; }
+                    break;
+                case "--data":
+                    options.DataFile = Value();
+                    if (options.DataFile is null) { error = Missing(); return false; }
                     break;
                 case "--timeout":
                     if (!int.TryParse(Value(), out var seconds) || seconds <= 0)
@@ -294,6 +390,183 @@ internal static class Program
     {
         Console.Error.WriteLine(message);
         return ExitCannotRun;
+    }
+
+    private const string ExportUsage = """
+        Ricochet: export a collection to a Postman v2.1 file, an OpenAPI 3 file, or both.
+
+        Usage:
+          ricochet export <collection> [options]
+
+        Arguments:
+          collection             The name of the collection to export.
+
+        Options:
+          --postman <file>       Write a Postman v2.1 collection to this file.
+          --openapi <file>       Write an OpenAPI 3 document to this file.
+          --workspace <folder>   The workspace folder. Defaults to the current folder.
+          --force                Overwrite a file that already exists.
+          --help                 Show this help.
+
+        Secret values are never written. Secret Variables are left out, and a secret's value is
+        replaced with {{name}}. Everything else that cannot be exported is listed after the export.
+        Files are never written inside the workspace folder.
+
+        Exit codes:
+          0  The file was written.
+          2  The export could not happen, for example because the collection does not exist,
+             a file already exists without --force, or the workspace is unreadable.
+        """;
+
+    private sealed class ExportArguments
+    {
+        public string? Collection { get; set; }
+        public string Workspace { get; set; } = ".";
+        public string? Postman { get; set; }
+        public string? OpenApi { get; set; }
+        public bool Force { get; set; }
+    }
+
+    private static int ExportCommand(List<string> args)
+    {
+        if (!TryParseExport(args, out var options, out var parseError))
+            return parseError is null ? ExitPassed : CannotRun(parseError);
+
+        if (!WorkspaceFolder.LooksLikeWorkspace(options!.Workspace))
+            return CannotRun($"\"{Path.GetFullPath(options.Workspace)}\" is not a Ricochet workspace folder.");
+
+        var folder = new WorkspaceFolder(Path.GetFullPath(options.Workspace));
+        var (workspace, issues) = folder.Load();
+
+        // Same rule as run: an unreadable file could hide part of the collection, so the export would be incomplete.
+        if (issues.Count > 0)
+        {
+            foreach (var issue in issues)
+                Console.Error.WriteLine($"{issue.Path}: {issue.Problem}");
+            return CannotRun("Some workspace files could not be used. Fix them and export again.");
+        }
+
+        // Secret values come from this machine's vault, so they can be replaced with their placeholders.
+        workspace = WorkspaceSecrets.Merge(workspace, WorkspaceSecrets.ForWorkspace(LoadSecrets(), folder.Id));
+
+        Collection collection;
+        try
+        {
+            collection = ExportFiles.FindCollection(workspace.Collections, options.Collection!);
+        }
+        catch (ExportFileException ex)
+        {
+            return CannotRun(ex.Message);
+        }
+
+        // Check every target before writing any, so a refused second file never leaves the first one behind.
+        var targets = new List<(string Label, string Path, Func<ExportResult> Export)>();
+        try
+        {
+            if (options.Postman is not null)
+                targets.Add(("Postman", ExportFiles.Check(options.Postman, folder.Root, options.Force), () => PostmanExporter.Export(collection)));
+            if (options.OpenApi is not null)
+                targets.Add(("OpenAPI", ExportFiles.Check(options.OpenApi, folder.Root, options.Force), () => OpenApiExporter.Export(collection)));
+        }
+        catch (ExportFileException ex)
+        {
+            return CannotRun(ex.Message);
+        }
+
+        if (targets.Count == 2 && string.Equals(targets[0].Path, targets[1].Path, StringComparison.OrdinalIgnoreCase))
+            return CannotRun("--postman and --openapi need different files.");
+
+        foreach (var target in targets)
+        {
+            var result = target.Export();
+            try
+            {
+                ExportFiles.Write(target.Path, result.Json, folder.Root, options.Force);
+            }
+            catch (ExportFileException ex)
+            {
+                return CannotRun(ex.Message);
+            }
+
+            Console.WriteLine($"Wrote {target.Label} export to {target.Path}");
+            Console.WriteLine(result.Notes.Count == 0
+                ? "Nothing was left out."
+                : result.ToReportText());
+            Console.WriteLine();
+        }
+
+        return ExitPassed;
+    }
+
+    /// <returns>False to stop. A null error means help was shown, which is not a failure.</returns>
+    private static bool TryParseExport(List<string> args, out ExportArguments? result, out string? error)
+    {
+        var options = new ExportArguments();
+        result = options;
+        error = null;
+        var positional = 0;
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+
+            string? Value()
+            {
+                i++;
+                return i < args.Count ? args[i] : null;
+            }
+
+            switch (arg)
+            {
+                case "--help" or "-h":
+                    Console.WriteLine(ExportUsage);
+                    return false;
+                case "--force":
+                    options.Force = true;
+                    break;
+                case "--workspace":
+                    options.Workspace = Value() ?? "";
+                    if (options.Workspace.Length == 0) { error = "--workspace needs a folder."; return false; }
+                    break;
+                case "--postman":
+                    options.Postman = Value();
+                    if (string.IsNullOrWhiteSpace(options.Postman)) { error = "--postman needs a file."; return false; }
+                    break;
+                case "--openapi":
+                    options.OpenApi = Value();
+                    if (string.IsNullOrWhiteSpace(options.OpenApi)) { error = "--openapi needs a file."; return false; }
+                    break;
+                default:
+                    if (arg.StartsWith('-'))
+                    {
+                        error = $"Unknown option \"{arg}\". Try: ricochet export --help";
+                        return false;
+                    }
+
+                    if (positional++ > 0)
+                    {
+                        error = $"Unexpected argument \"{arg}\". Try: ricochet export --help";
+                        return false;
+                    }
+
+                    options.Collection = arg;
+                    break;
+            }
+        }
+
+        if (options.Collection is null)
+        {
+            error = "Name the collection to export. Try: ricochet export --help";
+            return false;
+        }
+
+        if (options.Postman is null && options.OpenApi is null)
+        {
+            error = "Choose at least one format: --postman <file> or --openapi <file>.";
+            return false;
+        }
+
+        return true;
     }
 
     private sealed class Colors(bool enabled)

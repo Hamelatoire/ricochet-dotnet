@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Hide a folder without deleting it
@@ -15,3 +15,7 @@ A folder can be hidden. It stays on disk, is left out of the sidebar and runs, a
 ## Consequences
 
 - A hidden folder's requests are not run, so the CLI must report that it skipped them, and exit with code 2 if that leaves nothing to run.
+
+## Status note
+
+Accepted with the CLI part. `CollectionRunner` now names each hidden Request it skipped (`RunReport.SkippedHidden`), the run summary counts them, and a run where hiding leaves nothing to run ends with exit code 2. Hiding and showing folders in the sidebar was already in the app (`HiddenItemIds`) and is unchanged here.

@@ -57,7 +57,7 @@ Ricochet follows your system's light or dark setting. Choose **System**, **Light
 
 ## Settings
 
-Choose **Settings** at the bottom of the sidebar for preferences that stay on this machine: request timeout, following redirects, certificate checks, the largest response to keep, and wrapping long lines. They are never saved in the workspace, so a `git pull` cannot change them. While certificate checks are off, a warning shows on every page. See [ADR 0007](docs/adr/0007-personal-settings-page.md).
+Choose **Settings** at the bottom of the sidebar for preferences that stay on this machine: request timeout, following redirects, a proxy, a client certificate and its password, certificate checks, the largest response to keep, and wrapping long lines. They are never saved in the workspace, so a `git pull` cannot change them. The certificate password is kept in your operating system's secure storage. While certificate checks are off, a warning shows on every page. See [ADR 0007](docs/adr/0007-personal-settings-page.md) and [ADR 0026](docs/adr/0026-proxy-and-client-certificates-for-requests.md).
 
 ![The Settings page](docs/screenshots/settings-page-light.png)
 
@@ -85,7 +85,12 @@ It exits with `0` if everything passed, `1` if a request or check failed, and `2
 
 A request needing a variable with no value fails without being sent. Secrets aren't in the repository, so provide them through environment variables named `RICOCHET_VAR_<name>`, for example `RICOCHET_VAR_token`. These and saved values are masked in the output and the report, but only when the value is at least 4 characters long.
 
+For a local run, a `.env` file in the workspace folder works too, with `KEY=VALUE` lines. Environment variables override it, and `--var` overrides both. Ricochet doesn't write these values anywhere, and new workspaces list `.env` in their `.gitignore`.
+
 Requests run in order, and saved values carry forward within a collection. Running only one folder won't include a login request outside it, so its requests fail without being sent. Postman scripts aren't run, so the summary says how many requests had any.
+
+Folders can have tags, which their requests inherit. `--tag smoke` runs only requests with that tag, and `--exclude-tag slow` skips them. Both can repeat, and a request with an excluded tag is skipped even when it has an included one. A selection that matches nothing exits with `2`.
+
 
 On Windows, Smart App Control can block a newly built `ricochet.exe` because it's unsigned. Signing release builds is the lasting fix. In development, you can run the same code with `dotnet run --project src/Ricochet.Cli -- run`.
 

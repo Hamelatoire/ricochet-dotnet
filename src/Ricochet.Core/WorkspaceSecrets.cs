@@ -58,7 +58,7 @@ public static class WorkspaceSecrets
         var result = new Dictionary<string, string>();
         foreach (var (key, value) in vault)
         {
-            if (!key.StartsWith(WorkspacePrefix, StringComparison.Ordinal))
+            if (!key.StartsWith(WorkspacePrefix, StringComparison.Ordinal) && !key.StartsWith(PersonalSecrets.Prefix, StringComparison.Ordinal))
                 result.TryAdd(key, value);
         }
 
@@ -78,7 +78,9 @@ public static class WorkspaceSecrets
         var result = new Dictionary<string, string>();
         foreach (var (key, value) in vault)
         {
-            if (key.StartsWith(WorkspacePrefix, StringComparison.Ordinal) && !key.StartsWith(prefix, StringComparison.Ordinal))
+            // Personal Secrets belong to no Workspace, so they survive a save of this one.
+            var isOtherWorkspace = key.StartsWith(WorkspacePrefix, StringComparison.Ordinal) && !key.StartsWith(prefix, StringComparison.Ordinal);
+            if (isOtherWorkspace || key.StartsWith(PersonalSecrets.Prefix, StringComparison.Ordinal))
                 result[key] = value;
         }
 
@@ -143,8 +145,7 @@ public static class WorkspaceSecrets
     private static ApiRequest SanitizeForHistory(ApiRequest request)
     {
         var hasSensitiveHeader = request.Headers.Any(IsHeaderToHide);
-        var hasLiteralAuth = request.Auth is { } auth
-            && (SecretRules.IsLiteral(auth.Token) || SecretRules.IsLiteral(auth.Password) || SecretRules.IsLiteral(auth.KeyValue));
+        var hasLiteralAuth = request.Auth is { } auth && AuthSecretValues(auth).Any(SecretRules.IsLiteral);
 
         if (!hasSensitiveHeader && !hasLiteralAuth)
             return request;
@@ -158,6 +159,15 @@ public static class WorkspaceSecrets
                     Token = BlankIfLiteral(a.Token),
                     Password = BlankIfLiteral(a.Password),
                     KeyValue = BlankIfLiteral(a.KeyValue),
+                    Details = a.Details is { } d
+                        ? d with
+                        {
+                            ConsumerSecret = BlankIfLiteral(d.ConsumerSecret),
+                            TokenSecret = BlankIfLiteral(d.TokenSecret),
+                            AwsSecretAccessKey = BlankIfLiteral(d.AwsSecretAccessKey),
+                            AwsSessionToken = BlankIfLiteral(d.AwsSessionToken),
+                        }
+                        : null,
                 }
                 : null,
         };
@@ -175,6 +185,14 @@ public static class WorkspaceSecrets
         SecretRules.IsSensitiveHeader(header.Key) && SecretRules.IsLiteral(header.Value) && header.Value != SecretRules.HiddenValue;
 
     private static string BlankIfLiteral(string value) => SecretRules.IsLiteral(value) ? "" : value;
+
+    /// <summary>Every field of an auth that is a Secret (ADR 0004). Keep in step with <see cref="SplitAuth"/> and <see cref="MergeAuth"/>.</summary>
+    internal static IEnumerable<string> AuthSecretValues(RequestAuth auth)
+    {
+        var details = auth.Details;
+        return [auth.Token, auth.Password, auth.KeyValue,
+            details?.ConsumerSecret ?? "", details?.TokenSecret ?? "", details?.AwsSecretAccessKey ?? "", details?.AwsSessionToken ?? ""];
+    }
 
     private static string VariableKey(string scope, string name) => $"variable/{scope}/{name}";
 
@@ -235,6 +253,15 @@ public static class WorkspaceSecrets
             Token = Take(auth.Token, "token"),
             Password = Take(auth.Password, "password"),
             KeyValue = Take(auth.KeyValue, "keyValue"),
+            Details = auth.Details is { } d
+                ? d with
+                {
+                    ConsumerSecret = Take(d.ConsumerSecret, "consumerSecret"),
+                    TokenSecret = Take(d.TokenSecret, "tokenSecret"),
+                    AwsSecretAccessKey = Take(d.AwsSecretAccessKey, "awsSecretAccessKey"),
+                    AwsSessionToken = Take(d.AwsSessionToken, "awsSessionToken"),
+                }
+                : null,
         };
     }
 
@@ -248,6 +275,15 @@ public static class WorkspaceSecrets
             Token = Restore(auth.Token, "token"),
             Password = Restore(auth.Password, "password"),
             KeyValue = Restore(auth.KeyValue, "keyValue"),
+            Details = auth.Details is { } d
+                ? d with
+                {
+                    ConsumerSecret = Restore(d.ConsumerSecret, "consumerSecret"),
+                    TokenSecret = Restore(d.TokenSecret, "tokenSecret"),
+                    AwsSecretAccessKey = Restore(d.AwsSecretAccessKey, "awsSecretAccessKey"),
+                    AwsSessionToken = Restore(d.AwsSessionToken, "awsSessionToken"),
+                }
+                : null,
         };
     }
 }
