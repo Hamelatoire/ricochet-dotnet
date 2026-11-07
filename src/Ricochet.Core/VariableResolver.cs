@@ -276,6 +276,66 @@ public static partial class VariableResolver
         return new ResolvedRequests(sent, history);
     }
 
+    /// <summary>
+    /// Reads the external Secret behind each secret reference (ADR 0025) that the request reaches, and returns the variables
+    /// with those values added as Secrets, so they win over the references. Call it just before sending, and pass the result
+    /// to <see cref="Resolve"/> for the send only: the request and its History copy keep the reference as written.
+    /// A reference that cannot be read fails the request before anything is sent. The message names the Variable, never a value.
+    /// </summary>
+    /// <exception cref="RequestFailedException">A reference could not be read.</exception>
+    public static async Task<IReadOnlyList<KeyValue>> ResolveReferencesAsync(
+        ApiRequest request,
+        IEnumerable<KeyValue> variables,
+        ExternalSecretResolver secrets,
+        CancellationToken cancellationToken = default)
+    {
+        var all = variables.ToList();
+
+        // The same winner rule Resolve uses, so the reference read here is the one the request would send.
+        var winners = new Dictionary<string, KeyValue>();
+        foreach (var variable in all)
+        {
+            if (variable.Enabled && variable.Key.Length > 0 && !((variable.IsSecret || variable.IsPrompt) && variable.Value.Length == 0))
+                winners[variable.Key.Trim()] = variable;
+        }
+
+        var added = new List<KeyValue>();
+        var seen = new HashSet<string>();
+        var pending = new Queue<string>(FindPlaceholders(request));
+        while (pending.Count > 0)
+        {
+            var name = pending.Dequeue();
+            if (!seen.Add(name) || !winners.TryGetValue(name, out var variable))
+                continue;
+
+            // A prompt Variable is sent with its answer, so its stored value is never read.
+            if (variable.IsPrompt)
+                continue;
+
+            if (!ExternalSecretReference.IsReference(variable.Value))
+            {
+                foreach (Match match in Placeholder().Matches(variable.Value))
+                    pending.Enqueue(match.Groups[1].Value.Trim());
+                continue;
+            }
+
+            string value;
+            try
+            {
+                value = await secrets.ResolveAsync(variable.Value, cancellationToken);
+            }
+            catch (ExternalSecretException ex)
+            {
+                throw new RequestFailedException($"The secret reference for {name} could not be read. {ex.Message}", ex);
+            }
+
+            // Marked as a Secret, so the value is masked wherever this send's output is shown.
+            added.Add(variable with { Key = name, Value = value, Enabled = true, IsSecret = true });
+        }
+
+        return added.Count == 0 ? all : [.. all, .. added];
+    }
+
     /// <summary>Names still written as placeholders in the parts of a request that will actually be sent.</summary>
     public static IReadOnlyList<string> FindPlaceholders(ApiRequest request)
     {

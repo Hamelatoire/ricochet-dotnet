@@ -15,9 +15,11 @@ public sealed record BulkItemResult(string Id, int? StatusCode, bool Succeeded, 
 /// Sends one Request for each id, one at a time (for example, a request whose URL contains {{id}}).
 /// Nothing here stores progress: the caller records each result as it arrives.
 /// </summary>
-public sealed class BulkRunner(RequestSender sender)
+public sealed class BulkRunner(RequestSender sender, ExternalSecretResolver? secrets = null)
 {
     public const string DefaultPlaceholder = "id";
+
+    private readonly ExternalSecretResolver _secrets = secrets ?? new ExternalSecretResolver();
 
     private const int MaxDetailLength = 300;
 
@@ -111,7 +113,19 @@ public sealed class BulkRunner(RequestSender sender)
     private async Task<BulkItemResult> RunOneAsync(Workspace workspace, Collection collection, ApiEnvironment? environment,
         ApiRequest template, string placeholder, string id, IReadOnlyList<KeyValue> overrides)
     {
-        var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, overrides, [new KeyValue(placeholder, id)]);
+        var layered = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, overrides, [new KeyValue(placeholder, id)]);
+
+        // Secret references are read just before sending, and only the send uses the values (ADR 0025).
+        IReadOnlyList<KeyValue> variables;
+        try
+        {
+            variables = await VariableResolver.ResolveReferencesAsync(template, layered, _secrets);
+        }
+        catch (RequestFailedException ex)
+        {
+            return new BulkItemResult(id, null, false, ex.Message, 0);
+        }
+
         var resolved = VariableResolver.Apply(template, variables);
         var secrets = CollectionRunner.SecretsToMask(variables, [], [], resolved);
 
