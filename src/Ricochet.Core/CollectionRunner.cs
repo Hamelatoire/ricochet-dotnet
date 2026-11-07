@@ -138,6 +138,10 @@ public sealed class CollectionRunner(RequestSender sender)
 
     private static void Walk(Collection collection, CollectionItem item, string parentPath, bool folderMatched, bool parentHasScripts, RunOptions options, List<Planned> planned)
     {
+        // A hidden folder, and everything in it, is not run (ADR 0032).
+        if (collection.HiddenItemIds?.Contains(item.Id) == true)
+            return;
+
         var path = parentPath.Length > 0 ? $"{parentPath} / {item.Name}" : item.Name;
         var hasScripts = parentHasScripts || item.Scripts.Count > 0;
 

@@ -714,4 +714,20 @@ public class CollectionRunnerTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runner.RunAsync(One(Item("1")), new RunOptions(), cancellationToken: cts.Token));
     }
+
+    [Fact]
+    public async Task A_hidden_folder_is_not_run()
+    {
+        var (runner, server) = Runner();
+        var hidden = new CollectionItem { Id = "hidden1", Name = "Old", Children = [Item("Inside")] };
+        var workspace = new Workspace
+        {
+            Collections = [new Collection { Name = "Shop", Items = [Item("Visible"), hidden], HiddenItemIds = ["hidden1"] }],
+        };
+
+        var report = await Run(runner, workspace);
+
+        Assert.Equal(["Visible"], report.Results.Select(r => r.Path));
+        Assert.Single(server.Received);
+    }
 }

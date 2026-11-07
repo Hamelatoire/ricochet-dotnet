@@ -732,6 +732,18 @@ public sealed class WorkspaceStoreTests : IDisposable
         Assert.False(Directory.Exists(gone));
         Assert.NotEqual(gone, store.FolderPath);
     }
+
+    [Fact]
+    public void Hidden_items_are_kept_across_restarts()
+    {
+        var store = Loaded();
+        var sample = Sample();
+        store.Save(sample with { Collections = [sample.Collections[0] with { HiddenItemIds = ["i1aaaaaaaa"] }] });
+
+        var reloaded = new WorkspaceStore(_dir).Load().Workspace;
+
+        Assert.Equal(["i1aaaaaaaa"], reloaded.Collections[0].HiddenItemIds);
+    }
 }
 
 public class SecretsPerWorkspaceTests
