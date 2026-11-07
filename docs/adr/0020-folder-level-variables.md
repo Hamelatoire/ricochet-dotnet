@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Folder-level variables
@@ -16,3 +16,10 @@ A folder can hold variables. They override the collection's values for requests 
 
 - Variable resolution gets one more layer, so the scope order must be documented and tested.
 - Existing files are unchanged, since the field is optional.
+
+## Built
+
+- Order, lowest first: Globals, Collection, Folders from outermost to innermost, Environment, captured values, then overrides. `VariableResolver.FolderScope` finds the Folders around a Request, and the sending, bulk and collection-run paths all layer them in that order.
+- A Folder's Variables are written as `variables` in its `folder.json`, and left out when empty, so existing files do not change. Secret Variables on a Folder go to the vault like Collection Secrets.
+- The Variables page has an "Editing" picker that lists the Collection and each Folder in it.
+- Not yet shown on a Request's own Variables tab, which still lists only the Collection's values.

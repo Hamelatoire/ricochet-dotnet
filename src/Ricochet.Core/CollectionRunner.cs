@@ -67,7 +67,7 @@ public sealed class CollectionRunner(RequestSender sender, ExternalSecretResolve
     // Masking very short values would scramble unrelated output, such as a status code.
     private const int MinMaskedLength = 4;
 
-    private sealed record Planned(Collection Collection, string Path, ApiRequest Request, bool HasScripts);
+    private sealed record Planned(Collection Collection, string ItemId, string Path, ApiRequest Request, bool HasScripts);
 
     /// <exception cref="RunSetupException">Nothing could be selected to run.</exception>
     public async Task<RunReport> RunAsync(
@@ -176,7 +176,7 @@ public sealed class CollectionRunner(RequestSender sender, ExternalSecretResolve
                 if (isHidden)
                     hidden.Add(new SkippedRequest(collection.Name, path));
                 else
-                    planned.Add(new Planned(collection, path, request, hasScripts));
+                    planned.Add(new Planned(collection, item.Id, path, request, hasScripts));
             }
             return;
         }
@@ -188,7 +188,8 @@ public sealed class CollectionRunner(RequestSender sender, ExternalSecretResolve
 
     private async Task<RequestRunResult> RunOneAsync(Planned item, Workspace workspace, ApiEnvironment? environment, List<KeyValue> captured, RunOptions options, CancellationToken cancellationToken)
     {
-        var layered = VariableResolver.Layer(workspace.Globals, item.Collection.Variables, environment?.Variables, captured, options.Overrides);
+        var layered = VariableResolver.Layer(workspace.Globals, item.Collection.Variables, VariableResolver.FolderScope(item.Collection, item.ItemId),
+            environment?.Variables, captured, options.Overrides);
         var variables = (IReadOnlyList<KeyValue>)layered;
         var resolved = VariableResolver.Apply(item.Request, variables);
 

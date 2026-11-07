@@ -24,6 +24,37 @@ public static partial class VariableResolver
     public static IReadOnlyList<KeyValue> Layer(params IEnumerable<KeyValue>?[] lowestPriorityFirst) =>
         lowestPriorityFirst.SelectMany(scope => scope ?? []).ToList();
 
+    /// <summary>
+    /// The Variables of the Folders around an item, outermost first, so a Folder nearer the item overrides one further out.
+    /// Empty when the item is directly in the Collection, or is not in it. Layer it after the Collection's Variables and
+    /// before the Environment's, so the order is Globals, Collection, Folders, Environment, captures, then overrides (ADR 0020).
+    /// </summary>
+    public static IReadOnlyList<KeyValue> FolderScope(Collection collection, string? itemId) =>
+        FolderPath(collection.Items, itemId) ?? [];
+
+    // The Folder Variables on the way down to the item, outermost first. Null when the item is not below these items.
+    private static List<KeyValue>? FolderPath(IEnumerable<CollectionItem> items, string? itemId)
+    {
+        if (itemId is null)
+            return null;
+
+        foreach (var item in items)
+        {
+            if (item.Request is not null)
+            {
+                if (item.Id == itemId)
+                    return [];
+                continue;
+            }
+
+            var below = FolderPath(item.Children, itemId);
+            if (below is not null)
+                return [.. item.Variables, .. below];
+        }
+
+        return null;
+    }
+
     /// <summary>The request to send, with every placeholder replaced.</summary>
     public static ApiRequest Apply(ApiRequest request, IEnumerable<KeyValue> variables) => Resolve(request, variables).Sent;
 
