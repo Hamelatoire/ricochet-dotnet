@@ -276,7 +276,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         return uri;
     }
 
-    private static string GuessContentType(string body)
+    internal static string GuessContentType(string body)
     {
         var start = body.AsSpan().TrimStart();
         return start.Length > 0 && start[0] is '{' or '[' ? "application/json" : "text/plain; charset=utf-8";
