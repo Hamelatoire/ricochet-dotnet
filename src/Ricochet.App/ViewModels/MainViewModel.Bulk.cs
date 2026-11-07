@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
+using Ricochet.App.Services;
 using Ricochet.Core;
 
 namespace Ricochet.App.ViewModels;
@@ -85,6 +87,24 @@ public sealed partial class MainViewModel
 
     [RelayCommand]
     private void CloseBulkPage() => IsBulkPageOpen = false;
+
+    /// <summary>Loads ids from a text file the user picks, one per line. The file is only read, never changed.</summary>
+    [RelayCommand]
+    private async Task ImportBulkIdsFromFileAsync()
+    {
+        if (await _dialogs.PickIdsFileAsync() is not { } path)
+            return;
+
+        try
+        {
+            var text = await File.ReadAllTextAsync(path);
+            LoadBulkIds(text, Path.GetFileName(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            BulkStatus = $"Could not read {Path.GetFileName(path)}: {ex.Message}";
+        }
+    }
 
     /// <summary>Replaces the pasted ids with the ids from a file. Blank lines and surrounding spaces are dropped, as with paste.</summary>
     public void LoadBulkIds(string text, string fileName)

@@ -16,9 +16,11 @@ public partial class App : Application
         {
             var sender = new RequestSender(RequestSender.CreateDefaultClient());
             var store = new WorkspaceStore(WorkspaceStore.DefaultPersonalDirectory(), WorkspaceStore.DefaultOldAppCopy());
-            var viewModel = new MainViewModel(sender, store, SecretVaults.CreateDefault(store.SecretsPath));
+            // The window provides the dialogs and the clipboard, so it is created first and then given to the view model.
+            var window = new MainWindow();
+            var viewModel = new MainViewModel(sender, store, SecretVaults.CreateDefault(store.SecretsPath), window, window);
             RequestedThemeVariant = ThemeSettings.Variant(store.Theme);
-            var window = new MainWindow { DataContext = viewModel };
+            window.DataContext = viewModel;
             WindowMemory.Attach(window, store);
             desktop.MainWindow = window;
         }

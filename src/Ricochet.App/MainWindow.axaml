@@ -35,7 +35,7 @@
                 <TextBlock Text="New" />
               </StackPanel>
             </Button>
-            <Button Grid.Column="2" HorizontalAlignment="Stretch" Click="OnImportClick"
+            <Button Grid.Column="2" HorizontalAlignment="Stretch" Command="{Binding ImportPostmanFilesCommand}"
                     AutomationProperties.Name="Import" ToolTip.Tip="Import Postman collections, environments and globals">
               <StackPanel Orientation="Horizontal" Spacing="7">
                 <PathIcon Data="{DynamicResource IconImport}" />
@@ -213,7 +213,7 @@
           </Grid>
           <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
             <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Text="Ids, one per line" />
-            <Button Grid.Column="1" Content="Import from file…" Click="OnImportIdsClick" IsEnabled="{Binding !IsBulkRunning}"
+            <Button Grid.Column="1" Content="Import from file…" Command="{Binding ImportBulkIdsFromFileCommand}" IsEnabled="{Binding !IsBulkRunning}"
                     AutomationProperties.Name="Import ids from a text file" ToolTip.Tip="Load ids from a .txt file, one per line" />
             <Button Grid.Column="2" Content="Remove ids" Margin="8,0,0,0" Command="{Binding ClearBulkIdsCommand}"
                     IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Remove the ids"
@@ -459,7 +459,7 @@
                   <Grid Grid.Column="1" ColumnDefinitions="*,Auto" VerticalAlignment="Top">
                     <TextBox Grid.Column="0" Text="{Binding ClientCertificatePath, UpdateSourceTrigger=LostFocus}" Watermark="No certificate"
                              AutomationProperties.Name="Client certificate file" />
-                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Browse…" Click="OnBrowseCertificateClick"
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Browse…" Command="{Binding BrowseClientCertificateCommand}"
                             AutomationProperties.Name="Browse for client certificate" />
                   </Grid>
                 </Grid>
@@ -505,7 +505,7 @@
                   <Grid Grid.Column="1" ColumnDefinitions="*,Auto" VerticalAlignment="Top">
                     <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                Text="{Binding WorkspaceFolderPath}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
-                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Change…" Click="OnChangeFolderClick"
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Change…" Command="{Binding ChangeWorkspaceFolderCommand}"
                             AutomationProperties.Name="Change workspace folder" />
                   </Grid>
                 </Grid>
@@ -848,10 +848,10 @@
                 </StackPanel>
                 <ToggleButton Grid.Column="2" Classes="small" Content="Wrap" IsChecked="{Binding WrapResponse}"
                               AutomationProperties.Name="Wrap lines" ToolTip.Tip="Wrap long lines" />
-                <Button Grid.Column="3" Classes="ghost" Content="Copy body" Padding="10,3" Margin="4,0,0,0" FontSize="12"
-                        Click="OnCopyResponseClick" AutomationProperties.Name="Copy body" ToolTip.Tip="Copy the response body to the clipboard" />
-                <Button Grid.Column="4" Classes="ghost" Content="Save body…" Padding="10,3" Margin="4,0,0,0" FontSize="12"
-                        Click="OnSaveResponseClick" AutomationProperties.Name="Save body to file" ToolTip.Tip="Save the response body as a file, as received" />
+                <Button Grid.Column="3" Classes="ghost" Content="{Binding CopyBodyLabel}" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                        Command="{Binding CopyBodyCommand}" AutomationProperties.Name="Copy body" ToolTip.Tip="Copy the response body to the clipboard" />
+                <Button Grid.Column="4" Classes="ghost" Content="{Binding SaveBodyLabel}" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                        Command="{Binding SaveBodyCommand}" AutomationProperties.Name="Save body to file" ToolTip.Tip="Save the response body as a file, as received" />
               </Grid>
               <Border DockPanel.Dock="Top" Classes="banner warning" Margin="0,12,0,0" IsVisible="{Binding HasNotice}">
                 <Grid ColumnDefinitions="*,Auto">
@@ -870,8 +870,8 @@
                 </TabItem>
                 <TabItem Header="Headers">
                   <DockPanel>
-                    <Button DockPanel.Dock="Top" Classes="ghost" Content="Copy headers" HorizontalAlignment="Right"
-                            Padding="10,3" Margin="0,12,0,0" FontSize="12" Click="OnCopyHeadersClick"
+                    <Button DockPanel.Dock="Top" Classes="ghost" Content="{Binding CopyHeadersLabel}" HorizontalAlignment="Right"
+                            Padding="10,3" Margin="0,12,0,0" FontSize="12" Command="{Binding CopyHeadersCommand}"
                             AutomationProperties.Name="Copy headers" ToolTip.Tip="Copy the response headers to the clipboard" />
                     <TextBox Classes="mono bare" IsReadOnly="True" Text="{Binding ResponseHeaders}" AcceptsReturn="True"
                              VerticalContentAlignment="Top" Margin="0,8,0,0" />
@@ -1033,7 +1033,7 @@
             <Button Content="Close" Command="{Binding Mock.CloseCommand}" AutomationProperties.Name="Close mock server" />
           </StackPanel>
           <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
-            <Button Grid.Column="0" Content="Load OpenAPI description…" Click="OnLoadMockDescriptionClick"
+            <Button Grid.Column="0" Content="Load OpenAPI description…" Command="{Binding LoadMockDescriptionFromFileCommand}"
                     AutomationProperties.Name="Load OpenAPI description from a file" />
             <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis"
                        Text="{Binding Mock.SourceText}" />
