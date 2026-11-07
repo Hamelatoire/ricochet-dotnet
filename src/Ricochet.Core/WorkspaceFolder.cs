@@ -50,6 +50,22 @@ public sealed record RequestFile
 public sealed class WorkspaceFolder(string root)
 {
     public const string MarkerFileName = "ricochet.json";
+
+    /// <summary>Written once, when a workspace folder is first saved, so personal files are not committed by accident (ADR 0031).</summary>
+    public const string GitIgnoreFileName = ".gitignore";
+
+    private static readonly string GitIgnoreContent = string.Join('\n',
+    [
+        "# Written by Ricochet when this workspace was created. Edit it as you like; Ricochet won't overwrite it.",
+        "# Temporary files left by an interrupted save",
+        "*.tmp",
+        "# Personal and secret-holding files, in case they end up in this folder",
+        "state.json",
+        "history.json",
+        "secrets.dat",
+        ".env",
+        "*.secret",
+    ]) + '\n';
     private const string CollectionFileName = "collection.json";
     private const string FolderFileName = "folder.json";
     private const string GlobalsFileName = "globals.json";
@@ -101,7 +117,9 @@ public sealed class WorkspaceFolder(string root)
     {
         lock (_gate)
         {
+            var isNew = !File.Exists(FullPath(MarkerFileName));
             var desired = Render(workspace);
+            AddGitIgnore(desired, isNew);
 
             foreach (var (path, content) in desired)
             {
@@ -110,7 +128,10 @@ public sealed class WorkspaceFolder(string root)
 
                 WriteAtomically(path, content);
                 _understood[path] = content;
-                _seen[path] = content;
+
+                // The scan doesn't read .gitignore, so it is not an outside change when it is written.
+                if (path != GitIgnoreFileName)
+                    _seen[path] = content;
             }
 
             foreach (var path in _understood.Keys.Where(p => !desired.ContainsKey(p)).ToList())
@@ -121,6 +142,18 @@ public sealed class WorkspaceFolder(string root)
                 RemoveEmptyParents(path);
             }
         }
+    }
+
+    /// <summary>
+    /// Keeps the .gitignore that Ricochet wrote, and writes one for a new workspace. A .gitignore the user already
+    /// had is left alone, and once Ricochet has written one, the user's edits are kept.
+    /// </summary>
+    private void AddGitIgnore(Dictionary<string, string> desired, bool isNew)
+    {
+        if (_understood.TryGetValue(GitIgnoreFileName, out var written))
+            desired[GitIgnoreFileName] = written;
+        else if (isNew && !File.Exists(FullPath(GitIgnoreFileName)))
+            desired[GitIgnoreFileName] = GitIgnoreContent;
     }
 
     /// <summary>True when files differ from what was last read or written, for example after a git pull.</summary>

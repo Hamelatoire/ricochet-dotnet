@@ -523,6 +523,56 @@ public sealed class WorkspaceStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_new_workspace_gets_a_gitignore_that_excludes_personal_files()
+    {
+        var store = Loaded();
+        store.Save(Sample());
+
+        var text = File.ReadAllText(Path.Combine(store.FolderPath, WorkspaceFolder.GitIgnoreFileName));
+        Assert.Contains("state.json", text);
+        Assert.Contains("secrets.dat", text);
+        Assert.Contains("*.tmp", text);
+    }
+
+    [Fact]
+    public void An_existing_gitignore_is_never_overwritten()
+    {
+        var store = Loaded();
+        var path = Path.Combine(store.FolderPath, WorkspaceFolder.GitIgnoreFileName);
+        File.WriteAllText(path, "my-own-rule\n");
+
+        store.Save(Sample());
+
+        Assert.Equal("my-own-rule\n", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void Edits_to_the_gitignore_survive_later_saves()
+    {
+        var store = Loaded();
+        store.Save(Sample());
+        var path = Path.Combine(store.FolderPath, WorkspaceFolder.GitIgnoreFileName);
+        File.AppendAllText(path, "scratch/\n");
+
+        store.Save(Sample());
+
+        Assert.EndsWith("scratch/\n", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void A_gitignore_the_user_deleted_is_not_recreated()
+    {
+        var store = Loaded();
+        store.Save(Sample());
+        var path = Path.Combine(store.FolderPath, WorkspaceFolder.GitIgnoreFileName);
+        File.Delete(path);
+
+        store.Save(Sample());
+
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
     public void Theme_choice_is_kept_across_restarts_and_saves()
     {
         var store = Loaded();
