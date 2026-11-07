@@ -504,6 +504,8 @@ public sealed partial class MainViewModel : ObservableObject
             return null;
         if (match.IsSecret)
             return "Secret, hidden";
+        if (match.IsPrompt)
+            return "Asked each time it is sent";
         return match.Value;
     }
 
@@ -621,7 +623,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         foreach (var variable in EditingVariablesCollection.Variables.Items.Where(row => row.Key.Trim().Length > 0))
-            VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret,
+            VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret, variable.IsPrompt,
                 VariablesEnvironment.Variables, VariablesEnvironment.Name, MoveVariable));
     }
 
@@ -634,7 +636,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         // The environment keeps a value it already has. Otherwise it takes the collection's default.
-        environment.Variables.AddIfMissing(variable.Key, variable.Value, variable.IsSecret);
+        environment.Variables.AddIfMissing(variable.Key, variable.Value, variable.IsSecret, variable.IsPrompt);
         defaults.Items.Remove(variable);
         await PersistAsync();
     }
@@ -871,27 +873,38 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         // The request is hidden behind the page, so the shortcut must not send it unseen.
-        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen)
+        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen || IsPromptDialogOpen)
             return;
+
+        var request = CurrentRequest();
+        var collectionId = CurrentCollection?.Id;
+        var variables = VariableResolver.Layer(
+            Globals.ToEntries(),
+            CurrentCollection?.Variables.ToEntries(),
+            ActiveEnvironment.Variables.ToEntries(),
+            CapturedFor(collectionId));
+
+        // Values for prompt Variables are asked first, for this send only (ADR 0019). Cancelling the prompt sends nothing.
+        var prompts = VariableResolver.FindPromptVariables(request, variables);
+        IReadOnlyDictionary<string, string>? answers = null;
+        if (prompts.Count > 0)
+        {
+            answers = await AskForPromptValuesAsync(prompts);
+            if (answers is null)
+                return;
+        }
 
         using var cts = new CancellationTokenSource();
         _sendCts = cts;
         IsSending = true;
         ClearResponse();
 
-        var request = CurrentRequest();
         // History keeps this copy, with generated values filled in and Variables as written (ADR 0008).
         var historyRequest = request;
-        var collectionId = CurrentCollection?.Id;
         var unresolved = "";
         try
         {
-            var variables = VariableResolver.Layer(
-                Globals.ToEntries(),
-                CurrentCollection?.Variables.ToEntries(),
-                ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId));
-            var resolution = VariableResolver.Resolve(request, variables);
+            var resolution = VariableResolver.Resolve(request, variables, answers);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
             var names = VariableResolver.FindPlaceholders(resolved);
@@ -1177,6 +1190,35 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     private void CloseImportReport() => ImportReport = "";
+
+    [ObservableProperty] private bool _isPromptDialogOpen;
+    public ObservableCollection<PromptVariableRowViewModel> PromptRows { get; } = [];
+    private TaskCompletionSource<IReadOnlyDictionary<string, string>?>? _promptAnswer;
+
+    private Task<IReadOnlyDictionary<string, string>?> AskForPromptValuesAsync(IReadOnlyList<PromptVariable> prompts)
+    {
+        PromptRows.Clear();
+        foreach (var prompt in prompts)
+            PromptRows.Add(new PromptVariableRowViewModel(prompt.Name, prompt.Default));
+
+        _promptAnswer = new TaskCompletionSource<IReadOnlyDictionary<string, string>?>();
+        IsPromptDialogOpen = true;
+        return _promptAnswer.Task;
+    }
+
+    [RelayCommand]
+    private void ConfirmPrompt() => FinishPrompt(PromptRows.ToDictionary(row => row.Name, row => row.Value));
+
+    [RelayCommand]
+    private void CancelPrompt() => FinishPrompt(null);
+
+    private void FinishPrompt(IReadOnlyDictionary<string, string>? answers)
+    {
+        IsPromptDialogOpen = false;
+        PromptRows.Clear();
+        _promptAnswer?.TrySetResult(answers);
+        _promptAnswer = null;
+    }
 
     [ObservableProperty] private bool _isSpecDialogOpen;
     [ObservableProperty] private string _specUrl = "";

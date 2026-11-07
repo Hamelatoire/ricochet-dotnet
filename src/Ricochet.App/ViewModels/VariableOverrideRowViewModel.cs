@@ -12,11 +12,12 @@ public sealed class VariableOverrideRowViewModel : ObservableObject
     private readonly string _defaultValue;
     private readonly KeyValueListViewModel _values;
 
-    public VariableOverrideRowViewModel(string key, string defaultValue, bool isSecret, KeyValueListViewModel values,
+    public VariableOverrideRowViewModel(string key, string defaultValue, bool isSecret, bool isPrompt, KeyValueListViewModel values,
         string environmentName, Action<VariableOverrideRowViewModel> move)
     {
         Key = key;
         IsSecret = isSecret;
+        IsPrompt = isPrompt;
         _defaultValue = defaultValue;
         _values = values;
         MoveLabel = $"Move to {environmentName}";
@@ -25,6 +26,7 @@ public sealed class VariableOverrideRowViewModel : ObservableObject
 
     public string Key { get; }
     public bool IsSecret { get; }
+    public bool IsPrompt { get; }
     public char ValueMask => IsSecret ? '•' : '\0';
 
     /// <summary>Moves the variable out of the collection and into the environment.</summary>
@@ -39,7 +41,7 @@ public sealed class VariableOverrideRowViewModel : ObservableObject
         get => _values.Items.FirstOrDefault(row => row.Key == Key)?.Value ?? "";
         set
         {
-            _values.Set(Key, value, IsSecret);
+            _values.Set(Key, value, IsSecret, IsPrompt);
             OnPropertyChanged();
         }
     }

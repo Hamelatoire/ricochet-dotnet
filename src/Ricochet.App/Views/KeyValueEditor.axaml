@@ -13,7 +13,7 @@
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:KeyValueRowViewModel">
-            <Grid ColumnDefinitions="Auto,*,10,2*,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,*,10,2*,Auto,Auto,Auto">
               <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" MinWidth="32" />
               <TextBox Grid.Column="1" Classes="mono" Text="{Binding Key}" PlaceholderText="Name" />
               <TextBox Grid.Column="3" Classes="mono" Text="{Binding Value}" PasswordChar="{Binding ValueMask}"
@@ -22,7 +22,11 @@
                             IsChecked="{Binding IsSecret}" IsVisible="{Binding AllowSecrets}"
                             AutomationProperties.Name="Secret"
                             ToolTip.Tip="Keep this value in your system's secure storage, out of your files" />
-              <Button Grid.Column="5" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{StaticResource IconClose}" /></Button>
+              <ToggleButton Grid.Column="5" Classes="secret" Content="Prompt" Margin="8,0,0,0"
+                            IsChecked="{Binding IsPrompt}" IsVisible="{Binding AllowSecrets}"
+                            AutomationProperties.Name="Prompt"
+                            ToolTip.Tip="Ask for this value each time a Request uses it. The answer is used for that send only" />
+              <Button Grid.Column="6" Classes="mini" Margin="8,0,0,0" Command="{Binding RemoveCommand}"><PathIcon Data="{StaticResource IconClose}" /></Button>
             </Grid>
           </DataTemplate>
         </ItemsControl.ItemTemplate>

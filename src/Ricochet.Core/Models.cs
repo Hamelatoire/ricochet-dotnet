@@ -9,7 +9,8 @@ public sealed record KeyValue(
     string Key,
     string Value,
     bool Enabled = true,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IsSecret = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IsSecret = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IsPrompt = false);
 
 public static class AuthKinds
 {
