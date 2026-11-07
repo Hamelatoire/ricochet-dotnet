@@ -396,10 +396,23 @@ public static partial class VariableResolver
 
         texts.AddRange(request.Captures?.Where(c => c.Enabled).Select(c => c.Path) ?? []);
 
-        return texts
+        var closed = texts
             .SelectMany(text => Placeholder().Matches(text))
-            .Select(match => match.Groups[1].Value.Trim())
-            .Distinct()
-            .ToList();
+            .Select(match => match.Groups[1].Value.Trim());
+
+        // An unclosed "{{" is left as written, so it is reported as written too, and is never sent.
+        var unclosed = texts.Select(UnclosedPlaceholder).OfType<string>();
+
+        return closed.Concat(unclosed).Distinct().ToList();
+    }
+
+    /// <summary>The text from a "{{" that has no "}}" after it, such as "{{user", or null when there is none.</summary>
+    private static string? UnclosedPlaceholder(string text)
+    {
+        var open = text.LastIndexOf("{{", StringComparison.Ordinal);
+        if (open < 0 || text.IndexOf("}}", open + 2, StringComparison.Ordinal) >= 0)
+            return null;
+
+        return text[open..].Split(['\r', '\n'])[0].Trim();
     }
 }

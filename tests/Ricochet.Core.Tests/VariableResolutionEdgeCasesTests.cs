@@ -96,9 +96,8 @@ public class VariableResolutionEdgeCasesTests
         Assert.Equal("http://x.test/ada", resolved.Url);
     }
 
-    // Bug: an unclosed placeholder is left as written but is not reported, so the app and CLI do not warn about it.
-    // Expected behaviour is that it is reported, as an unresolved placeholder with a missing closing brace.
-    [Fact(Skip = "Known bug: an unclosed placeholder stays as written but FindPlaceholders does not report it. See the PR description.")]
+    // An unclosed placeholder is left as written, and is reported as unresolved so the app and CLI warn about it.
+    [Fact]
     public void An_unclosed_placeholder_stays_unresolved_and_is_reported()
     {
         var resolved = VariableResolver.Apply(Request("http://x.test/{{user"), [new KeyValue("user", "ada")]);
