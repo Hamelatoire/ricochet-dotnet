@@ -666,17 +666,20 @@
             <TextBlock Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Center" Text="Sending…" IsVisible="{Binding IsSending}" />
 
             <DockPanel IsVisible="{Binding HasStatus}">
-              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto">
+              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
-                  <Border Classes="badge" Classes.success="{Binding IsSuccess}" Classes.failure="{Binding IsFailure}">
+                  <Border Classes="badge" Classes.success="{Binding IsSuccess}" Classes.redirect="{Binding IsRedirect}"
+                          Classes.warning="{Binding IsClientError}" Classes.failure="{Binding IsFailure}">
                     <TextBlock Text="{Binding StatusText}" />
                   </Border>
                   <TextBlock Classes="muted" VerticalAlignment="Center" FontSize="12" Text="{Binding TimingText}" />
                 </StackPanel>
                 <ToggleButton Grid.Column="1" Classes="small" Content="Wrap" IsChecked="{Binding WrapResponse}"
                               AutomationProperties.Name="Wrap lines" ToolTip.Tip="Wrap long lines" />
-                <Button Grid.Column="2" Classes="ghost" Content="Copy" Padding="10,3" Margin="4,0,0,0" FontSize="12"
-                        Click="OnCopyResponseClick" AutomationProperties.Name="Copy response" ToolTip.Tip="Copy the response body" />
+                <Button Grid.Column="2" Classes="ghost" Content="Copy body" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                        Click="OnCopyResponseClick" AutomationProperties.Name="Copy body" ToolTip.Tip="Copy the response body to the clipboard" />
+                <Button Grid.Column="3" Classes="ghost" Content="Save body…" Padding="10,3" Margin="4,0,0,0" FontSize="12"
+                        Click="OnSaveResponseClick" AutomationProperties.Name="Save body to file" ToolTip.Tip="Save the response body as a file, as received" />
               </Grid>
               <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Notice}" Foreground="{DynamicResource Warning}"
                                    FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" IsVisible="{Binding HasNotice}" />
@@ -689,8 +692,13 @@
                                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
                 </TabItem>
                 <TabItem Header="Headers">
-                  <TextBox Classes="mono bare" IsReadOnly="True" Text="{Binding ResponseHeaders}" AcceptsReturn="True"
-                           VerticalContentAlignment="Top" Margin="0,12,0,0" />
+                  <DockPanel>
+                    <Button DockPanel.Dock="Top" Classes="ghost" Content="Copy headers" HorizontalAlignment="Right"
+                            Padding="10,3" Margin="0,12,0,0" FontSize="12" Click="OnCopyHeadersClick"
+                            AutomationProperties.Name="Copy headers" ToolTip.Tip="Copy the response headers to the clipboard" />
+                    <TextBox Classes="mono bare" IsReadOnly="True" Text="{Binding ResponseHeaders}" AcceptsReturn="True"
+                             VerticalContentAlignment="Top" Margin="0,8,0,0" />
+                  </DockPanel>
                 </TabItem>
                 <TabItem Header="{Binding ResponseTestsTabTitle}" IsVisible="{Binding HasTestResults}">
                   <ScrollViewer>

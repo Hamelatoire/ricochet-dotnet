@@ -694,10 +694,31 @@ public sealed partial class MainViewModel : ObservableObject
     public bool ShowEmptyState => !IsSending && !HasStatus;
 
     [ObservableProperty] private string _timingText = "";
-    [ObservableProperty] private bool _isSuccess;
-    [ObservableProperty] private bool _isFailure;
+
+    /// <summary>The colour family of the status code, which picks the status badge's colour.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSuccess), nameof(IsRedirect), nameof(IsClientError), nameof(IsServerError), nameof(IsFailure))]
+    private ResponseStatusClass _statusClass;
+
+    /// <summary>Set when the request could not be sent at all, so there is no status code.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsFailure))]
+    private bool _sendFailed;
+
+    public bool IsSuccess => StatusClass == ResponseStatusClass.Success;
+    public bool IsRedirect => StatusClass == ResponseStatusClass.Redirect;
+    public bool IsClientError => StatusClass == ResponseStatusClass.ClientError;
+    public bool IsServerError => StatusClass == ResponseStatusClass.ServerError;
+    public bool IsFailure => SendFailed || IsServerError;
+
     [ObservableProperty] private string _responseHeaders = "";
     [ObservableProperty] private string _responseBody = "";
+
+    /// <summary>The body as received, before any pretty-printing, for saving to a file.</summary>
+    public byte[] ResponseBytes { get; private set; } = [];
+
+    /// <summary>A file name for saving <see cref="ResponseBytes"/>, from the response's media type.</summary>
+    public string ResponseFileName { get; private set; } = ResponseStatus.SuggestedBodyFileName(null);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasNotice))]
@@ -827,11 +848,13 @@ public sealed partial class MainViewModel : ObservableObject
     {
         StatusText = "";
         TimingText = "";
-        IsSuccess = false;
-        IsFailure = false;
+        StatusClass = ResponseStatusClass.Neutral;
+        SendFailed = false;
         ResponseHeaders = "";
         ResponseIsJson = false;
         ResponseBody = "";
+        ResponseBytes = [];
+        ResponseFileName = ResponseStatus.SuggestedBodyFileName(null);
         Notice = "";
         TestResults.Clear();
     }
@@ -927,7 +950,7 @@ public sealed partial class MainViewModel : ObservableObject
         catch (RequestFailedException ex)
         {
             StatusText = "Failed";
-            IsFailure = true;
+            SendFailed = true;
             Notice = JoinNotices(ex.Message, unresolved, CredentialNotice(request), ScriptNotice());
             AddHistory(historyRequest, statusCode: null, elapsedMs: 0, collectionId);
         }
@@ -943,12 +966,13 @@ public sealed partial class MainViewModel : ObservableObject
     private void ShowResponse(ApiResponse response, FormattedBody formatted)
     {
         StatusText = $"{response.StatusCode} {response.ReasonPhrase}".Trim();
-        IsSuccess = response.StatusCode is >= 200 and < 400;
-        IsFailure = !IsSuccess;
+        StatusClass = ResponseStatus.Classify(response.StatusCode);
         TimingText = $"{response.Elapsed.TotalMilliseconds:N0} ms  ·  {FormatSize(response.Body.Length)}";
         ResponseHeaders = string.Join('\n', response.Headers.Select(h => $"{h.Key}: {h.Value}"));
         ResponseIsJson = formatted.IsJson;
         ResponseBody = formatted.Text;
+        ResponseBytes = response.Body;
+        ResponseFileName = ResponseStatus.SuggestedBodyFileName(response.MediaType);
     }
 
     private static string FormatSize(long bytes) => bytes switch
