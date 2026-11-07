@@ -28,6 +28,22 @@ public sealed class BulkRunner(RequestSender sender)
             .ToList();
 
     /// <summary>
+    /// The position a run resumes from: the one after <paramref name="lastId"/> in the pasted list.
+    /// Zero when there is no last id, or it is no longer in the list, so the run starts from the first id.
+    /// </summary>
+    public static int ResumeIndex(IReadOnlyList<string> ids, string? lastId)
+    {
+        if (lastId is null)
+            return 0;
+
+        for (var i = 0; i < ids.Count; i++)
+            if (ids[i] == lastId)
+                return i + 1;
+
+        return 0;
+    }
+
+    /// <summary>
     /// Runs the Request for each id, at most <paramref name="maxParallel"/> at a time. Ids start in the order pasted,
     /// but results arrive in completion order (see <see cref="BulkItemResult.Position"/>), one at a time.
     /// Cancelling starts no new ids; the ids in flight still finish. Returns true when every id was sent, and false when it was stopped.

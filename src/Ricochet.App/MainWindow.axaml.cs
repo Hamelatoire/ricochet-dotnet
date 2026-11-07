@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
@@ -58,15 +59,26 @@ public partial class MainWindow : Window
         base.OnDataContextChanged(e);
 
         if (_viewModel is not null)
+        {
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _viewModel.BulkLog.CollectionChanged -= OnBulkLogChanged;
+        }
 
         _viewModel = DataContext as MainViewModel;
 
         if (_viewModel is not null)
         {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+            _viewModel.BulkLog.CollectionChanged += OnBulkLogChanged;
             SetUrlText(_viewModel.Url);
         }
+    }
+
+    /// <summary>While a bulk run is going, keeps the newest log line in view. Scrolling back up stays possible between runs.</summary>
+    private void OnBulkLogChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (_viewModel is { IsBulkRunning: true } && BulkLogList.ItemCount > 0)
+            BulkLogList.ScrollIntoView(BulkLogList.ItemCount - 1);
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)

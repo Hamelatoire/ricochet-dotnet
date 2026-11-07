@@ -195,15 +195,28 @@
                      FontFamily="Consolas,Menlo,monospace" PlaceholderText="Paste ids here, one per line"
                      AutomationProperties.Name="Ids to run" IsEnabled="{Binding !IsBulkRunning}" />
           </Grid>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,*" Margin="0,0,0,8">
-            <Button Grid.Column="0" Classes="primary" Content="Start" Command="{Binding StartBulkCommand}"
-                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Start from the first id" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,*" Margin="0,0,0,6">
+            <Button Grid.Column="0" Content="Start" Command="{Binding StartBulkCommand}"
+                    Classes.primary="{Binding !BulkHasResumePoint}"
+                    IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Start from the first id"
+                    ToolTip.Tip="Send every id, starting from the first one" />
             <Button Grid.Column="1" Content="Resume" Margin="8,0,0,0" Command="{Binding ResumeBulkCommand}"
+                    Classes.primary="{Binding BulkHasResumePoint}"
                     IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Resume after the last id processed"
                     ToolTip.Tip="Continue after the last id that was processed for this request" />
             <Button Grid.Column="2" Content="Stop" Margin="8,0,0,0" Command="{Binding StopBulkCommand}"
-                    IsEnabled="{Binding IsBulkRunning}" AutomationProperties.Name="Stop" />
+                    IsEnabled="{Binding IsBulkRunning}" AutomationProperties.Name="Stop"
+                    ToolTip.Tip="Stop after the ids already in flight" />
             <TextBlock Grid.Column="3" Classes="muted" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis" Text="{Binding BulkStatus}" />
+          </Grid>
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12"
+                     Text="{Binding BulkActionHint}" AutomationProperties.Name="What the buttons will do" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <ProgressBar Grid.Column="0" Height="8" VerticalAlignment="Center" ShowProgressText="False"
+                         Minimum="0" Maximum="{Binding BulkProgressMaximum}" Value="{Binding BulkProcessed}"
+                         AutomationProperties.Name="Bulk run progress" />
+            <TextBlock Grid.Column="1" Margin="12,0,0,0" FontSize="12" VerticalAlignment="Center"
+                       Text="{Binding BulkProgressText}" />
           </Grid>
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
             <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center"
@@ -211,7 +224,7 @@
             <Button Grid.Column="1" Content="Clear log" Command="{Binding ClearBulkLogCommand}"
                     IsEnabled="{Binding !IsBulkRunning}" AutomationProperties.Name="Clear the bulk run log" />
           </Grid>
-          <ListBox ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
+          <ListBox x:Name="BulkLogList" ItemsSource="{Binding BulkLog}" FontFamily="Consolas,Menlo,monospace" FontSize="12"
                    AutomationProperties.Name="Bulk run log" />
         </DockPanel>
       </Border>
