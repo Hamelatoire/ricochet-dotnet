@@ -167,6 +167,55 @@ public class BulkRunnerTests
         Assert.Contains("region", results[0].Detail);
     }
 
+    // Fails the send for any URL containing the fragment, as a dropped connection would, and answers 200 for the rest.
+    private sealed class DroppedHandler(string fragment) : HttpMessageHandler
+    {
+        public List<string> Urls { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Urls.Add(request.RequestUri!.ToString());
+            if (request.RequestUri!.AbsolutePath.Contains(fragment))
+                throw new HttpRequestException("connection refused");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
+
+    [Fact]
+    public async Task An_id_whose_request_is_dropped_fails_alone_and_the_others_still_run()
+    {
+        var handler = new DroppedHandler("bad");
+        var runner = new BulkRunner(new RequestSender(new HttpClient(handler)));
+        var results = new List<BulkItemResult>();
+
+        var finished = await runner.RunAsync(Empty(), Plain(), null, Template(), "id", ["p1", "bad", "p3"], results.Add);
+
+        Assert.True(finished);
+        Assert.Equal(3, handler.Urls.Count);
+        Assert.Equal(["p1", "bad", "p3"], results.Select(r => r.Id));
+        Assert.True(results[0].Succeeded);
+        Assert.False(results[1].Succeeded);
+        Assert.Null(results[1].StatusCode);
+        Assert.Equal("connection refused", results[1].Detail);
+        Assert.Equal("ERR bad  [-] connection refused", results[1].LogLine);
+        Assert.True(results[2].Succeeded);
+    }
+
+    [Fact]
+    public async Task A_secret_variable_is_masked_in_the_response_detail_of_a_failed_id()
+    {
+        var handler = new Handler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent("token sek-ret-123 was rejected") });
+        var runner = new BulkRunner(new RequestSender(new HttpClient(handler)));
+        var shop = new Collection { Name = "Shop", Variables = [new KeyValue("token", "sek-ret-123", IsSecret: true)] };
+        var results = new List<BulkItemResult>();
+
+        await runner.RunAsync(Empty(), shop, null, Template(), "id", ["p1"], results.Add);
+
+        Assert.False(results[0].Succeeded);
+        Assert.DoesNotContain("sek-ret-123", results[0].Detail);
+        Assert.Contains("***", results[0].Detail);
+    }
+
     [Fact]
     public async Task A_given_override_is_masked_in_the_detail_of_a_failed_id_like_a_secret()
     {

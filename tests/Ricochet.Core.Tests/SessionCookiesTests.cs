@@ -11,11 +11,11 @@ namespace Ricochet.Core.Tests;
 /// </summary>
 public class SessionCookiesTests
 {
-    private sealed record Seen(string Path, string? Cookie);
+    internal sealed record Seen(string Path, string? Cookie);
 
-    private sealed record Reply(int Status, string[] Headers, string Body = "");
+    internal sealed record Reply(int Status, string[] Headers, string Body = "");
 
-    private sealed class LoopbackServer : IDisposable
+    internal sealed class LoopbackServer : IDisposable
     {
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly Func<Seen, Reply> _respond;

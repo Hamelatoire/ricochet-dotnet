@@ -9,8 +9,9 @@ A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, 
 
 ## Features
 
-- Send requests with headers, bodies, and bearer, basic or API key auth.
+- Send requests with headers, bodies, and bearer, basic, API key, Digest, OAuth 1.0 or AWS Signature v4 auth.
 - Organise requests into collections and folders, with environments and scoped `{{variables}}`.
+- Hide folders and requests you aren't using, without deleting them.
 - Keep secrets in your operating system's secure storage.
 - Add tests to a request, and save values from a response for later requests.
 - Import Postman exports, or create a collection from an OpenAPI 3 description.
@@ -35,9 +36,11 @@ Paths for JSON values look like `items[0].name` or `$.a['b.c']`, and `items.leng
 
 To chain requests, add a saved value in the same tab. For example, on a login request, save the JSON value `data.token` as `token`, then use `{{token}}` in later requests in that collection. Saved values stay in memory and are never written to a file. In the app they last until you close it, so send the login again after a restart, and you can see their names or clear them under **Variables > Saved**.
 
+Mark a variable **Prompt** and Ricochet asks for its value each time you send the request. The value is used for that send only and is never saved. See [ADR 0019](docs/adr/0019-prompt-for-a-variable-when-a-request-is-sent.md).
+
 ## Import from Postman
 
-Export your collections (v2.0 or v2.1), environments and globals from Postman as JSON, then choose **Import** and select the files. The results list everything that could not be carried over. Scripts are kept but not run, and OAuth 2 and file uploads are not imported yet. See [ADR 0002](docs/adr/0002-import-postman-exports.md) for details.
+Export your collections (v2.0 or v2.1), environments and globals from Postman as JSON, then choose **Import** and select the files. You can also pick Postman's data dump (a `.zip`) and choose which of its collections to import. The results list everything that could not be carried over. Scripts are kept but not run, and OAuth 2 and file uploads are not imported yet. See [ADR 0002](docs/adr/0002-import-postman-exports.md) for details.
 
 ## Collections from an OpenAPI URL
 
@@ -46,6 +49,14 @@ Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in J
 | Preview before applying | Stripe's public API, imported (612 requests) |
 | --- | --- |
 | ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Stripe API imported into Ricochet](docs/screenshots/openapi-stripe-nested-dark.png) |
+
+## Hide folders and requests
+
+Hover over a folder or request in the sidebar and click its hide icon. It stays in the workspace, and **Show hidden** on the collection brings it back. The choice is saved in the collection's file, so it is shared through git, and the command-line runner skips hidden folders and requests. See [ADR 0032](docs/adr/0032-hide-a-folder-without-deleting-it.md).
+
+## Mock server
+
+Choose **Mock server** in the sidebar to answer requests on this computer from an OpenAPI description. It listens on `127.0.0.1` only. See [ADR 0027](docs/adr/0027-mock-servers-built-from-examples-or-an-openapi-description.md).
 
 ## Themes
 
@@ -69,7 +80,7 @@ When the workspace folder is a git repository, the sidebar shows its branch unde
 
 ## Run in CI
 
-The `ricochet` command runs a workspace's requests and checks, and only reads the workspace. Build it with:
+The `ricochet` command runs a workspace's requests and checks. A run only reads the workspace; `export` writes only the file you name. Build it with:
 
 ```bash
 dotnet publish src/Ricochet.Cli -c Release -r win-x64 -o publish/cli-win-x64
@@ -81,7 +92,7 @@ Then run it from a workspace folder, or give it the path:
 ricochet run --env Staging --xunit results.xml
 ```
 
-It exits with `0` if everything passed, `1` if a request or check failed, and `2` if the run couldn't happen. These count as `2` rather than passing, because a green result would be misleading: unreadable files such as ones with merge conflicts, and selections that match nothing.
+It exits with `0` if everything passed, `1` if a request or check failed, and `2` if the run couldn't happen. These count as `2` rather than passing, because a green result would be misleading: unreadable files such as ones with merge conflicts, and selections that match nothing. If hiding leaves nothing to run, it exits with `2` too.
 
 A request needing a variable with no value fails without being sent. Secrets aren't in the repository, so provide them through environment variables named `RICOCHET_VAR_<name>`, for example `RICOCHET_VAR_token`. These and saved values are masked in the output and the report, but only when the value is at least 4 characters long.
 
@@ -90,6 +101,10 @@ For a local run, a `.env` file in the workspace folder works too, with `KEY=VALU
 Requests run in order, and saved values carry forward within a collection. Running only one folder won't include a login request outside it, so its requests fail without being sent. Postman scripts aren't run, so the summary says how many requests had any.
 
 Folders can have tags, which their requests inherit. `--tag smoke` runs only requests with that tag, and `--exclude-tag slow` skips them. Both can repeat, and a request with an excluded tag is skipped even when it has an included one. A selection that matches nothing exits with `2`.
+
+`--data <file>` runs the collection once per row of a `.csv` or `.json` file. Each row's columns become variables for that run, and each run's results are printed under its row number. See [ADR 0018](docs/adr/0018-run-a-collection-once-per-row-of-a-csv-or-json-data-file.md).
+
+`ricochet export <collection> --postman <file>` writes a Postman v2.1 collection, and `--openapi <file>` writes an OpenAPI 3 document. Give both to write both. Secret values are never written, and `--force` replaces an existing file. See [ADR 0029](docs/adr/0029-export-a-collection-to-postman-and-openapi.md).
 
 
 On Windows, Smart App Control can block a newly built `ricochet.exe` because it's unsigned. Signing release builds is the lasting fix. In development, you can run the same code with `dotnet run --project src/Ricochet.Cli -- run`.

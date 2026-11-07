@@ -50,7 +50,10 @@ public static class DotEnv
                 continue;
             }
 
-            variables.Add(new KeyValue(key, Unquote(line[(equals + 1)..].Trim())));
+            // Values are Secrets, so the app hides them and saved examples mask them (ADR 0021). An empty value
+            // stays plain: a Secret with no value is skipped when a send resolves, and an empty .env value should still count.
+            var value = Unquote(line[(equals + 1)..].Trim());
+            variables.Add(new KeyValue(key, value, IsSecret: value.Length > 0));
         }
 
         return new Result(variables, skipped);

@@ -1,5 +1,5 @@
 ---
-status: accepted (built in Core: environment variables and commands; not yet used by sending or the CLI)
+status: accepted (built: environment variables and commands, read when a Request is sent by the app or the CLI)
 ---
 
 # Read secrets from external secret managers
@@ -24,5 +24,5 @@ Ricochet may read a Secret from a configured secret manager, but only when the u
 - `ExternalSecretResolver` (in `src/Ricochet.Core/ExternalSecrets.cs`) resolves a reference on demand. It is read-only: nothing is stored, and the vault (`SecretVaults`) is unchanged.
 - Commands run through `cmd.exe` on Windows and `/bin/sh` elsewhere, with no input and a 30 second limit. Their error output is never shown, because it may echo a value, and a failed command reports only its exit code.
 - A missing or empty source is an error that names the variable, never a value. The caller must mask the resolved value wherever it appears, as the CLI does for stored Secrets.
-- Not built yet: sending a Request and the CLI do not resolve references. Wiring them in is a follow-up, because it touches `RequestSender` and the CLI.
+- Sending resolves references just before a Request is sent (`VariableResolver.ResolveReferencesAsync`), in the app and in the runners the CLI uses. Only the reached references are read, and the value goes into the send alone: the Request, its saved file and History keep the reference as written. A reference that cannot be read fails the Request before anything is sent, with a message naming the Variable.
 - Tests use a fake environment and a fake command runner, so no real secret store is needed. Verified on Windows only.
