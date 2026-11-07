@@ -143,6 +143,28 @@ public class EnvironmentTransferTests
     }
 
     [Fact]
+    public void Secret_count_counts_secret_variables_whether_or_not_they_have_a_value()
+    {
+        var environment = new ApiEnvironment
+        {
+            Name = "Staging",
+            Variables = [new("baseUrl", "x"), new("token", "s3cret-value", IsSecret: true), new("empty", "", IsSecret: true)],
+        };
+
+        Assert.Equal(2, EnvironmentTransfer.SecretCount(environment));
+    }
+
+    [Fact]
+    public void Find_matches_a_name_ignoring_case_and_returns_null_when_absent_or_ambiguous()
+    {
+        var environments = new[] { Staging(), new ApiEnvironment { Name = "Prod" } };
+
+        Assert.Equal("Staging", EnvironmentTransfer.FindEnvironment(environments, "staging")?.Name);
+        Assert.Null(EnvironmentTransfer.FindEnvironment(environments, "Dev"));
+        Assert.Null(EnvironmentTransfer.FindEnvironment([Staging(), new ApiEnvironment { Name = "STAGING" }], "staging"));
+    }
+
+    [Fact]
     public void Replace_overwrites_and_keeps_the_existing_id()
     {
         var incoming = new ApiEnvironment { Name = "staging", Variables = [new("baseUrl", "https://new.example.test")] };
