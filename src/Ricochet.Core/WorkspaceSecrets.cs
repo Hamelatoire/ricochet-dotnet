@@ -226,6 +226,7 @@ public static class WorkspaceSecrets
         Request = item.Request is { Auth: not null } request
             ? request with { Auth = SplitAuth(request.Auth, request.Id, secrets) }
             : item.Request,
+        Variables = SplitVariables(item.Variables, item.Id, secrets),
         Children = item.Children.Select(c => SplitItem(c, secrets)).ToList(),
     };
 
@@ -234,6 +235,7 @@ public static class WorkspaceSecrets
         Request = item.Request is { Auth: not null } request
             ? request with { Auth = MergeAuth(request.Auth, request.Id, secrets) }
             : item.Request,
+        Variables = MergeVariables(item.Variables, item.Id, secrets),
         Children = item.Children.Select(c => MergeItem(c, secrets)).ToList(),
     };
 

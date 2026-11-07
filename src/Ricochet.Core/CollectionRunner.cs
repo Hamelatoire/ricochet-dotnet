@@ -23,6 +23,12 @@ public sealed record RunOptions
 
     /// <summary>Skip Requests with any of these tags. Skipping wins over including.</summary>
     public IReadOnlyList<string> ExcludeTags { get; init; } = [];
+
+    /// <summary>
+    /// Keep cookies between this run's Requests, as a browser does (ADR 0012). They start empty, are never written to a file,
+    /// and are dropped when the run ends, so one run never sees another run's cookies. Off by default.
+    /// </summary>
+    public bool KeepCookies { get; init; }
 }
 
 public sealed record RequestRunResult(
@@ -58,14 +64,16 @@ public sealed record RunReport(IReadOnlyList<RequestRunResult> Results, bool Sto
 }
 
 /// <summary>Runs Requests in order and checks their assertions. Reads the Workspace and never changes it.</summary>
-public sealed class CollectionRunner(RequestSender sender)
+public sealed class CollectionRunner(RequestSender sender, ExternalSecretResolver? secrets = null)
 {
     private const string Mask = "***";
+
+    private readonly ExternalSecretResolver _secrets = secrets ?? new ExternalSecretResolver();
 
     // Masking very short values would scramble unrelated output, such as a status code.
     private const int MinMaskedLength = 4;
 
-    private sealed record Planned(Collection Collection, string Path, ApiRequest Request, bool HasScripts);
+    private sealed record Planned(Collection Collection, string ItemId, string Path, ApiRequest Request, bool HasScripts);
 
     /// <exception cref="RunSetupException">Nothing could be selected to run.</exception>
     public async Task<RunReport> RunAsync(
@@ -81,6 +89,8 @@ public sealed class CollectionRunner(RequestSender sender)
         var stopped = false;
         var captured = new List<KeyValue>();
         Collection? currentCollection = null;
+        // Null unless the run keeps cookies. Disposing it at the end drops them (ADR 0012).
+        using var runCookies = options.KeepCookies ? sender.BeginRunCookies() : null;
         foreach (var item in planned)
         {
             // Like other Variables, captured values belong to one Collection.
@@ -90,7 +100,7 @@ public sealed class CollectionRunner(RequestSender sender)
                 currentCollection = item.Collection;
             }
 
-            var result = await RunOneAsync(item, workspace, environment, captured, options, cancellationToken);
+            var result = await RunOneAsync(item, workspace, environment, captured, options, runCookies, cancellationToken);
             results.Add(result);
             onResult?.Invoke(result);
 
@@ -174,7 +184,7 @@ public sealed class CollectionRunner(RequestSender sender)
                 if (isHidden)
                     hidden.Add(new SkippedRequest(collection.Name, path));
                 else
-                    planned.Add(new Planned(collection, path, request, hasScripts));
+                    planned.Add(new Planned(collection, item.Id, path, request, hasScripts));
             }
             return;
         }
@@ -184,13 +194,26 @@ public sealed class CollectionRunner(RequestSender sender)
             Walk(collection, child, path, matched, hasScripts, tags, isHidden, options, planned, hidden);
     }
 
-    private async Task<RequestRunResult> RunOneAsync(Planned item, Workspace workspace, ApiEnvironment? environment, List<KeyValue> captured, RunOptions options, CancellationToken cancellationToken)
+    private async Task<RequestRunResult> RunOneAsync(Planned item, Workspace workspace, ApiEnvironment? environment, List<KeyValue> captured, RunOptions options, RequestSender.RunCookies? runCookies, CancellationToken cancellationToken)
     {
-        var variables = VariableResolver.Layer(workspace.Globals, item.Collection.Variables, environment?.Variables, captured, options.Overrides);
+        var layered = VariableResolver.Layer(workspace.Globals, item.Collection.Variables, VariableResolver.FolderScope(item.Collection, item.ItemId),
+            environment?.Variables, captured, options.Overrides);
+        var variables = (IReadOnlyList<KeyValue>)layered;
         var resolved = VariableResolver.Apply(item.Request, variables);
 
         RequestRunResult Failed(string error, int? status = null, long elapsed = 0) =>
             new(item.Collection.Name, item.Path, item.Request.Method, status, elapsed, [], MaskIn(error, SecretsToMask(variables, options.Overrides, captured, resolved)), item.HasScripts);
+
+        // Secret references are read just before sending, and only the send uses the values (ADR 0025).
+        try
+        {
+            variables = await VariableResolver.ResolveReferencesAsync(item.Request, layered, _secrets, cancellationToken);
+            resolved = VariableResolver.Apply(item.Request, variables);
+        }
+        catch (RequestFailedException ex)
+        {
+            return Failed(ex.Message);
+        }
 
         // Sending a literal {{token}} would fail confusingly, and could reach the wrong place.
         var missing = VariableResolver.FindPlaceholders(resolved);
@@ -199,7 +222,9 @@ public sealed class CollectionRunner(RequestSender sender)
 
         try
         {
-            var response = await sender.SendAsync(resolved, cancellationToken);
+            var response = runCookies is null
+                ? await sender.SendAsync(resolved, cancellationToken)
+                : await sender.SendAsync(resolved, runCookies, cancellationToken);
             var capture = AssertionEvaluator.EvaluateCaptures(resolved.Captures, response);
             foreach (var value in capture.Values)
             {

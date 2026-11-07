@@ -82,4 +82,26 @@ public class DotEnvTests
             Directory.Delete(folder, true);
         }
     }
+
+    [Fact]
+    public void Values_are_Secrets_so_the_app_hides_them_but_an_empty_value_stays_plain()
+    {
+        var result = DotEnv.Parse("TOKEN=abc\nEMPTY=\n");
+
+        Assert.Equal([true, false], result.Variables.Select(v => v.IsSecret));
+        Assert.Equal(["abc", ""], result.Variables.Select(v => v.Value));
+    }
+
+    [Fact]
+    public void A_dotenv_value_is_masked_when_it_is_echoed_in_an_example()
+    {
+        var sent = new ApiRequest { Method = "GET", Url = "https://example.test/{{TOKEN}}" };
+        var variables = VariableResolver.Layer(DotEnv.Parse("TOKEN=abcd1234\n").Variables);
+        var response = new ApiResponse(200, "OK", [], "{\"token\":\"abcd1234\"}"u8.ToArray(), "application/json", null, TimeSpan.Zero, false);
+
+        var example = ResponseExamples.Create("Echo", sent, variables, [], response);
+
+        Assert.DoesNotContain("abcd1234", example.Body);
+        Assert.Contains(SecretRules.HiddenValue, example.Body);
+    }
 }

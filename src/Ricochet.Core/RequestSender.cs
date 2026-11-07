@@ -135,6 +135,42 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     }
 
     /// <summary>
+    /// Starts the cookies for one run (ADR 0012). They start empty, live only in the returned object, and are not shared with
+    /// the sender's own cookies or with any other run. Dispose it when the run ends to drop them.
+    /// The run uses the settings the sender has now, so a later <see cref="Configure"/> does not change it.
+    /// </summary>
+    public RunCookies BeginRunCookies()
+    {
+        lock (_gate)
+        {
+            var transport = new Transport(
+                CreateDefaultClient(_followRedirects, _verifyCertificates, new CookieContainer(), _proxy, _clientCertificate),
+                CreateDefaultClient(_followRedirects, _verifyCertificates, null, _proxy, _clientCertificate),
+                _timeout,
+                _maxBodyBytes,
+                _configurationProblem);
+            return new RunCookies(transport);
+        }
+    }
+
+    /// <summary>The clients and settings one send uses, taken together so that a send sees one consistent set.</summary>
+    internal sealed record Transport(HttpClient Client, HttpClient? ClientWithoutCookies, TimeSpan Timeout, long MaxBodyBytes, string? Problem);
+
+    /// <summary>The cookies kept for one run (ADR 0012). Held in memory only. Disposing it drops them.</summary>
+    public sealed class RunCookies : IDisposable
+    {
+        internal RunCookies(Transport transport) => Transport = transport;
+
+        internal Transport Transport { get; }
+
+        public void Dispose()
+        {
+            Transport.Client.Dispose();
+            Transport.ClientWithoutCookies?.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Reads a proxy address such as "proxy.example.com:8080". Empty means no explicit proxy. Credentials in the address are refused,
     /// because they would be kept in plain text, and proxy logins are not supported yet.
     /// </summary>
@@ -177,33 +213,34 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
 
     /// <exception cref="RequestFailedException">The request was invalid, failed, or timed out.</exception>
     /// <exception cref="OperationCanceledException">The caller cancelled.</exception>
-    public async Task<ApiResponse> SendAsync(ApiRequest request, CancellationToken cancellationToken = default)
+    public Task<ApiResponse> SendAsync(ApiRequest request, CancellationToken cancellationToken = default)
     {
-        HttpClient client;
-        HttpClient? clientWithoutCookies;
-        TimeSpan timeout;
-        long maxBodyBytes;
-        string? problem;
+        Transport transport;
         lock (_gate)
-        {
-            client = _client;
-            clientWithoutCookies = _clientWithoutCookies;
-            timeout = _timeout;
-            maxBodyBytes = _maxBodyBytes;
-            problem = _configurationProblem;
-        }
+            transport = new Transport(_client, _clientWithoutCookies, _timeout, _maxBodyBytes, _configurationProblem);
 
-        if (problem is not null)
-            throw new RequestFailedException(problem);
+        return SendThroughAsync(request, transport, cancellationToken);
+    }
+
+    /// <summary>Sends a request with the cookies of one run (ADR 0012). The run's own cookies are used, never the sender's.</summary>
+    /// <exception cref="RequestFailedException">The request was invalid, failed, or timed out.</exception>
+    /// <exception cref="OperationCanceledException">The caller cancelled.</exception>
+    public Task<ApiResponse> SendAsync(ApiRequest request, RunCookies run, CancellationToken cancellationToken = default) =>
+        SendThroughAsync(request, run.Transport, cancellationToken);
+
+    private async Task<ApiResponse> SendThroughAsync(ApiRequest request, Transport transport, CancellationToken cancellationToken)
+    {
+        if (transport.Problem is not null)
+            throw new RequestFailedException(transport.Problem);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(timeout);
+        timeoutCts.CancelAfter(transport.Timeout);
 
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            using var response = await SendWithAuthAsync(client, clientWithoutCookies, request, timeoutCts.Token);
-            var (body, truncated) = await ReadBodyAsync(response.Content, maxBodyBytes, timeoutCts.Token);
+            using var response = await SendWithAuthAsync(transport.Client, transport.ClientWithoutCookies, request, timeoutCts.Token);
+            var (body, truncated) = await ReadBodyAsync(response.Content, transport.MaxBodyBytes, timeoutCts.Token);
             stopwatch.Stop();
 
             return new ApiResponse(
@@ -218,7 +255,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RequestFailedException($"Timed out after {timeout.TotalSeconds:0} seconds.", ex);
+            throw new RequestFailedException($"Timed out after {transport.Timeout.TotalSeconds:0} seconds.", ex);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or FormatException or ArgumentException)
         {

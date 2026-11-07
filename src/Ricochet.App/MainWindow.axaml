@@ -273,7 +273,7 @@
             <StackPanel Grid.Column="0" Spacing="4">
               <TextBlock Text="Variables" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
-                         Text="Each collection's variables fill in {{name}} in its requests. An environment's values override them." />
+                         Text="Each collection's variables fill in {{name}} in its requests. A folder's variables override them for the requests inside it, and an environment's values override both." />
             </StackPanel>
             <Button Grid.Column="1" Classes="primary" Content="Done" Margin="16,0,0,0" VerticalAlignment="Top"
                     Command="{Binding CloseVariablesPageCommand}" AutomationProperties.Name="Done" />
@@ -292,6 +292,17 @@
                          Text="Choose a collection to edit its variables." IsVisible="{Binding !HasEditingVariablesCollection}" />
               <ScrollViewer IsVisible="{Binding HasEditingVariablesCollection}">
                 <StackPanel Spacing="0">
+                  <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0" Text="Editing" />
+                    <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding VariableScopes}"
+                              SelectedItem="{Binding EditingVariablesScope}" AutomationProperties.Name="Collection or folder to edit">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TreeNodeViewModel">
+                          <TextBlock Text="{Binding ScopeLabel}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                  </Grid>
                   <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,12">
                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0" Text="Values in" />
                     <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding EditableEnvironments}"
@@ -323,8 +334,8 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
-                  <TextBlock Classes="muted" Margin="0,24,0,8" TextWrapping="Wrap" Text="Variable names and defaults for this collection" />
-                  <views:KeyValueEditor DataContext="{Binding EditingVariablesCollection.Variables}" />
+                  <TextBlock Classes="muted" Margin="0,24,0,8" TextWrapping="Wrap" Text="{Binding VariablesScopeHint}" />
+                  <views:KeyValueEditor DataContext="{Binding EditingVariablesScope.Variables}" />
                 </StackPanel>
               </ScrollViewer>
             </Panel>

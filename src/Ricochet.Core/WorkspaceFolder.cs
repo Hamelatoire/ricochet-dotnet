@@ -31,6 +31,10 @@ public sealed record FolderFile
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
+
+    /// <summary>Null rather than empty when there are none, so a Folder without Variables keeps its file unchanged (ADR 0020).</summary>
+    public IReadOnlyList<KeyValue>? Variables { get; set; }
+
     public IReadOnlyList<StoredScript> Scripts { get; set; } = [];
     public IReadOnlyList<string> Order { get; set; } = [];
 
@@ -299,6 +303,7 @@ public sealed class WorkspaceFolder(string root)
             {
                 Id = file.Id,
                 Name = file.Name ?? "",
+                Variables = file.Variables ?? [],
                 Scripts = file.Scripts ?? [],
                 Tags = FolderTags.Normalize(file.Tags),
                 Children = ReadChildren(relative, file.Order ?? [], issues),
@@ -447,7 +452,15 @@ public sealed class WorkspaceFolder(string root)
 
             var dir = PathFor(parent, item.Name, item.Id, "");
             Add($"{dir}/{FolderFileName}",
-                new FolderFile { Id = item.Id, Name = item.Name, Scripts = item.Scripts, Tags = FolderTags.Normalize(item.Tags), Order = item.Children.Select(c => c.Id).ToList() },
+                new FolderFile
+                {
+                    Id = item.Id,
+                    Name = item.Name,
+                    Variables = item.Variables.Count > 0 ? item.Variables : null,
+                    Scripts = item.Scripts,
+                    Tags = FolderTags.Normalize(item.Tags),
+                    Order = item.Children.Select(c => c.Id).ToList(),
+                },
                 WorkspaceJsonContext.Default.FolderFile);
             foreach (var child in item.Children)
                 AddItem(child, dir);
