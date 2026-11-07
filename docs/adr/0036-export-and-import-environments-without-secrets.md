@@ -1,5 +1,5 @@
 ---
-status: accepted (built in Core; no app or CLI entry point yet)
+status: accepted (built in Core and the CLI; no app entry point yet)
 ---
 
 # Export and import environments, without secrets

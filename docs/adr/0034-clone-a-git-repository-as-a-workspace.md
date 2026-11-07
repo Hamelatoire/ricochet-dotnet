@@ -1,5 +1,5 @@
 ---
-status: accepted (built in Core only; no app UI yet)
+status: accepted (built in Core and the CLI; no app UI yet)
 ---
 
 # Clone a Git repository as a workspace
