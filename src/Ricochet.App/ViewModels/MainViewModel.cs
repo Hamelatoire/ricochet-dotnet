@@ -496,16 +496,13 @@ public sealed partial class MainViewModel : ObservableObject
     /// The value a {{name}} in the URL currently resolves to, for the hover tip. Null when it has no value
     /// or is a Secret, so a Secret's value is never shown on screen.
     /// </summary>
-    public string? VariableValueForHover(string name)
-    {
-        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries()];
-        var match = scopes.SelectMany(scope => scope ?? []).LastOrDefault(entry => entry.Enabled && entry.Key == name);
-        if (match is null)
-            return null;
-        if (match.IsSecret)
-            return "Secret, hidden";
-        return match.Value;
-    }
+    /// <summary>Every Variable a send of the open Request can see, lowest priority first, layered the same way a send layers them (ADR 0009).</summary>
+    public IReadOnlyList<KeyValue> VariablesInScope() =>
+        VariableResolver.Layer(
+            Globals.ToEntries(),
+            CurrentCollection?.Variables.ToEntries(),
+            ActiveEnvironment.Variables.ToEntries(),
+            CapturedFor(CurrentCollection?.Id));
 
     [ObservableProperty] private TreeNodeViewModel? _selectedNode;
     [ObservableProperty] private HistoryEntry? _selectedHistory;
@@ -886,11 +883,7 @@ public sealed partial class MainViewModel : ObservableObject
         var unresolved = "";
         try
         {
-            var variables = VariableResolver.Layer(
-                Globals.ToEntries(),
-                CurrentCollection?.Variables.ToEntries(),
-                ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId));
+            var variables = VariablesInScope();
             var resolution = VariableResolver.Resolve(request, variables);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
