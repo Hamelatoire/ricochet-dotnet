@@ -160,8 +160,11 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     /// <summary>Saves a change to hidden items. Set on a collection, and called by any node in it.</summary>
     public Action<TreeNodeViewModel>? OnHideChanged { get; set; }
 
-    /// <summary>Only meaningful on a Collection node.</summary>
+    /// <summary>On a Collection or a Folder. A Folder's Variables apply to the Requests inside it (ADR 0020).</summary>
     public KeyValueListViewModel Variables { get; } = new(allowSecrets: true);
+
+    /// <summary>The name shown when choosing which Collection or Folder to edit, such as "Shop / Users".</summary>
+    public string ScopeLabel => Parent is null ? Name : $"{Parent.ScopeLabel} / {Name}";
 
     [ObservableProperty] private string _name = "";
     [ObservableProperty] private bool _isExpanded;
@@ -336,6 +339,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
     {
         var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename, addFolder) { Name = item.Name, Request = item.Request, Tags = item.Tags ?? [] };
+        node.Variables.Load(item.Variables);
         foreach (var child in item.Children)
             node.Children.Add(FromItem(child, node, delete, rename, addFolder));
         return node;
@@ -367,6 +371,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         Id = Id,
         Name = Name,
         Request = Request,
+        Variables = Variables.ToEntries(),
         Children = Children.Select(c => c.ToItem()).ToList(),
         Scripts = _scripts,
         Tags = FolderTags.Normalize(Tags),

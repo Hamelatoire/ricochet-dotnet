@@ -58,10 +58,14 @@ public sealed class BulkRunner(RequestSender sender)
         Action<BulkItemResult> onResult,
         CancellationToken cancellationToken = default,
         int maxParallel = 1,
-        IReadOnlyList<KeyValue>? overrides = null)
+        IReadOnlyList<KeyValue>? overrides = null,
+        string? itemId = null)
     {
         if (maxParallel < 1)
             throw new ArgumentOutOfRangeException(nameof(maxParallel), "At least one thread is needed.");
+
+        // The Folders around the template's item, so their Variables apply as they do to a normal send (ADR 0020).
+        var folderScope = VariableResolver.FolderScope(collection, itemId);
 
         using var gate = new SemaphoreSlim(maxParallel);
         var resultLock = new object();
@@ -87,7 +91,7 @@ public sealed class BulkRunner(RequestSender sender)
                 {
                     try
                     {
-                        var result = (await RunOneAsync(workspace, collection, environment, template, placeholder, id, overrides ?? [])) with { Position = index };
+                        var result = (await RunOneAsync(workspace, collection, folderScope, environment, template, placeholder, id, overrides ?? [])) with { Position = index };
                         lock (resultLock)
                             onResult(result);
                     }
@@ -108,10 +112,10 @@ public sealed class BulkRunner(RequestSender sender)
         return !stopped;
     }
 
-    private async Task<BulkItemResult> RunOneAsync(Workspace workspace, Collection collection, ApiEnvironment? environment,
+    private async Task<BulkItemResult> RunOneAsync(Workspace workspace, Collection collection, IReadOnlyList<KeyValue> folderScope, ApiEnvironment? environment,
         ApiRequest template, string placeholder, string id, IReadOnlyList<KeyValue> overrides)
     {
-        var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, environment?.Variables, overrides, [new KeyValue(placeholder, id)]);
+        var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, folderScope, environment?.Variables, overrides, [new KeyValue(placeholder, id)]);
         var resolved = VariableResolver.Apply(template, variables);
         var secrets = CollectionRunner.SecretsToMask(variables, [], [], resolved);
 

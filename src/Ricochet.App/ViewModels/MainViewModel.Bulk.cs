@@ -211,7 +211,7 @@ public sealed partial class MainViewModel
                     SaveBulkProgress(ids, lastProcessed, processed);
                     SetBulkProgress(processed, ids.Count);
                     BulkStatus = $"{processed} of {ids.Count} processed. Last id: {lastProcessed ?? "none"}. {CallsText(callsSent, callsOk)}";
-                }), cts.Token, threads, dotEnv.Variables);
+                }), cts.Token, threads, overrides: dotEnv.Variables, itemId: _currentNode?.Id);
 
             var lastId = frontier > 0 ? ids[frontier - 1] : null;
             SetBulkProgress(processed, ids.Count);
