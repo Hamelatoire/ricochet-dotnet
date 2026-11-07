@@ -24,6 +24,18 @@ _Avoid_: Category, group
 A Folder or Request left out of the sidebar and of Runs without being deleted. It stays on disk and can be shown again with one action.
 _Avoid_: Deleted, archived
 
+**Tab**:
+An open Request shown in the strip across the top of the request view. Its unsent edits stay with it until they are saved or discarded.
+_Avoid_: Window, document
+
+**Command palette**:
+A search list, opened with one shortcut, that finds and runs any action or Request by name.
+_Avoid_: Menu, quick open
+
+**Shortcut**:
+A key combination that runs an action without the mouse, such as sending the open Request. Shortcuts are personal and never enter the Workspace.
+_Avoid_: Hotkey, keybinding
+
 **Environment**:
 A named set of Variables for one deployment target, such as staging or production. At most one is active at a time.
 _Avoid_: Profile, config
