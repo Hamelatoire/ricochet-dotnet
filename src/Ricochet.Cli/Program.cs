@@ -1,4 +1,5 @@
 using System.Collections;
+using System.IO.Compression;
 using Ricochet.Core;
 
 namespace Ricochet.Cli;
@@ -18,6 +19,7 @@ internal static class Program
         Usage:
           ricochet run [folder] [options]
           ricochet export <collection> --postman <file> | --openapi <file>   (see ricochet export --help)
+          ricochet zip export <workspace> <file.zip> | zip import <file.zip> <new-folder>   (see ricochet zip --help)
 
         Arguments:
           folder                 The workspace folder. Defaults to the current folder.
@@ -74,6 +76,9 @@ internal static class Program
 
         if (args[0] == "export")
             return ExportCommand(args.Skip(1).ToList());
+
+        if (args[0] == "zip")
+            return ZipCommand(args.Skip(1).ToList());
 
         if (args[0] != "run")
             return CannotRun($"Unknown command \"{args[0]}\". Try: ricochet --help");
@@ -567,6 +572,169 @@ internal static class Program
         }
 
         return true;
+    }
+
+    private const string ZipUsage = """
+        Ricochet: export a workspace to one ZIP file, or import such a ZIP into a new folder (ADR 0035).
+
+        Usage:
+          ricochet zip export <workspace> <file.zip> [--force]
+          ricochet zip import <file.zip> <new-folder>
+
+        Export includes only the shared workspace files. Personal state, History, Secrets and .env are
+        never included. The ZIP must be outside the workspace folder.
+
+        Import writes into a new or empty folder only, and never over an existing workspace. Every entry
+        is checked first, so a refused entry means nothing was written.
+
+        Options:
+          --force                Overwrite a ZIP file that already exists (export only).
+          --help                 Show this help.
+
+        Exit codes:
+          0  The ZIP was written, or the workspace was imported.
+          1  An entry was refused. Nothing was written.
+          2  The command could not run, for example because a file is missing, the target folder is not
+             empty, or a folder cannot be written.
+        """;
+
+    private static int ZipCommand(List<string> args)
+    {
+        if (args.Count == 0)
+        {
+            Console.WriteLine(ZipUsage);
+            return ExitCannotRun;
+        }
+
+        if (args.Any(a => a is "--help" or "-h"))
+        {
+            Console.WriteLine(ZipUsage);
+            return ExitPassed;
+        }
+
+        var verb = args[0];
+        var rest = args.Skip(1).ToList();
+        var force = rest.Remove("--force");
+
+        if (rest.Any(a => a.StartsWith('-')))
+            return CannotRun($"Unknown option \"{rest.First(a => a.StartsWith('-'))}\". Try: ricochet zip --help");
+
+        if (verb == "export" && rest.Count == 2)
+            return ZipExport(rest[0], rest[1], force);
+
+        if (verb == "import" && rest.Count == 2 && !force)
+            return ZipImport(rest[0], rest[1]);
+
+        return CannotRun(verb is "export" or "import"
+            ? $"ricochet zip {verb} needs {(verb == "export" ? "a workspace and a ZIP file" : "a ZIP file and a new folder")}. Try: ricochet zip --help"
+            : $"Unknown command \"zip {verb}\". Try: ricochet zip --help");
+    }
+
+    private static int ZipExport(string workspace, string zipPath, bool force)
+    {
+        if (!WorkspaceFolder.LooksLikeWorkspace(workspace))
+            return CannotRun($"\"{Path.GetFullPath(workspace)}\" is not a Ricochet workspace folder.");
+
+        string target;
+        try
+        {
+            target = ExportFiles.Check(zipPath, workspace, force);
+        }
+        catch (ExportFileException ex)
+        {
+            return CannotRun(ex.Message);
+        }
+
+        var parent = Path.GetDirectoryName(target);
+        if (parent is null || !CanWriteTo(parent))
+            return CannotRun($"The ZIP cannot be written: \"{parent}\" is not a writable folder.");
+
+        // The Core export reads only the shared files and never loads Secrets, so none can end up in the ZIP.
+        var result = WorkspaceArchive.Export(Path.GetFullPath(workspace), target);
+        if (!result.Succeeded)
+            return ZipRefused(result.Problems);
+
+        Console.WriteLine($"Wrote {result.Files} workspace files to {target}");
+        Console.WriteLine("Personal state, History, Secrets and .env were left out.");
+        return ExitPassed;
+    }
+
+    private static int ZipImport(string zipPath, string folder)
+    {
+        if (!File.Exists(zipPath))
+            return CannotRun($"There is no file at \"{Path.GetFullPath(zipPath)}\".");
+
+        if (!ArchiveIsWorkspace(zipPath, out var archiveProblem))
+            return CannotRun(archiveProblem);
+
+        var target = Path.GetFullPath(folder);
+        if (File.Exists(target))
+            return CannotRun($"\"{target}\" is a file. Choose a new, empty folder.");
+
+        if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any())
+            return CannotRun($"\"{target}\" is not empty. Choose a new, empty folder.");
+
+        // Probe the nearest folder that already exists, without creating anything, so a refused import leaves nothing behind.
+        var existing = target;
+        while (existing is not null && !Directory.Exists(existing) && !File.Exists(existing))
+            existing = Path.GetDirectoryName(existing);
+        if (existing is null || File.Exists(existing) || !CanWriteTo(existing))
+            return CannotRun($"The workspace cannot be written to \"{target}\".");
+
+        var result = WorkspaceArchive.Import(zipPath, target);
+        if (!result.Succeeded)
+            return ZipRefused(result.Problems);
+
+        Console.WriteLine($"Imported {result.Files} workspace files into {target}");
+        return ExitPassed;
+    }
+
+    private static bool ArchiveIsWorkspace(string zipPath, out string problem)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(zipPath);
+            problem = "";
+            if (zip.GetEntry("ricochet.json") is not null)
+                return true;
+
+            problem = $"\"{Path.GetFullPath(zipPath)}\" has no ricochet.json, so it is not a workspace.";
+            return false;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            problem = $"\"{Path.GetFullPath(zipPath)}\" is not a readable ZIP file: {ex.Message}";
+            return false;
+        }
+    }
+
+    // Creates and deletes a probe file, so an unwritable folder is reported before anything is written.
+    private static bool CanWriteTo(string folder)
+    {
+        try
+        {
+            var probe = Path.Combine(folder, $".ricochet-write-test-{Guid.NewGuid():N}");
+            using (File.Create(probe))
+            {
+            }
+
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    // Core reports each refused entry as "name: reason" and writes nothing when there is any, so exit 1 means nothing was written.
+    private static int ZipRefused(IEnumerable<string> problems)
+    {
+        foreach (var problem in problems)
+            Console.Error.WriteLine(problem);
+
+        Console.Error.WriteLine("Nothing was written.");
+        return ExitTestsFailed;
     }
 
     private sealed class Colors(bool enabled)
