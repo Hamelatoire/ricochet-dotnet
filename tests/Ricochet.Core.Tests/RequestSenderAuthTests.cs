@@ -195,10 +195,8 @@ public partial class RequestSenderAuthTests
         Assert.Equal("Bearer abc def", sent.Headers["Authorization"]);
     }
 
-    // BUG (not fixed here, see the PR description): a Bearer token with a line break is written to the wire as a second header.
-    // Sending "abc\r\nX-Injected: yes" over a real socket puts "Authorization: Bearer abc" and "X-Injected: yes" on separate lines.
-    // Skipped so the suite stays green; remove the Skip once the sender rejects line breaks in header values.
-    [Fact(Skip = "Known bug: a Bearer token with CRLF is sent as a second header. See the PR description.")]
+    // A Bearer token with a line break would otherwise be written to the wire as a second header.
+    [Fact]
     public async Task Bearer_token_with_a_newline_is_rejected_and_never_sent_as_a_second_header()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);

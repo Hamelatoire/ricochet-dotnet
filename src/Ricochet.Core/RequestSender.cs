@@ -318,6 +318,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         foreach (var header in headers)
         {
             var key = header.Key.Trim();
+            RejectLineBreaks(key, header.Value);
             if (message.Headers.TryAddWithoutValidation(key, header.Value))
                 continue;
 
@@ -387,8 +388,16 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         if (name.Length == 0 || message.Headers.Contains(name))
             return;
 
+        RejectLineBreaks(name, value);
         if (!message.Headers.TryAddWithoutValidation(name, value))
             throw new RequestFailedException($"Invalid auth header: \"{name}\".");
+    }
+
+    /// <summary>A line break in a value would split the header and let the rest add headers of its own, so it is refused.</summary>
+    private static void RejectLineBreaks(string name, string value)
+    {
+        if (value.AsSpan().IndexOfAny('\r', '\n') >= 0)
+            throw new RequestFailedException($"The value of \"{name}\" contains a line break, which is not allowed in a header.");
     }
 
     private static string RandomHex() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
