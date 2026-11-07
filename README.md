@@ -1,5 +1,7 @@
 # Ricochet
 
+<img src="src/Ricochet.App/Assets/ricochet-256.png" alt="The Ricochet logo" width="96" align="right">
+
 A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, Avalonia and Native AOT.
 
 - Decisions: [docs/adr](docs/adr)

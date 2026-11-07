@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>ricochet</AssemblyName>
+    <ApplicationIcon>..\Ricochet.App\Assets\ricochet.ico</ApplicationIcon>
     <PublishAot>true</PublishAot>
     <OptimizationPreference>Speed</OptimizationPreference>
     <InvariantGlobalization>true</InvariantGlobalization>
