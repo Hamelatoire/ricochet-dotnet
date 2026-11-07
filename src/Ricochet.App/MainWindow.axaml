@@ -27,6 +27,8 @@
     <KeyBinding Gesture="Meta+L" Command="{Binding FocusUrlCommand}" />
     <KeyBinding Gesture="Ctrl+E" Command="{Binding FocusEnvironmentCommand}" />
     <KeyBinding Gesture="Meta+E" Command="{Binding FocusEnvironmentCommand}" />
+    <KeyBinding Gesture="Ctrl+W" Command="{Binding CloseActiveTabCommand}" />
+    <KeyBinding Gesture="Meta+W" Command="{Binding CloseActiveTabCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding CloseTopPanelCommand}" />
   </Window.KeyBindings>
 
@@ -527,6 +529,38 @@
       <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsSidePageOpen}">
         <Border Grid.Row="0" Classes="card" Padding="20,16,20,6">
         <DockPanel>
+          <!-- Open Requests (ADR 0041). A tab keeps its unsent edits, and a mark shows the ones that are not saved. -->
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,12" IsVisible="{Binding HasOpenTabs}">
+            <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+              <ItemsControl ItemsSource="{Binding OpenTabs}" AutomationProperties.Name="Open requests">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="4" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:RequestTabViewModel">
+                    <Border Classes="requesttab" Classes.active="{Binding IsActive}" CornerRadius="6" Padding="2,0">
+                      <StackPanel Orientation="Horizontal" Spacing="0">
+                        <Button Classes="ghost" Command="{Binding ActivateCommand}" Padding="8,5" FontSize="12"
+                                AutomationProperties.Name="{Binding Node.Name}" ToolTip.Tip="{Binding Node.Name}">
+                          <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Text="{Binding Node.Name}" MaxWidth="180" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <TextBlock Text="•" IsVisible="{Binding IsDirty}" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"
+                                       ToolTip.Tip="Unsaved edits" AutomationProperties.Name="Unsaved edits" />
+                          </StackPanel>
+                        </Button>
+                        <Button Classes="ghost" Content="×" Command="{Binding CloseCommand}" Padding="6,4" FontSize="12"
+                                AutomationProperties.Name="Close tab" ToolTip.Tip="Close this tab (Ctrl+W)" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+            <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Text="{Binding OpenTabsLabel}" />
+          </Grid>
           <Border DockPanel.Dock="Top" Classes="banner warning" Margin="0,0,0,16" IsVisible="{Binding HasPlainTextCopies}">
             <Grid ColumnDefinitions="*,Auto,Auto">
               <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
@@ -941,6 +975,22 @@
             </ListBox.ItemTemplate>
           </ListBox>
         </DockPanel>
+      </Border>
+    </Border>
+
+    <!-- Closing a tab with edits that are not saved (ADR 0041) -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding HasTabAwaitingClose}">
+      <Border Classes="dialog" Width="520">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="brand" Text="Close this tab?" />
+          <TextBlock TextWrapping="Wrap" Text="{Binding TabCloseMessage}" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="Cancel" Command="{Binding CancelTabCloseCommand}" AutomationProperties.Name="Keep the tab open" />
+            <Button Content="Discard edits" Command="{Binding DiscardAndCloseTabCommand}" AutomationProperties.Name="Discard edits and close the tab" />
+            <Button Content="Save and close" Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="SemiBold"
+                    Command="{Binding SaveAndCloseTabCommand}" AutomationProperties.Name="Save and close the tab" />
+          </StackPanel>
+        </StackPanel>
       </Border>
     </Border>
 

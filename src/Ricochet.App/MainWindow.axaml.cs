@@ -62,6 +62,10 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
             UrlEditor.Focus();
             ApplyTheme();
         };
+        // Typing and focus changes may have changed the open Request, so its tab's unsaved mark is checked again (ADR 0041).
+        AddHandler(InputElement.KeyUpEvent, (_, _) => _viewModel?.RefreshTabDirtyState(), RoutingStrategies.Bubble, handledEventsToo: true);
+        AddHandler(InputElement.PointerReleasedEvent, (_, _) => _viewModel?.RefreshTabDirtyState(), RoutingStrategies.Bubble, handledEventsToo: true);
+        AddHandler(InputElement.LostFocusEvent, (_, _) => _viewModel?.RefreshTabDirtyState(), RoutingStrategies.Bubble, handledEventsToo: true);
         ActualThemeVariantChanged += (_, _) => ApplyTheme();
         ApplyTheme();
     }
