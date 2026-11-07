@@ -24,4 +24,4 @@ Every bulk run appends a line per request to `bulk-log.txt` in the personal fold
 - Each line must carry its run identifier, so a run's lines can be found and removed together. Existing lines without one are treated as a single old run.
 - Trimming happens when a run starts, so a long run is never cut short by a trim.
 - The log holds request lines from [ADR 0015](0015-bulk-runs-with-resume.md) runs, so resuming a run must still find its earlier lines, which the trim must not remove for an unfinished run.
-- Log lines must already be masked for Secrets, as [ADR 0076](0076-mask-secrets-in-every-output-and-log.md) requires; trimming does not change what is written.
+- Log lines must already be masked for Secrets, as ADR 0076 requires; trimming does not change what is written.
