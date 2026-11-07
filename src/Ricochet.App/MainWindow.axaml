@@ -19,6 +19,7 @@
     <KeyBinding Gesture="Meta+S" Command="{Binding SaveCommand}" />
     <KeyBinding Gesture="Ctrl+N" Command="{Binding NewRequestCommand}" />
     <KeyBinding Gesture="Meta+N" Command="{Binding NewRequestCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding CloseTopPanelCommand}" />
   </Window.KeyBindings>
 
   <Grid>
@@ -115,7 +116,6 @@
                                  AutomationProperties.Name="New name" ToolTip.Tip="Enter saves, Escape cancels">
                           <TextBox.KeyBindings>
                             <KeyBinding Gesture="Enter" Command="{Binding CommitRenameCommand}" />
-                            <KeyBinding Gesture="Escape" Command="{Binding CancelRenameCommand}" />
                           </TextBox.KeyBindings>
                         </TextBox>
                         <Button Grid.Column="2" Classes="mini folderaction" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"

@@ -571,6 +571,31 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseSettingsPage() => IsSettingsPageOpen = false;
 
+    /// <summary>
+    /// Escape: closes the topmost thing that is open, using the same path as its own Cancel, Done or Close button.
+    /// Dialogs come first, then a rename in the sidebar, then the side pages. Only one thing closes per press.
+    /// </summary>
+    [RelayCommand]
+    private void CloseTopPanel()
+    {
+        if (HasPendingCopy)
+            CancelCopy();
+        else if (HasImportReport)
+            CloseImportReport();
+        else if (IsSpecDialogOpen)
+            CloseSpecDialog();
+        else if (AllNodes(Collections).FirstOrDefault(n => n.IsRenaming) is { } renaming)
+            renaming.CancelRenameCommand.Execute(null);
+        else if (IsBulkPageOpen)
+            CloseBulkPage();
+        else if (IsVariablesPageOpen)
+            CloseVariablesPageCommand.Execute(null);
+        else if (IsEnvironmentsPageOpen)
+            CloseEnvironmentsPageCommand.Execute(null);
+        else if (IsSettingsPageOpen)
+            CloseSettingsPage();
+    }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
     private bool _isVariablesPageOpen;
