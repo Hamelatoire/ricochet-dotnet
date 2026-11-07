@@ -492,6 +492,28 @@
               <Button Grid.Column="3" Classes="primary" Width="96" Content="{Binding SendButtonText}"
                       Command="{Binding SendOrCancelCommand}" AutomationProperties.Name="Send"
                       ToolTip.Tip="Send (Ctrl+Enter)" />
+              <!-- Offered after typing {{. The editor keeps the focus, so the list is driven by the keys handled in code. -->
+              <Popup x:Name="SuggestPopup" Placement="Bottom" IsLightDismissEnabled="False">
+                <Border Background="{DynamicResource RaisedBackground}" BorderBrush="{DynamicResource StrongLine}"
+                        BorderThickness="1" CornerRadius="6" Padding="4" Margin="0,4,0,0">
+                  <ListBox x:Name="SuggestList" MinWidth="320" MaxHeight="240" Background="Transparent" BorderThickness="0"
+                           FontFamily="{DynamicResource MonoFont}" FontSize="13" AutomationProperties.Name="Suggestions">
+                    <ListBox.Styles>
+                      <Style Selector="ListBoxItem">
+                        <Setter Property="Focusable" Value="False" />
+                      </Style>
+                    </ListBox.Styles>
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="core:ChipSuggestion">
+                        <Grid ColumnDefinitions="*,Auto" Margin="6,2">
+                          <TextBlock Grid.Column="0" Text="{Binding Name}" />
+                          <TextBlock Grid.Column="1" Text="{Binding Kind}" Opacity="0.6" Margin="16,0,0,0" />
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </Border>
+              </Popup>
             </Grid>
           </Border>
 

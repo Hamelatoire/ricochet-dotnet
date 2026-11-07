@@ -512,19 +512,16 @@ public sealed partial class MainViewModel : ObservableObject
     public bool IsApiKeyAuth => SelectedAuth.Kind == AuthKinds.ApiKey;
 
     /// <summary>
-    /// The value a {{name}} in the URL currently resolves to, for the hover tip. Null when it has no value
-    /// or is a Secret, so a Secret's value is never shown on screen.
-    /// </summary>
-    public string? VariableValueForHover(string name)
-    {
-        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries()];
-        var match = scopes.SelectMany(scope => scope ?? []).LastOrDefault(entry => entry.Enabled && entry.Key == name);
-        if (match is null)
-            return null;
-        if (match.IsSecret)
-            return "Secret, hidden";
-        return match.Value;
-    }
+    /// <summary>Every Variable a send of the open Request can see, lowest priority first, layered the same way a send layers them (ADR 0009).</summary>
+    public IReadOnlyList<KeyValue> VariablesInScope() => VariablesInScope(DotEnv.Read(_store.FolderPath));
+
+    private IReadOnlyList<KeyValue> VariablesInScope(DotEnv.Result dotEnv) =>
+        VariableResolver.Layer(
+            Globals.ToEntries(),
+            CurrentCollection?.Variables.ToEntries(),
+            ActiveEnvironment.Variables.ToEntries(),
+            CapturedFor(CurrentCollection?.Id),
+            dotEnv.Variables);
 
     [ObservableProperty] private TreeNodeViewModel? _selectedNode;
     [ObservableProperty] private HistoryEntry? _selectedHistory;
@@ -947,12 +944,7 @@ public sealed partial class MainViewModel : ObservableObject
             // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
             var dotEnv = DotEnv.Read(_store.FolderPath);
             envProblems = DotEnvNotice(dotEnv);
-            var variables = VariableResolver.Layer(
-                Globals.ToEntries(),
-                CurrentCollection?.Variables.ToEntries(),
-                ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId),
-                dotEnv.Variables);
+            var variables = VariablesInScope(dotEnv);
             var resolution = VariableResolver.Resolve(request, variables);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;

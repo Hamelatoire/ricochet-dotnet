@@ -11,6 +11,7 @@ using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Highlighting;
 using Ricochet.App.ViewModels;
+using Ricochet.Core;
 using Ricochet.App.Views;
 
 namespace Ricochet.App;
@@ -21,6 +22,7 @@ public partial class MainWindow : Window
     private ThemeVariant _theme = ThemeVariant.Dark;
     private MainViewModel? _viewModel;
     private bool _syncingUrl;
+    private int _suggestStart = -1; // Where the "{{" being completed starts, or -1 when no list is open.
 
     // Drag and drop in the Collections tree. A drag starts only after the pointer moves a little, so a click still selects.
     private const double DragStartDistance = 5;
@@ -37,12 +39,18 @@ public partial class MainWindow : Window
         _jsonHighlighting = new(CreateJsonHighlighting);
         InitializeTreeDrag();
         InitializeTreeKeys();
-        UrlEditor.TextArea.TextView.LineTransformers.Add(new VariableColorizer(new SolidColorBrush(Color.Parse("#FF7A50"))));
+        UrlEditor.TextArea.TextView.LineTransformers.Add(new VariableColorizer(ChipsIn));
         UrlEditor.TextChanged += OnUrlEditorTextChanged;
         UrlEditor.PointerMoved += OnUrlEditorPointerMoved;
+        UrlEditor.LostFocus += (_, _) => HideSuggestions();
         UrlEditor.AddHandler(InputElement.KeyDownEvent, OnUrlEditorKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+        SuggestPopup.PlacementTarget = UrlEditor;
         // The branch can change outside the app, so it's read again whenever the window comes to the front.
-        Activated += (_, _) => _viewModel?.RefreshRepositoryStatusCommand.Execute(null);
+        Activated += (_, _) =>
+        {
+            _viewModel?.RefreshRepositoryStatusCommand.Execute(null);
+            UrlEditor.TextArea.TextView.Redraw(); // Variables may have changed on another page, so chips are drawn again.
+        };
         Opened += (_, _) =>
         {
             // The Bulk run page must never be showing when the window first appears, so the request is always visible.
@@ -351,50 +359,173 @@ public partial class MainWindow : Window
             return;
 
         _viewModel.Url = UrlEditor.Text;
+        UpdateSuggestions();
     }
 
-    /// <summary>Shows what the {{variable}} under the pointer resolves to, unless it is a Secret.</summary>
+    /// <summary>Chips in one line of the URL, for the colorizer. Empty until the view model exists.</summary>
+    private IReadOnlyList<Chip> ChipsIn(string line) =>
+        PlaceholderChips.Find(line, _viewModel?.VariablesInScope() ?? []);
+
+    /// <summary>Shows what the chip under the pointer resolves to. A Secret's value is never shown.</summary>
     private void OnUrlEditorPointerMoved(object? sender, PointerEventArgs e)
     {
-        var tip = _viewModel is null ? null : VariableTipAt(e.GetPosition(UrlEditor.TextArea.TextView));
+        var tip = _viewModel is null ? null : ChipTipAt(e.GetPosition(UrlEditor.TextArea.TextView));
         if (ToolTip.GetTip(UrlEditor) as string != tip)
             ToolTip.SetTip(UrlEditor, tip);
     }
 
-    private string? VariableTipAt(Point point)
+    private string? ChipTipAt(Point point)
     {
         var position = UrlEditor.TextArea.TextView.GetPosition(point);
         if (position is null)
             return null;
 
-        var text = UrlEditor.Text;
         var offset = UrlEditor.Document.GetOffset(position.Value.Location);
-        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(text, @"\{\{[^{}\r\n]*\}\}"))
-        {
-            if (offset < match.Index || offset > match.Index + match.Length)
-                continue;
-
-            var name = match.Value[2..^2].Trim();
-            if (name.StartsWith('$'))
-                return null; // Built-in functions generate their value on send, so there is nothing to show yet.
-            var value = _viewModel!.VariableValueForHover(name);
-            return value is null ? $"{{{{{name}}}}}: no value" : $"{{{{{name}}}}} = {value}";
-        }
-
-        return null;
+        var variables = _viewModel!.VariablesInScope();
+        var chips = PlaceholderChips.Find(UrlEditor.Text, variables);
+        // The edges count too, so the tip also shows when the pointer is on a chip's first or last brace.
+        return chips.FirstOrDefault(chip => chip.Start <= offset && offset <= chip.End) is { } hit
+            ? PlaceholderChips.Tip(hit, variables)
+            : null;
     }
 
     private void OnUrlEditorKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter || _viewModel is null)
+        if (_viewModel is null)
+            return;
+
+        if (SuggestPopup.IsOpen && HandleSuggestionKey(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (e.KeyModifiers == KeyModifiers.None && HandleChipKey(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        // Moving the caret away from a "{{" means it is no longer being completed.
+        if (e.Key is Key.Left or Key.Right or Key.Home or Key.End)
+            HideSuggestions();
+
+        if (e.Key != Key.Enter)
             return;
 
         e.Handled = true;
         _viewModel.SendOrCancelCommand.Execute(null);
     }
 
+    /// <summary>
+    /// A chip acts as one character: the caret steps over it, and Backspace or Delete removes it whole. Its text is
+    /// still there to edit by moving the caret inside it, which the normal keys do not do here.
+    /// </summary>
+    private bool HandleChipKey(Key key)
+    {
+        if (UrlEditor.SelectionLength > 0)
+            return false;
+
+        var caret = UrlEditor.CaretOffset;
+        var chips = PlaceholderChips.Find(UrlEditor.Text, _viewModel!.VariablesInScope());
+        var inside = PlaceholderChips.Covering(chips, caret);
+
+        switch (key)
+        {
+            case Key.Left when (inside ?? PlaceholderChips.EndingAt(chips, caret)) is { } left:
+                UrlEditor.CaretOffset = left.Start;
+                return true;
+            case Key.Right when (inside ?? PlaceholderChips.StartingAt(chips, caret)) is { } right:
+                UrlEditor.CaretOffset = right.End;
+                return true;
+            case Key.Back when (inside ?? PlaceholderChips.EndingAt(chips, caret)) is { } back:
+                RemoveChip(back);
+                return true;
+            case Key.Delete when (inside ?? PlaceholderChips.StartingAt(chips, caret)) is { } forward:
+                RemoveChip(forward);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void RemoveChip(Chip chip)
+    {
+        UrlEditor.Document.Remove(chip.Start, chip.Length);
+        UrlEditor.CaretOffset = chip.Start;
+    }
+
+    /// <summary>Opens the suggestion list when the text before the caret ends in an unfinished "{{name".</summary>
+    private void UpdateSuggestions()
+    {
+        if (_viewModel is null)
+            return;
+
+        var typed = System.Text.RegularExpressions.Regex.Match(UrlEditor.Text[..UrlEditor.CaretOffset], @"\{\{([^{}\r\n]*)$");
+        var suggestions = typed.Success
+            ? PlaceholderChips.Suggest(_viewModel.VariablesInScope(), typed.Groups[1].Value)
+            : [];
+        if (suggestions.Count == 0)
+        {
+            HideSuggestions();
+            return;
+        }
+
+        _suggestStart = typed.Index;
+        SuggestList.ItemsSource = suggestions;
+        SuggestList.SelectedIndex = 0;
+        SuggestPopup.IsOpen = true;
+    }
+
+    private void HideSuggestions()
+    {
+        _suggestStart = -1;
+        SuggestPopup.IsOpen = false;
+    }
+
+    /// <summary>Up, Down, Enter, Tab and Escape while the list is open. Other keys are left to the editor.</summary>
+    private bool HandleSuggestionKey(Key key)
+    {
+        var count = SuggestList.ItemCount;
+        switch (key)
+        {
+            case Key.Down when count > 0:
+                SuggestList.SelectedIndex = (SuggestList.SelectedIndex + 1) % count;
+                return true;
+            case Key.Up when count > 0:
+                SuggestList.SelectedIndex = (SuggestList.SelectedIndex - 1 + count) % count;
+                return true;
+            case Key.Enter or Key.Tab when SuggestList.SelectedItem is ChipSuggestion suggestion:
+                AcceptSuggestion(suggestion);
+                return true;
+            case Key.Escape:
+                HideSuggestions();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Writes the chosen name in place of the unfinished "{{", closing it unless a "}}" already follows.</summary>
+    private void AcceptSuggestion(ChipSuggestion suggestion)
+    {
+        var start = _suggestStart;
+        var caret = UrlEditor.CaretOffset;
+        HideSuggestions();
+        if (start < 0)
+            return;
+
+        var closed = UrlEditor.Text[caret..].StartsWith("}}", StringComparison.Ordinal);
+        var written = "{{" + suggestion.Name + (closed ? "" : "}}");
+        UrlEditor.Document.Replace(start, caret - start, written);
+        UrlEditor.CaretOffset = start + written.Length;
+    }
+
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // Chips depend on Variables and Captures, which may have changed, so the URL is drawn again.
+        UrlEditor.TextArea.TextView.Redraw();
+
         if (e.PropertyName == nameof(MainViewModel.Url) && _viewModel is not null)
             SetUrlText(_viewModel.Url);
 
