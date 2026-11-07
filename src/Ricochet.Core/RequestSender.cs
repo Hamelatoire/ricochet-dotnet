@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -105,10 +106,8 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
 
         try
         {
-            using var message = BuildMessage(request);
             var stopwatch = Stopwatch.StartNew();
-            var sendingClient = clientWithoutCookies is not null && message.Headers.Contains("Cookie") ? clientWithoutCookies : client;
-            using var response = await sendingClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+            using var response = await SendWithAuthAsync(client, clientWithoutCookies, request, timeoutCts.Token);
             var (body, truncated) = await ReadBodyAsync(response.Content, maxBodyBytes, timeoutCts.Token);
             stopwatch.Stop();
 
@@ -132,7 +131,46 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         }
     }
 
-    private static HttpRequestMessage BuildMessage(ApiRequest request)
+    /// <summary>
+    /// Sends the request. Digest needs the server's challenge first, so a 401 with a Digest challenge is answered with one
+    /// more send of the same request (ADR 0024). The body is built again, so it is sent in full both times.
+    /// </summary>
+    private static async Task<HttpResponseMessage> SendWithAuthAsync(HttpClient client, HttpClient? clientWithoutCookies, ApiRequest request, CancellationToken cancellationToken)
+    {
+        using var message = BuildMessage(request, null);
+        // A Request that writes its own Cookie header is sent without the stored cookies (ADR 0012).
+        var sendingClient = clientWithoutCookies is not null && message.Headers.Contains("Cookie") ? clientWithoutCookies : client;
+        var response = await sendingClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (request.Auth?.Kind != AuthKinds.Digest || response.StatusCode != HttpStatusCode.Unauthorized)
+            return response;
+
+        var challenge = DigestChallenge(response);
+        if (challenge is null)
+            return response;
+
+        response.Dispose();
+        using var retry = BuildMessage(request, challenge);
+        var retryClient = clientWithoutCookies is not null && retry.Headers.Contains("Cookie") ? clientWithoutCookies : client;
+        return await retryClient.SendAsync(retry, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+    }
+
+    /// <summary>The text after the "Digest" scheme of a WWW-Authenticate header, or null when there is none.</summary>
+    private static string? DigestChallenge(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("WWW-Authenticate", out var values))
+            return null;
+
+        foreach (var value in values)
+        {
+            var text = value.TrimStart();
+            if (text.StartsWith("Digest ", StringComparison.OrdinalIgnoreCase))
+                return text[7..];
+        }
+
+        return null;
+    }
+
+    private static HttpRequestMessage BuildMessage(ApiRequest request, string? digestChallenge)
     {
         var message = new HttpRequestMessage(new HttpMethod(request.Method), ApplyQueryAuth(ParseUrl(request.Url), request.Auth));
         var headers = request.Headers.Where(h => h.Enabled && h.Key.Trim().Length > 0).ToList();
@@ -159,7 +197,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
                 throw new RequestFailedException($"Invalid header: \"{key}\".");
         }
 
-        ApplyHeaderAuth(message, request.Auth);
+        ApplyAuth(message, request, digestChallenge);
         return message;
     }
 
@@ -174,23 +212,54 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         return builder.Uri;
     }
 
-    /// <summary>A header the user wrote explicitly wins over the request's auth settings.</summary>
-    private static void ApplyHeaderAuth(HttpRequestMessage message, RequestAuth? auth)
+    /// <summary>Adds the headers for the request's auth kind. Digest adds its header only once the server has sent a challenge.</summary>
+    private static void ApplyAuth(HttpRequestMessage message, ApiRequest request, string? digestChallenge)
     {
-        var (name, value) = auth?.Kind switch
-        {
-            AuthKinds.Bearer => ("Authorization", $"Bearer {auth.Token}"),
-            AuthKinds.Basic => ("Authorization", "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{auth.Username}:{auth.Password}"))),
-            AuthKinds.ApiKey when !auth.KeyInQuery && auth.KeyName.Length > 0 => (auth.KeyName, auth.KeyValue),
-            _ => ("", ""),
-        };
+        var auth = request.Auth;
+        if (auth is null)
+            return;
 
+        var uri = message.RequestUri!;
+        switch (auth.Kind)
+        {
+            case AuthKinds.Bearer:
+                AddAuthHeader(message, "Authorization", $"Bearer {auth.Token}");
+                break;
+            case AuthKinds.Basic:
+                AddAuthHeader(message, "Authorization", "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{auth.Username}:{auth.Password}")));
+                break;
+            case AuthKinds.ApiKey when !auth.KeyInQuery && auth.KeyName.Length > 0:
+                AddAuthHeader(message, auth.KeyName, auth.KeyValue);
+                break;
+            case AuthKinds.Digest when digestChallenge is not null:
+                AddAuthHeader(message, "Authorization",
+                    AuthSigning.DigestAuthorization(auth, message.Method.Method, uri.PathAndQuery, digestChallenge, RandomHex()));
+                break;
+            case AuthKinds.OAuth1:
+                List<KeyValuePair<string, string>> form = message.Content?.Headers.ContentType?.MediaType is "application/x-www-form-urlencoded"
+                    ? AuthSigning.ParseQuery(request.Body)
+                    : [];
+                AddAuthHeader(message, "Authorization",
+                    AuthSigning.OAuth1Authorization(auth, message.Method.Method, uri, form, RandomHex(), DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                break;
+            case AuthKinds.AwsSigV4:
+                foreach (var header in AuthSigning.AwsSigV4Headers(auth, message.Method.Method, uri, Encoding.UTF8.GetBytes(request.Body), DateTimeOffset.UtcNow))
+                    AddAuthHeader(message, header.Key, header.Value);
+                break;
+        }
+    }
+
+    /// <summary>A header the user wrote explicitly wins over the request's auth settings.</summary>
+    private static void AddAuthHeader(HttpRequestMessage message, string name, string value)
+    {
         if (name.Length == 0 || message.Headers.Contains(name))
             return;
 
         if (!message.Headers.TryAddWithoutValidation(name, value))
             throw new RequestFailedException($"Invalid auth header: \"{name}\".");
     }
+
+    private static string RandomHex() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
     private static Uri ParseUrl(string rawUrl)
     {
