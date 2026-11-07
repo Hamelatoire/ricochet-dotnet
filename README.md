@@ -133,6 +133,8 @@ Your work is stored as a folder of small JSON files, one per request, so it can 
 
 History, the active environment and secrets stay in your personal application data and are never written to the shared folder. Set `RICOCHET_DATA` to use a different personal folder.
 
+For what Ricochet stores and sends, see the [user data policy](docs/PRIVACY.md).
+
 Values you mark as **Secret**, and values typed into auth fields, are kept out of that file and in your system's secure storage instead: DPAPI on Windows, Keychain on macOS, and Secret Service on Linux (which needs `secret-tool` from `libsecret-tools`). The macOS and Linux versions have not been tested yet. If secure storage isn't available, Secrets last only until you close the app, and Ricochet tells you so.
 
 **Everything else in the workspace folder is plain text, and is shared if you commit it.** That includes other variables and any credentials typed directly into a header or URL, though Ricochet warns you when it spots one. Use a `{{variable}}` marked Secret for these. History hides common credential headers.
