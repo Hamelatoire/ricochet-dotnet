@@ -17,6 +17,7 @@ internal static class Program
 
         Usage:
           ricochet run [folder] [options]
+          ricochet export <collection> --postman <file> | --openapi <file>   (see ricochet export --help)
 
         Arguments:
           folder                 The workspace folder. Defaults to the current folder.
@@ -67,6 +68,9 @@ internal static class Program
             Console.WriteLine(Usage);
             return args.Length == 0 ? ExitCannotRun : ExitPassed;
         }
+
+        if (args[0] == "export")
+            return ExportCommand(args.Skip(1).ToList());
 
         if (args[0] != "run")
             return CannotRun($"Unknown command \"{args[0]}\". Try: ricochet --help");
@@ -312,6 +316,183 @@ internal static class Program
     {
         Console.Error.WriteLine(message);
         return ExitCannotRun;
+    }
+
+    private const string ExportUsage = """
+        Ricochet: export a collection to a Postman v2.1 file, an OpenAPI 3 file, or both.
+
+        Usage:
+          ricochet export <collection> [options]
+
+        Arguments:
+          collection             The name of the collection to export.
+
+        Options:
+          --postman <file>       Write a Postman v2.1 collection to this file.
+          --openapi <file>       Write an OpenAPI 3 document to this file.
+          --workspace <folder>   The workspace folder. Defaults to the current folder.
+          --force                Overwrite a file that already exists.
+          --help                 Show this help.
+
+        Secret values are never written. Secret Variables are left out, and a secret's value is
+        replaced with {{name}}. Everything else that cannot be exported is listed after the export.
+        Files are never written inside the workspace folder.
+
+        Exit codes:
+          0  The file was written.
+          2  The export could not happen, for example because the collection does not exist,
+             a file already exists without --force, or the workspace is unreadable.
+        """;
+
+    private sealed class ExportArguments
+    {
+        public string? Collection { get; set; }
+        public string Workspace { get; set; } = ".";
+        public string? Postman { get; set; }
+        public string? OpenApi { get; set; }
+        public bool Force { get; set; }
+    }
+
+    private static int ExportCommand(List<string> args)
+    {
+        if (!TryParseExport(args, out var options, out var parseError))
+            return parseError is null ? ExitPassed : CannotRun(parseError);
+
+        if (!WorkspaceFolder.LooksLikeWorkspace(options!.Workspace))
+            return CannotRun($"\"{Path.GetFullPath(options.Workspace)}\" is not a Ricochet workspace folder.");
+
+        var folder = new WorkspaceFolder(Path.GetFullPath(options.Workspace));
+        var (workspace, issues) = folder.Load();
+
+        // Same rule as run: an unreadable file could hide part of the collection, so the export would be incomplete.
+        if (issues.Count > 0)
+        {
+            foreach (var issue in issues)
+                Console.Error.WriteLine($"{issue.Path}: {issue.Problem}");
+            return CannotRun("Some workspace files could not be used. Fix them and export again.");
+        }
+
+        // Secret values come from this machine's vault, so they can be replaced with their placeholders.
+        workspace = WorkspaceSecrets.Merge(workspace, WorkspaceSecrets.ForWorkspace(LoadSecrets(), folder.Id));
+
+        Collection collection;
+        try
+        {
+            collection = ExportFiles.FindCollection(workspace.Collections, options.Collection!);
+        }
+        catch (ExportFileException ex)
+        {
+            return CannotRun(ex.Message);
+        }
+
+        // Check every target before writing any, so a refused second file never leaves the first one behind.
+        var targets = new List<(string Label, string Path, Func<ExportResult> Export)>();
+        try
+        {
+            if (options.Postman is not null)
+                targets.Add(("Postman", ExportFiles.Check(options.Postman, folder.Root, options.Force), () => PostmanExporter.Export(collection)));
+            if (options.OpenApi is not null)
+                targets.Add(("OpenAPI", ExportFiles.Check(options.OpenApi, folder.Root, options.Force), () => OpenApiExporter.Export(collection)));
+        }
+        catch (ExportFileException ex)
+        {
+            return CannotRun(ex.Message);
+        }
+
+        if (targets.Count == 2 && string.Equals(targets[0].Path, targets[1].Path, StringComparison.OrdinalIgnoreCase))
+            return CannotRun("--postman and --openapi need different files.");
+
+        foreach (var target in targets)
+        {
+            var result = target.Export();
+            try
+            {
+                ExportFiles.Write(target.Path, result.Json, folder.Root, options.Force);
+            }
+            catch (ExportFileException ex)
+            {
+                return CannotRun(ex.Message);
+            }
+
+            Console.WriteLine($"Wrote {target.Label} export to {target.Path}");
+            Console.WriteLine(result.Notes.Count == 0
+                ? "Nothing was left out."
+                : result.ToReportText());
+            Console.WriteLine();
+        }
+
+        return ExitPassed;
+    }
+
+    /// <returns>False to stop. A null error means help was shown, which is not a failure.</returns>
+    private static bool TryParseExport(List<string> args, out ExportArguments? result, out string? error)
+    {
+        var options = new ExportArguments();
+        result = options;
+        error = null;
+        var positional = 0;
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+
+            string? Value()
+            {
+                i++;
+                return i < args.Count ? args[i] : null;
+            }
+
+            switch (arg)
+            {
+                case "--help" or "-h":
+                    Console.WriteLine(ExportUsage);
+                    return false;
+                case "--force":
+                    options.Force = true;
+                    break;
+                case "--workspace":
+                    options.Workspace = Value() ?? "";
+                    if (options.Workspace.Length == 0) { error = "--workspace needs a folder."; return false; }
+                    break;
+                case "--postman":
+                    options.Postman = Value();
+                    if (string.IsNullOrWhiteSpace(options.Postman)) { error = "--postman needs a file."; return false; }
+                    break;
+                case "--openapi":
+                    options.OpenApi = Value();
+                    if (string.IsNullOrWhiteSpace(options.OpenApi)) { error = "--openapi needs a file."; return false; }
+                    break;
+                default:
+                    if (arg.StartsWith('-'))
+                    {
+                        error = $"Unknown option \"{arg}\". Try: ricochet export --help";
+                        return false;
+                    }
+
+                    if (positional++ > 0)
+                    {
+                        error = $"Unexpected argument \"{arg}\". Try: ricochet export --help";
+                        return false;
+                    }
+
+                    options.Collection = arg;
+                    break;
+            }
+        }
+
+        if (options.Collection is null)
+        {
+            error = "Name the collection to export. Try: ricochet export --help";
+            return false;
+        }
+
+        if (options.Postman is null && options.OpenApi is null)
+        {
+            error = "Choose at least one format: --postman <file> or --openapi <file>.";
+            return false;
+        }
+
+        return true;
     }
 
     private sealed class Colors(bool enabled)
