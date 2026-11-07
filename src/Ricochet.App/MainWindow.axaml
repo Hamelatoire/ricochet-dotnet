@@ -54,6 +54,10 @@
               <TextBlock Text="Environments" />
             </StackPanel>
           </Button>
+          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,12" Command="{Binding Mock.OpenCommand}"
+                  AutomationProperties.Name="Mock server" ToolTip.Tip="Answer requests on this computer from an OpenAPI description (listens on 127.0.0.1 only)">
+            <TextBlock Text="Mock server" />
+          </Button>
           <TextBlock DockPanel.Dock="Bottom" Classes="muted" FontSize="11" Margin="21,2,0,0" TextTrimming="CharacterEllipsis"
                      IsVisible="{Binding HasRepositoryStatus}" Text="{Binding RepositoryStatusText}"
                      ToolTip.Tip="{Binding RepositoryStatusTip}" AutomationProperties.Name="Git branch" />
@@ -909,6 +913,46 @@
           </StackPanel>
           <TextBox Classes="mono" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
                    Text="{Binding SpecPreview}" IsVisible="{Binding HasSpecPreview}" AutomationProperties.Name="Changes preview" />
+        </DockPanel>
+      </Border>
+    </Border>
+
+    <!-- Mock server (ADR 0027). Listens on 127.0.0.1 only, and only between Start and Stop. -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding Mock.IsOpen}">
+      <Border Classes="dialog" Width="640" MaxHeight="660">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Mock server" Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+                     Text="Answers requests from an OpenAPI description, so an API that is not built yet can still be called. Paths are served under the description's server path, for example /v1/pets. The server listens on 127.0.0.1 only, so no other computer can reach it. Closing this window leaves a running server running." />
+          <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Close" Command="{Binding Mock.CloseCommand}" AutomationProperties.Name="Close mock server" />
+          </StackPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+            <Button Grid.Column="0" Content="Load OpenAPI description…" Click="OnLoadMockDescriptionClick"
+                    AutomationProperties.Name="Load OpenAPI description from a file" />
+            <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis"
+                       Text="{Binding Mock.SourceText}" />
+          </Grid>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,Auto" Margin="0,0,0,12">
+            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Port" />
+            <TextBox Grid.Column="1" Classes="mono" Width="110" Text="{Binding Mock.PortText}" IsEnabled="{Binding Mock.IsStopped}"
+                     AutomationProperties.Name="Mock server port" />
+            <Button Grid.Column="2" Classes="primary" Content="Start" Margin="8,0,0,0" Command="{Binding Mock.StartCommand}"
+                    IsEnabled="{Binding Mock.CanStart}" AutomationProperties.Name="Start mock server" />
+            <Button Grid.Column="3" Content="Stop" Margin="8,0,0,0" Command="{Binding Mock.StopCommand}"
+                    IsEnabled="{Binding !Mock.IsStopped}" AutomationProperties.Name="Stop mock server" />
+          </Grid>
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="{Binding Mock.StatusText}" AutomationProperties.Name="Mock server status" />
+          <SelectableTextBlock DockPanel.Dock="Top" Text="{Binding Mock.Error}" Foreground="{DynamicResource Failure}"
+                               FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" IsVisible="{Binding Mock.ErrorVisible}" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" Text="Requests (path and status only)" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="ghost" Content="Clear log" Command="{Binding Mock.ClearLogCommand}" FontSize="12"
+                    AutomationProperties.Name="Clear mock server log" />
+          </Grid>
+          <TextBox Classes="mono" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="160"
+                   VerticalContentAlignment="Top" Text="{Binding Mock.LogText}" AutomationProperties.Name="Mock server log" />
         </DockPanel>
       </Border>
     </Border>

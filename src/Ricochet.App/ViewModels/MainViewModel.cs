@@ -23,6 +23,9 @@ public sealed partial class MainViewModel : ObservableObject
     private IReadOnlyDictionary<string, string> _storedSecrets;
     private IDisposable? _folderWatcher;
 
+    /// <summary>The mock server dialog (ADR 0027). It is not part of the Workspace, so it is not saved.</summary>
+    public MockServerViewModel Mock { get; } = new();
+
     // The last response and what produced it, kept so it can be saved as an example (ADR 0023).
     private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _lastExchange;
 
