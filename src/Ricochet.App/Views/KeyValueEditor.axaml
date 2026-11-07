@@ -15,7 +15,7 @@
           <DataTemplate x:DataType="vm:KeyValueRowViewModel">
             <Grid ColumnDefinitions="Auto,*,10,2*,Auto,Auto">
               <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" MinWidth="32" />
-              <TextBox Grid.Column="1" Classes="mono" Text="{Binding Key}" PlaceholderText="Name" />
+              <TextBox Grid.Column="1" Classes="mono" Text="{Binding Key}" PlaceholderText="{Binding KeyPlaceholder}" />
               <TextBox Grid.Column="3" Classes="mono" Text="{Binding Value}" PasswordChar="{Binding ValueMask}"
                        PlaceholderText="{Binding ValuePlaceholder}" />
               <ToggleButton Grid.Column="4" Classes="secret" Content="Secret" Margin="8,0,0,0"
