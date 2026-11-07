@@ -380,6 +380,14 @@
     <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="BorderBrush" Value="Transparent" />
     </Style>
+    <Style Selector="Border.requesttab">
+      <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hairline}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.requesttab.active">
+      <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
+    </Style>
     <Style Selector="Button.ghost">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
