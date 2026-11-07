@@ -19,6 +19,14 @@
     <KeyBinding Gesture="Meta+S" Command="{Binding SaveCommand}" />
     <KeyBinding Gesture="Ctrl+N" Command="{Binding NewRequestCommand}" />
     <KeyBinding Gesture="Meta+N" Command="{Binding NewRequestCommand}" />
+    <KeyBinding Gesture="Ctrl+K" Command="{Binding OpenPaletteCommand}" />
+    <KeyBinding Gesture="Meta+K" Command="{Binding OpenPaletteCommand}" />
+    <KeyBinding Gesture="Ctrl+P" Command="{Binding FindRequestCommand}" />
+    <KeyBinding Gesture="Meta+P" Command="{Binding FindRequestCommand}" />
+    <KeyBinding Gesture="Ctrl+L" Command="{Binding FocusUrlCommand}" />
+    <KeyBinding Gesture="Meta+L" Command="{Binding FocusUrlCommand}" />
+    <KeyBinding Gesture="Ctrl+E" Command="{Binding FocusEnvironmentCommand}" />
+    <KeyBinding Gesture="Meta+E" Command="{Binding FocusEnvironmentCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding CloseTopPanelCommand}" />
   </Window.KeyBindings>
 
@@ -546,7 +554,7 @@
             <TextBox Grid.Column="0" Classes="bare" FontSize="18" FontWeight="SemiBold" Padding="0,4"
                      Text="{Binding RequestName}" PlaceholderText="Untitled request" />
             <ComboBox Grid.Column="1" Width="200" Margin="12,0" ItemsSource="{Binding Environments}"
-                      SelectedItem="{Binding ActiveEnvironment}" AutomationProperties.Name="Environment"
+                      x:Name="EnvironmentPicker" SelectedItem="{Binding ActiveEnvironment}" AutomationProperties.Name="Environment"
                       ToolTip.Tip="Active environment">
               <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:EnvironmentViewModel">
@@ -905,6 +913,36 @@
         </Border>
       </Grid>
     </Grid>
+
+    <!-- Command palette (ADR 0040). Escape closes it, Up and Down move through the list, Enter runs the highlighted entry. -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsPaletteOpen}">
+      <Border.KeyBindings>
+        <KeyBinding Gesture="Escape" Command="{Binding ClosePaletteCommand}" />
+        <KeyBinding Gesture="Up" Command="{Binding MovePaletteUpCommand}" />
+        <KeyBinding Gesture="Down" Command="{Binding MovePaletteDownCommand}" />
+        <KeyBinding Gesture="Enter" Command="{Binding RunPaletteEntryCommand}" />
+      </Border.KeyBindings>
+      <Border Classes="dialog" Width="560" MaxHeight="480" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,90,0,0"
+              AutomationProperties.Name="Command palette">
+        <DockPanel>
+          <TextBox x:Name="PaletteQueryBox" DockPanel.Dock="Top" Text="{Binding PaletteQuery}" Margin="0,0,0,10"
+                   Watermark="Type a command or a request name" AutomationProperties.Name="Command palette search" />
+          <TextBlock DockPanel.Dock="Bottom" Classes="muted" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"
+                     Text="Up and Down to choose, Enter to run, Escape to close" />
+          <ListBox x:Name="PaletteList" ItemsSource="{Binding PaletteResults}" SelectedItem="{Binding PaletteSelected}"
+                   AutomationProperties.Name="Command palette results" DoubleTapped="OnPaletteDoubleTapped">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:PaletteEntryViewModel">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" Classes="muted" FontSize="12" Margin="16,0,0,0" VerticalAlignment="Center" Text="{Binding Detail}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+    </Border>
 
     <!-- Confirm copying the workspace into a folder -->
     <Border Background="{DynamicResource Scrim}" IsVisible="{Binding HasPendingCopy}">

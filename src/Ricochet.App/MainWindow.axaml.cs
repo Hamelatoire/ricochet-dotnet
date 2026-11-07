@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Threading;
 using Avalonia.Media;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
@@ -73,6 +74,7 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
         {
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             _viewModel.BulkLog.CollectionChanged -= OnBulkLogChanged;
+            _viewModel.FocusRequested -= OnFocusRequested;
         }
 
         _viewModel = DataContext as MainViewModel;
@@ -81,9 +83,37 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
         {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
             _viewModel.BulkLog.CollectionChanged += OnBulkLogChanged;
+            _viewModel.FocusRequested += OnFocusRequested;
             SetUrlText(_viewModel.Url);
         }
     }
+
+    /// <summary>
+    /// Moves the keyboard focus when the view model asks. It is posted, so a control that has just been shown can take focus.
+    /// </summary>
+    private void OnFocusRequested(PaletteFocus target)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            switch (target)
+            {
+                case PaletteFocus.PaletteQuery:
+                    PaletteQueryBox.Focus();
+                    PaletteQueryBox.CaretIndex = PaletteQueryBox.Text?.Length ?? 0;
+                    break;
+                case PaletteFocus.Url:
+                    UrlEditor.Focus();
+                    break;
+                case PaletteFocus.Environment:
+                    EnvironmentPicker.Focus();
+                    break;
+            }
+        }, DispatcherPriority.Input);
+    }
+
+    /// <summary>Running a palette entry on a double click, as Enter does from the search box.</summary>
+    private void OnPaletteDoubleTapped(object? sender, TappedEventArgs e) =>
+        _viewModel?.RunPaletteEntryCommand.Execute(null);
 
     /// <summary>While a bulk run is going, keeps the newest log line in view. Scrolling back up stays possible between runs.</summary>
     private void OnBulkLogChanged(object? sender, NotifyCollectionChangedEventArgs e)
