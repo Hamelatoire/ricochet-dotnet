@@ -23,6 +23,9 @@ public sealed partial class MainViewModel : ObservableObject
     private IReadOnlyDictionary<string, string> _storedSecrets;
     private IDisposable? _folderWatcher;
 
+    // The last response and what produced it, kept so it can be saved as an example (ADR 0023).
+    private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _lastExchange;
+
     public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault)
     {
         _sender = sender;
@@ -42,6 +45,11 @@ public sealed partial class MainViewModel : ObservableObject
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
         Captures.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
+        Examples.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(ExamplesTabTitle));
+            OnPropertyChanged(nameof(HasExamples));
+        };
         TestResults.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(ResponseTestsTabTitle));
@@ -142,7 +150,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The environments without the "No environment" choice, which has nothing to edit.</summary>
     public ObservableCollection<EnvironmentViewModel> EditableEnvironments { get; }
 
-    public KeyValueListViewModel Headers { get; } = new();
+    public KeyValueListViewModel Headers { get; } = new(keyPlaceholder: "Header name", valuePlaceholder: "Header value");
     public KeyValueListViewModel Globals { get; } = new(allowSecrets: true);
 
     [ObservableProperty] private string _requestName = "";
@@ -161,6 +169,17 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<TestResultRow> TestResults { get; } = [];
 
     public ObservableCollection<CaptureRowViewModel> Captures { get; } = [];
+
+    /// <summary>The examples saved on the current Request (ADR 0023).</summary>
+    public ObservableCollection<ResponseExampleRowViewModel> Examples { get; } = [];
+
+    [ObservableProperty] private string _exampleName = "";
+
+    /// <summary>True once there is a response that can be saved as an example.</summary>
+    [ObservableProperty] private bool _canSaveExample;
+
+    public bool HasExamples => Examples.Count > 0;
+    public string ExamplesTabTitle => Examples.Count > 0 ? $"Examples  {Examples.Count}" : "Examples";
 
     /// <summary>Names only, because captures are often tokens. Their values live in memory, never in a file.</summary>
     public ObservableCollection<string> CapturedNames { get; } = [];
@@ -575,6 +594,31 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseSettingsPage() => IsSettingsPageOpen = false;
 
+    /// <summary>
+    /// Escape: closes the topmost thing that is open, using the same path as its own Cancel, Done or Close button.
+    /// Dialogs come first, then a rename in the sidebar, then the side pages. Only one thing closes per press.
+    /// </summary>
+    [RelayCommand]
+    private void CloseTopPanel()
+    {
+        if (HasPendingCopy)
+            CancelCopy();
+        else if (HasImportReport)
+            CloseImportReport();
+        else if (IsSpecDialogOpen)
+            CloseSpecDialog();
+        else if (AllNodes(Collections).FirstOrDefault(n => n.IsRenaming) is { } renaming)
+            renaming.CancelRenameCommand.Execute(null);
+        else if (IsBulkPageOpen)
+            CloseBulkPage();
+        else if (IsVariablesPageOpen)
+            CloseVariablesPageCommand.Execute(null);
+        else if (IsEnvironmentsPageOpen)
+            CloseEnvironmentsPageCommand.Execute(null);
+        else if (IsSettingsPageOpen)
+            CloseSettingsPage();
+    }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
     private bool _isVariablesPageOpen;
@@ -755,6 +799,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool HasNotice => Notice.Length > 0;
 
+    [RelayCommand]
+    private void DismissNotice() => Notice = "";
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasImportReport))]
     private string _importReport = "";
@@ -822,6 +869,9 @@ public sealed partial class MainViewModel : ObservableObject
         Captures.Clear();
         foreach (var capture in request.Captures ?? [])
             Captures.Add(NewCaptureRow(capture));
+        Examples.Clear();
+        foreach (var example in request.Examples ?? [])
+            Examples.Add(NewExampleRow(example));
         ClearResponse();
         Notice = ScriptNotice();
     }
@@ -870,6 +920,10 @@ public sealed partial class MainViewModel : ObservableObject
             WorkspaceSecrets.HasHiddenValues(request) ? $"Headers showing {SecretRules.HiddenValue} were removed from History, so enter them again." : "");
     }
 
+    /// <summary>Says which lines of the .env file were skipped, so that a missing value isn't a mystery.</summary>
+    internal static string DotEnvNotice(DotEnv.Result dotEnv) =>
+        string.Join('\n', dotEnv.SkippedLines.Select(line => $"{DotEnv.FileName} line {line} was skipped, because it is not KEY=VALUE."));
+
     private static string JoinNotices(params string[] notices) =>
         string.Join('\n', notices.Where(n => n.Length > 0));
 
@@ -884,6 +938,8 @@ public sealed partial class MainViewModel : ObservableObject
         ResponseBody = "";
         Notice = "";
         TestResults.Clear();
+        _lastExchange = null;
+        CanSaveExample = false;
     }
 
     private ApiRequest CurrentRequest() => new()
@@ -897,6 +953,7 @@ public sealed partial class MainViewModel : ObservableObject
         Auth = CurrentAuth(),
         Assertions = Assertions.Count > 0 ? Assertions.Select(a => a.ToAssertion()).ToList() : null,
         Captures = Captures.Count > 0 ? Captures.Select(c => c.ToCapture()).ToList() : null,
+        Examples = Examples.Count > 0 ? Examples.Select(e => e.Example).ToList() : null,
     };
 
     [RelayCommand]
@@ -934,14 +991,19 @@ public sealed partial class MainViewModel : ObservableObject
         var historyRequest = request;
         var collectionId = CurrentCollection?.Id;
         var unresolved = "";
+        var envProblems = "";
         try
         {
+            // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
+            var dotEnv = DotEnv.Read(_store.FolderPath);
+            envProblems = DotEnvNotice(dotEnv);
             var variables = VariableResolver.Layer(
                 Globals.ToEntries(),
                 CurrentCollection?.Variables.ToEntries(),
                 FolderScope(),
                 ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId));
+                CapturedFor(collectionId),
+                dotEnv.Variables);
             var resolution = VariableResolver.Resolve(request, variables);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
@@ -952,6 +1014,8 @@ public sealed partial class MainViewModel : ObservableObject
             var response = await _sender.SendAsync(resolved, cts.Token);
             var formatted = await Task.Run(() => ResponseFormatter.Format(response), cts.Token);
             ShowResponse(response, formatted);
+            _lastExchange = (resolved, variables, CapturedFor(collectionId), response);
+            CanSaveExample = true;
             var testResults = await Task.Run(() => AssertionEvaluator.Evaluate(resolved.Assertions, response), cts.Token);
             foreach (var result in testResults)
             {
@@ -966,7 +1030,7 @@ public sealed partial class MainViewModel : ObservableObject
             foreach (var failure in captureOutcome.Failures)
                 TestResults.Add(new TestResultRow("FAIL", $"{failure.Description}: {failure.Message}", false));
 
-            Notice = JoinNotices(ScriptNotice(), unresolved, CredentialNotice(request), response.Truncated
+            Notice = JoinNotices(ScriptNotice(), unresolved, envProblems, CredentialNotice(request), response.Truncated
                 ? $"Response too large: showing the first {FormatSize(response.Body.Length)}."
                 : "");
             AddHistory(historyRequest, response.StatusCode, (long)response.Elapsed.TotalMilliseconds, collectionId);
@@ -1011,9 +1075,68 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void AddHistory(ApiRequest request, int? statusCode, long elapsedMs, string? collectionId)
     {
-        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
+        // Examples belong to the Request in the Workspace, not to each send of it.
+        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request with { Examples = null }, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
         while (History.Count > Workspace.MaxHistory)
             History.RemoveAt(History.Count - 1);
+    }
+
+    private ResponseExampleRowViewModel NewExampleRow(ResponseExample example) =>
+        new(example, row => _ = RemoveExampleAsync(row), ShowExample);
+
+    /// <summary>Saves the last response on the saved Request. Unsaved edits to the form stay unsaved.</summary>
+    [RelayCommand]
+    private async Task SaveExampleAsync()
+    {
+        if (_lastExchange is not { } last)
+            return;
+
+        if (_currentNode?.Request is not { } saved)
+        {
+            Notice = "Save the request first, then save a response as an example.";
+            return;
+        }
+
+        var name = ExampleName.Trim().Length > 0 ? ExampleName : $"Example {Examples.Count + 1}";
+        ResponseExample example;
+        try
+        {
+            example = ResponseExamples.Create(name, last.Sent, last.Variables, last.Captured, last.Response);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Notice = ex.Message;
+            return;
+        }
+
+        _currentNode.Request = saved with { Examples = (saved.Examples ?? []).Append(example).ToList() };
+        Examples.Add(NewExampleRow(example));
+        ExampleName = "";
+        Notice = $"Saved example \"{example.Name}\". Credentials were masked.";
+        await PersistAsync();
+    }
+
+    private async Task RemoveExampleAsync(ResponseExampleRowViewModel row)
+    {
+        Examples.Remove(row);
+        if (_currentNode?.Request is { } saved)
+        {
+            var remaining = (saved.Examples ?? []).Where(e => e.Id != row.Example.Id).ToList();
+            _currentNode.Request = saved with { Examples = remaining.Count > 0 ? remaining : null };
+        }
+
+        await PersistAsync();
+    }
+
+    /// <summary>Shows a saved example in the response panel. It is not a new response, so it can't be saved again.</summary>
+    private void ShowExample(ResponseExample example)
+    {
+        ClearResponse();
+        var response = new ApiResponse(example.StatusCode, example.ReasonPhrase, example.Headers,
+            System.Text.Encoding.UTF8.GetBytes(example.Body), example.MediaType, null, TimeSpan.Zero, false);
+        ShowResponse(response, ResponseFormatter.Format(response));
+        TimingText = $"Saved example \"{example.Name}\"";
+        Notice = "This is a saved example, not a new response.";
     }
 
     [RelayCommand]
@@ -1166,18 +1289,70 @@ public sealed partial class MainViewModel : ObservableObject
         await PersistAsync();
     }
 
-    /// <summary>Imports each file on its own, so one bad file does not stop the others.</summary>
+    /// <summary>The data dump whose exports the user is choosing from, or null. Shown over the window (ADR 0038).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsDumpChoiceOpen))]
+    private DumpChoiceViewModel? _dumpChoice;
+
+    public bool IsDumpChoiceOpen => DumpChoice is not null;
+
+    /// <summary>Imports each file on its own, so one bad file does not stop the others. A data dump opens a choice instead.</summary>
     public async Task ImportFilesAsync(IReadOnlyList<string> paths)
     {
-        var parsed = await Task.Run(() => paths.Select(ParseFile).ToList());
+        var dumps = paths.Where(IsDumpPath).ToList();
+        var parsed = await Task.Run(() => paths.Where(p => !IsDumpPath(p)).Select(ParseFile).ToList());
 
         var report = new List<string>();
         foreach (var (name, result, error) in parsed)
             report.Add(result is null ? $"{name}\nNot imported. {error}" : $"{name}\n{ApplyImport(result)}");
 
+        if (dumps.Count > 1)
+            report.Add($"Import one data dump at a time. Not imported: {string.Join(", ", dumps.Skip(1).Select(Path.GetFileName))}");
+
+        if (dumps.Count > 0)
+        {
+            var (name, listing, error) = await Task.Run(() => ReadDumpFile(dumps[0]));
+            if (listing is null)
+                report.Add($"{name}\nNot imported. {error}");
+            else
+                DumpChoice = new DumpChoiceViewModel(name, listing, ImportDumpAsync, CloseDumpChoice);
+        }
+
         ImportReport = string.Join("\n\n", report);
         await PersistAsync();
     }
+
+    private static bool IsDumpPath(string path) => Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase);
+
+    private static (string Name, IReadOnlyList<DumpEntry>? Listing, string? Error) ReadDumpFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return (name, PostmanImporter.ReadDump(stream), null);
+        }
+        catch (Exception ex) when (ex is PostmanImportException or IOException or UnauthorizedAccessException)
+        {
+            return (name, null, ex.Message);
+        }
+    }
+
+    /// <summary>Imports only the exports the user kept ticked. Nothing else in the dump is touched.</summary>
+    private async Task ImportDumpAsync(DumpChoiceViewModel choice)
+    {
+        var results = PostmanImporter.Selected(choice.Listing, choice.SelectedFileNames);
+        var report = results.Count == 0
+            ? $"{choice.DumpName}\nNothing was selected, so nothing was imported."
+            : $"{choice.DumpName}\n\n{string.Join("\n\n", results.Select(ApplyImport))}";
+
+        DumpChoice = null;
+        ImportReport = report;
+        await PersistAsync();
+    }
+
+    [RelayCommand]
+    private void CloseDumpChoice() => DumpChoice = null;
 
     private static (string Name, ImportResult? Result, string? Error) ParseFile(string path)
     {
@@ -1239,6 +1414,9 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSpecPreview))] private string _specPreview = "";
 
     public bool HasSpecError => SpecError.Length > 0;
+
+    [RelayCommand]
+    private void DismissSpecError() => SpecError = "";
     public bool HasSpecPreview => SpecPreview.Length > 0;
 
     private static readonly Lazy<HttpClient> SpecClient = new(() => RequestSender.CreateDefaultClient());
