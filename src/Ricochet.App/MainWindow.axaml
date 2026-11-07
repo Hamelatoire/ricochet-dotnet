@@ -504,14 +504,14 @@
                   </ComboBox>
                   <TextBlock Classes="muted" Text="This request sends no credentials." IsVisible="{Binding IsNoAuth}" />
                   <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthToken}"
-                           PlaceholderText="Token" PasswordChar="•" IsVisible="{Binding IsBearerAuth}" />
+                           PlaceholderText="Token, sent as Authorization: Bearer" PasswordChar="•" IsVisible="{Binding IsBearerAuth}" />
                   <StackPanel Spacing="6" IsVisible="{Binding IsBasicAuth}">
                     <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthUsername}" PlaceholderText="Username" />
                     <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthPassword}" PlaceholderText="Password" PasswordChar="•" />
                   </StackPanel>
                   <StackPanel Spacing="6" IsVisible="{Binding IsApiKeyAuth}">
-                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyName}" PlaceholderText="Key name" />
-                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyValue}" PlaceholderText="Key value" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyName}" PlaceholderText="Header or query parameter name, such as X-Api-Key" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyValue}" PlaceholderText="The API key" PasswordChar="•" />
                     <CheckBox Content="Send in the query string instead of a header" IsChecked="{Binding AuthKeyInQuery}" />
                   </StackPanel>
                   <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding !IsNoAuth}"
