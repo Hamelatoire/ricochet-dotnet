@@ -37,7 +37,7 @@
       <!-- Sidebar -->
       <Border Grid.Column="0" Padding="16,46,12,12">
         <DockPanel>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*,8,*" Margin="0,0,0,12">
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*,8,*" Margin="0,0,0,8">
             <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding NewRequestCommand}"
                     AutomationProperties.Name="New request" ToolTip.Tip="New request (Ctrl+N)">
               <StackPanel Orientation="Horizontal" Spacing="7">
@@ -57,14 +57,14 @@
               <TextBlock Text="URL" />
             </Button>
           </Grid>
-          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,12" Command="{Binding OpenEnvironmentsPageCommand}"
+          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,8" Command="{Binding OpenEnvironmentsPageCommand}"
                   AutomationProperties.Name="Environments" ToolTip.Tip="Edit your environments and their variables">
             <StackPanel Orientation="Horizontal" Spacing="7">
               <PathIcon Data="{DynamicResource IconSliders}" />
               <TextBlock Text="Environments" />
             </StackPanel>
           </Button>
-          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,12" Command="{Binding Mock.OpenCommand}"
+          <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Margin="0,0,0,8" Command="{Binding Mock.OpenCommand}"
                   AutomationProperties.Name="Mock server" ToolTip.Tip="Answer requests on this computer from an OpenAPI description (listens on 127.0.0.1 only)">
             <TextBlock Text="Mock server" />
           </Button>
@@ -584,7 +584,7 @@
                       Command="{Binding DismissStorageWarningCommand}" ToolTip.Tip="Dismiss" />
             </Grid>
           </Border>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,16">
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,12">
             <TextBox Grid.Column="0" Classes="bare" FontSize="18" FontWeight="SemiBold" Padding="0,4"
                      Text="{Binding RequestName}" PlaceholderText="Untitled request" />
             <ComboBox Grid.Column="1" Width="200" Margin="12,0" ItemsSource="{Binding Environments}"
