@@ -17,6 +17,12 @@ public sealed record RunOptions
     public IReadOnlyList<KeyValue> Overrides { get; init; } = [];
 
     public bool StopOnFirstFailure { get; init; }
+
+    /// <summary>Run only Requests with at least one of these tags, which their Folders give them (ADR 0030). Empty means no filter.</summary>
+    public IReadOnlyList<string> IncludeTags { get; init; } = [];
+
+    /// <summary>Skip Requests with any of these tags. Skipping wins over including.</summary>
+    public IReadOnlyList<string> ExcludeTags { get; init; } = [];
 }
 
 public sealed record RequestRunResult(
@@ -122,21 +128,24 @@ public sealed class CollectionRunner(RequestSender sender)
         {
             var folderMatched = string.IsNullOrEmpty(options.FolderName);
             foreach (var item in collection.Items)
-                Walk(collection, item, "", folderMatched, collection.Scripts.Count > 0, options, planned);
+                Walk(collection, item, "", folderMatched, collection.Scripts.Count > 0, [], options, planned);
         }
 
         // A run that tests nothing must not look like a success.
         if (planned.Count == 0)
         {
-            throw new RunSetupException(string.IsNullOrEmpty(options.FolderName)
-                ? "There are no requests to run."
-                : $"No requests were found in a folder named \"{options.FolderName}\".");
+            if (!string.IsNullOrEmpty(options.FolderName))
+                throw new RunSetupException($"No requests were found in a folder named \"{options.FolderName}\".");
+            if (options.IncludeTags.Count > 0 || options.ExcludeTags.Count > 0)
+                throw new RunSetupException("No requests match the tags given.");
+            throw new RunSetupException("There are no requests to run.");
         }
 
         return planned;
     }
 
-    private static void Walk(Collection collection, CollectionItem item, string parentPath, bool folderMatched, bool parentHasScripts, RunOptions options, List<Planned> planned)
+    private static void Walk(Collection collection, CollectionItem item, string parentPath, bool folderMatched, bool parentHasScripts,
+        IReadOnlyList<string> inheritedTags, RunOptions options, List<Planned> planned)
     {
         // A hidden folder, and everything in it, is not run (ADR 0032).
         if (collection.HiddenItemIds?.Contains(item.Id) == true)
@@ -145,16 +154,19 @@ public sealed class CollectionRunner(RequestSender sender)
         var path = parentPath.Length > 0 ? $"{parentPath} / {item.Name}" : item.Name;
         var hasScripts = parentHasScripts || item.Scripts.Count > 0;
 
+        // Requests inherit the tags of every Folder above them (ADR 0030).
+        var tags = inheritedTags.Concat(item.Tags ?? []).ToList();
+
         if (item.Request is { } request)
         {
-            if (folderMatched)
+            if (folderMatched && FolderTags.Selects(inheritedTags, options.IncludeTags, options.ExcludeTags))
                 planned.Add(new Planned(collection, item.Id, path, request, hasScripts));
             return;
         }
 
         var matched = folderMatched || item.Name.Equals(options.FolderName, StringComparison.OrdinalIgnoreCase);
         foreach (var child in item.Children)
-            Walk(collection, child, path, matched, hasScripts, options, planned);
+            Walk(collection, child, path, matched, hasScripts, tags, options, planned);
     }
 
     private async Task<RequestRunResult> RunOneAsync(Planned item, Workspace workspace, ApiEnvironment? environment, List<KeyValue> captured, RunOptions options, CancellationToken cancellationToken)
@@ -205,7 +217,7 @@ public sealed class CollectionRunner(RequestSender sender)
         // Captures are often tokens, and nothing marks which ones, so all of them are masked.
         var values = variables.Where(v => v.IsSecret).Concat(overrides).Concat(captured).Select(v => v.Value).ToList();
         if (resolved.Auth is { } auth)
-            values.AddRange([auth.Token, auth.Password, auth.KeyValue]);
+            values.AddRange(WorkspaceSecrets.AuthSecretValues(auth));
 
         // Longest first, so that a value containing another is masked whole.
         return values.Where(v => v.Length >= MinMaskedLength).Distinct().OrderByDescending(v => v.Length).ToList();

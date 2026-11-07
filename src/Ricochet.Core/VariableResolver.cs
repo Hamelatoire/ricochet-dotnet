@@ -185,6 +185,17 @@ public static partial class VariableResolver
                 Password = Expand(request.Auth.Password, true),
                 KeyName = Expand(request.Auth.KeyName, true),
                 KeyValue = Expand(request.Auth.KeyValue, true),
+                Details = request.Auth.Details is not { } details ? null : new
+                {
+                    ConsumerKey = Expand(details.ConsumerKey, true),
+                    ConsumerSecret = Expand(details.ConsumerSecret, true),
+                    TokenSecret = Expand(details.TokenSecret, true),
+                    AwsAccessKeyId = Expand(details.AwsAccessKeyId, true),
+                    AwsSecretAccessKey = Expand(details.AwsSecretAccessKey, true),
+                    AwsSessionToken = Expand(details.AwsSessionToken, true),
+                    AwsRegion = Expand(details.AwsRegion, true),
+                    AwsService = Expand(details.AwsService, true),
+                },
             };
 
         // Assertions and Captures never run functions, so their text is the same in both copies.
@@ -203,6 +214,17 @@ public static partial class VariableResolver
                 Password = auth.Password.Sent,
                 KeyName = auth.KeyName.Sent,
                 KeyValue = auth.KeyValue.Sent,
+                Details = auth.Details is null ? null : new AuthDetails
+                {
+                    ConsumerKey = auth.Details.ConsumerKey.Sent,
+                    ConsumerSecret = auth.Details.ConsumerSecret.Sent,
+                    TokenSecret = auth.Details.TokenSecret.Sent,
+                    AwsAccessKeyId = auth.Details.AwsAccessKeyId.Sent,
+                    AwsSecretAccessKey = auth.Details.AwsSecretAccessKey.Sent,
+                    AwsSessionToken = auth.Details.AwsSessionToken.Sent,
+                    AwsRegion = auth.Details.AwsRegion.Sent,
+                    AwsService = auth.Details.AwsService.Sent,
+                },
             },
             Assertions = assertions,
             Captures = captures,
@@ -220,6 +242,17 @@ public static partial class VariableResolver
                 Password = auth.Password.Shown,
                 KeyName = auth.KeyName.Shown,
                 KeyValue = auth.KeyValue.Shown,
+                Details = auth.Details is null ? null : new AuthDetails
+                {
+                    ConsumerKey = auth.Details.ConsumerKey.Shown,
+                    ConsumerSecret = auth.Details.ConsumerSecret.Shown,
+                    TokenSecret = auth.Details.TokenSecret.Shown,
+                    AwsAccessKeyId = auth.Details.AwsAccessKeyId.Shown,
+                    AwsSecretAccessKey = auth.Details.AwsSecretAccessKey.Shown,
+                    AwsSessionToken = auth.Details.AwsSessionToken.Shown,
+                    AwsRegion = auth.Details.AwsRegion.Shown,
+                    AwsService = auth.Details.AwsService.Shown,
+                },
             },
         };
 
@@ -240,8 +273,10 @@ public static partial class VariableResolver
         texts.AddRange(request.Auth switch
         {
             { Kind: AuthKinds.Bearer } auth => [auth.Token],
-            { Kind: AuthKinds.Basic } auth => [auth.Username, auth.Password],
+            { Kind: AuthKinds.Basic or AuthKinds.Digest } auth => [auth.Username, auth.Password],
             { Kind: AuthKinds.ApiKey } auth => [auth.KeyName, auth.KeyValue],
+            { Kind: AuthKinds.OAuth1, Details: { } d } auth => [d.ConsumerKey, d.ConsumerSecret, auth.Token, d.TokenSecret],
+            { Kind: AuthKinds.AwsSigV4, Details: { } d } => [d.AwsAccessKeyId, d.AwsSecretAccessKey, d.AwsSessionToken, d.AwsRegion, d.AwsService],
             _ => [],
         });
 

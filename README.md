@@ -89,6 +89,9 @@ For a local run, a `.env` file in the workspace folder works too, with `KEY=VALU
 
 Requests run in order, and saved values carry forward within a collection. Running only one folder won't include a login request outside it, so its requests fail without being sent. Postman scripts aren't run, so the summary says how many requests had any.
 
+Folders can have tags, which their requests inherit. `--tag smoke` runs only requests with that tag, and `--exclude-tag slow` skips them. Both can repeat, and a request with an excluded tag is skipped even when it has an included one. A selection that matches nothing exits with `2`.
+
+
 On Windows, Smart App Control can block a newly built `ricochet.exe` because it's unsigned. Signing release builds is the lasting fix. In development, you can run the same code with `dotnet run --project src/Ricochet.Cli -- run`.
 
 ## Your data

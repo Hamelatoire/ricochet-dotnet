@@ -82,9 +82,33 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     private void SyncVisible()
     {
         VisibleChildren.Clear();
-        foreach (var child in Children.Where(c => !c.IsHidden))
+        var filter = Root._tagFilter;
+        var inherited = TaggedWithAncestors(filter);
+        foreach (var child in Children.Where(c => !c.IsHidden && c.MatchesTagFilter(filter, inherited)))
             VisibleChildren.Add(child);
     }
+
+    // The tag filter lives on a collection and applies to all of its items (ADR 0030).
+    private string _tagFilter = "";
+
+    /// <summary>Shows only items with this tag, or inside a folder that has it, plus the folders that lead to them. Empty shows everything.</summary>
+    public void ApplyTagFilter(string filter)
+    {
+        _tagFilter = filter;
+        SyncVisibleTree();
+    }
+
+    private bool MatchesTagFilter(string filter, bool inherited)
+    {
+        if (filter.Length == 0)
+            return true;
+
+        var tagged = inherited || FolderTags.Contains(Tags, filter);
+        return tagged || Children.Any(c => !c.IsHidden && c.MatchesTagFilter(filter, tagged));
+    }
+
+    private bool TaggedWithAncestors(string filter) =>
+        filter.Length > 0 && (FolderTags.Contains(Tags, filter) || Parent?.TaggedWithAncestors(filter) == true);
 
     private void SyncVisibleTree()
     {
@@ -149,6 +173,23 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     [ObservableProperty] private bool _isRenaming;
 
     [ObservableProperty] private string _renameText = "";
+
+    /// <summary>Tags on a folder (ADR 0030). Its requests inherit them. Empty on collections and requests.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasTags), nameof(TagsLabel))]
+    private IReadOnlyList<string> _tags = [];
+
+    /// <summary>True while the folder's tags are being edited in the tree.</summary>
+    [ObservableProperty] private bool _isEditingTags;
+
+    /// <summary>The comma-separated tags being typed, shown while editing.</summary>
+    [ObservableProperty] private string _tagsText = "";
+
+    public bool HasTags => Tags.Count > 0;
+    public string TagsLabel => string.Join(", ", Tags);
+
+    /// <summary>Only folders take tags, so the tag button is shown on them alone.</summary>
+    public bool TagsVisible => Parent is not null && Request is null;
 
     /// <summary>Set on a Collection made from an OpenAPI URL (ADR 0014), so running the same URL updates it.</summary>
     public string? SpecUrl { get; set; }
@@ -228,6 +269,39 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     [RelayCommand]
     private void CancelRename() => IsRenaming = false;
 
+    /// <summary>Starts editing the tags, or saves them if they are already being edited.</summary>
+    [RelayCommand]
+    private void ToggleTags()
+    {
+        if (!TagsVisible)
+            return;
+
+        if (IsEditingTags)
+        {
+            CommitTags();
+            return;
+        }
+
+        TagsText = string.Join(", ", Tags);
+        IsEditingTags = true;
+    }
+
+    [RelayCommand]
+    private void CommitTags()
+    {
+        IsEditingTags = false;
+        var parsed = FolderTags.Parse(TagsText);
+        if (parsed.SequenceEqual(Tags))
+            return;
+
+        Tags = parsed;
+        Root.SyncVisibleTree();
+        _rename(this); // Saved the same way a rename is.
+    }
+
+    [RelayCommand]
+    private void CancelTags() => IsEditingTags = false;
+
     /// <summary>Opens the name for editing, as the rename button does.</summary>
     public void StartRename()
     {
@@ -264,7 +338,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
 
     private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
     {
-        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename, addFolder) { Name = item.Name, Request = item.Request };
+        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename, addFolder) { Name = item.Name, Request = item.Request, Tags = item.Tags ?? [] };
         node.Variables.Load(item.Variables);
         foreach (var child in item.Children)
             node.Children.Add(FromItem(child, node, delete, rename, addFolder));
@@ -300,6 +374,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         Variables = Variables.ToEntries(),
         Children = Children.Select(c => c.ToItem()).ToList(),
         Scripts = _scripts,
+        Tags = FolderTags.Normalize(Tags),
     };
 }
 

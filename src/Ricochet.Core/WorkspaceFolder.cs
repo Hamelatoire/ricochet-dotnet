@@ -37,6 +37,9 @@ public sealed record FolderFile
 
     public IReadOnlyList<StoredScript> Scripts { get; set; } = [];
     public IReadOnlyList<string> Order { get; set; } = [];
+
+    /// <summary>Null when there are none, so the file gains nothing (ADR 0030).</summary>
+    public IReadOnlyList<string>? Tags { get; set; }
 }
 
 public sealed record RequestFile
@@ -302,6 +305,7 @@ public sealed class WorkspaceFolder(string root)
                 Name = file.Name ?? "",
                 Variables = file.Variables ?? [],
                 Scripts = file.Scripts ?? [],
+                Tags = FolderTags.Normalize(file.Tags),
                 Children = ReadChildren(relative, file.Order ?? [], issues),
             };
         }
@@ -454,6 +458,7 @@ public sealed class WorkspaceFolder(string root)
                     Name = item.Name,
                     Variables = item.Variables.Count > 0 ? item.Variables : null,
                     Scripts = item.Scripts,
+                    Tags = FolderTags.Normalize(item.Tags),
                     Order = item.Children.Select(c => c.Id).ToList(),
                 },
                 WorkspaceJsonContext.Default.FolderFile);
