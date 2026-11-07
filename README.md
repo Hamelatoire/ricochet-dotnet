@@ -57,7 +57,7 @@ Ricochet follows your system's light or dark setting. Choose **System**, **Light
 
 ## Settings
 
-Choose **Settings** at the bottom of the sidebar for preferences that stay on this machine: request timeout, following redirects, certificate checks, the largest response to keep, and wrapping long lines. They are never saved in the workspace, so a `git pull` cannot change them. While certificate checks are off, a warning shows on every page. See [ADR 0007](docs/adr/0007-personal-settings-page.md).
+Choose **Settings** at the bottom of the sidebar for preferences that stay on this machine: request timeout, following redirects, a proxy, a client certificate and its password, certificate checks, the largest response to keep, and wrapping long lines. They are never saved in the workspace, so a `git pull` cannot change them. The certificate password is kept in your operating system's secure storage. While certificate checks are off, a warning shows on every page. See [ADR 0007](docs/adr/0007-personal-settings-page.md) and [ADR 0026](docs/adr/0026-proxy-and-client-certificates-for-requests.md).
 
 ![The Settings page](docs/screenshots/settings-page-light.png)
 

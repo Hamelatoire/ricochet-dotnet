@@ -20,6 +20,9 @@ public sealed partial class KeyValueRowViewModel(
     [NotifyPropertyChangedFor(nameof(ValueMask), nameof(ValuePlaceholder))]
     private bool _isSecret;
 
+    /// <summary>Asks for the value each time a Request uses it (ADR 0019).</summary>
+    [ObservableProperty] private bool _isPrompt;
+
     public char ValueMask => IsSecret ? '•' : '\0';
 
     // A Secret arriving through git or an import has no value here, and this is where the user learns that.
@@ -50,12 +53,13 @@ public sealed partial class KeyValueListViewModel(
             row.Key = entry.Key;
             row.Value = entry.Value;
             row.IsSecret = allowSecrets && entry.IsSecret;
+            row.IsPrompt = allowSecrets && entry.IsPrompt;
             Items.Add(row);
         }
     }
 
     /// <summary>Sets the value for a key, adding its row if needed. An empty value removes the row, so the key falls back to its default.</summary>
-    public void Set(string key, string value, bool secret)
+    public void Set(string key, string value, bool secret, bool prompt = false)
     {
         var row = Items.FirstOrDefault(r => r.Key == key);
         if (value.Length == 0)
@@ -70,6 +74,7 @@ public sealed partial class KeyValueListViewModel(
             row = NewRow();
             row.Key = key;
             row.IsSecret = allowSecrets && secret;
+            row.IsPrompt = allowSecrets && prompt;
             Items.Add(row);
         }
 
@@ -77,7 +82,7 @@ public sealed partial class KeyValueListViewModel(
     }
 
     /// <summary>Adds a row for a key the list doesn't have yet, keeping its value. A row that exists is left as it is.</summary>
-    public void AddIfMissing(string key, string value, bool secret)
+    public void AddIfMissing(string key, string value, bool secret, bool prompt = false)
     {
         if (Items.Any(r => r.Key == key))
             return;
@@ -86,11 +91,12 @@ public sealed partial class KeyValueListViewModel(
         row.Key = key;
         row.Value = value;
         row.IsSecret = allowSecrets && secret;
+        row.IsPrompt = allowSecrets && prompt;
         Items.Add(row);
     }
 
     public List<KeyValue> ToEntries() =>
         Items.Where(row => row.Key.Trim().Length > 0)
-            .Select(row => new KeyValue(row.Key, row.Value, row.Enabled, row.IsSecret))
+            .Select(row => new KeyValue(row.Key, row.Value, row.Enabled, row.IsSecret, row.IsPrompt))
             .ToList();
 }

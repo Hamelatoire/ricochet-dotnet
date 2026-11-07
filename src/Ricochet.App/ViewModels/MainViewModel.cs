@@ -35,10 +35,12 @@ public sealed partial class MainViewModel : ObservableObject
         _store = store;
         _vault = vault;
         _storedSecrets = LoadSecrets();
+        _clientCertificatePassword = PersonalSecrets.ClientCertificatePassword(_storedSecrets) ?? "";
+        // Load first: settings and the theme are read from the state that Load reads.
+        var loaded = store.Load();
         _settings = store.Settings;
         ApplySettings();
 
-        var loaded = store.Load();
         _themeChoice = ThemeSettings.ChoiceName(store.Theme);
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
@@ -288,6 +290,63 @@ public sealed partial class MainViewModel : ObservableObject
         set => ChangeSettings(s => s with { WrapResponse = value }, nameof(WrapResponse));
     }
 
+    /// <summary>An HTTP proxy, or empty for the operating system's proxy (ADR 0026).</summary>
+    public string ProxyUrl
+    {
+        get => _settings.ProxyUrl;
+        set => ChangeSettings(s => s with { ProxyUrl = value }, nameof(ProxyUrl));
+    }
+
+    /// <summary>A .pfx or .p12 file, or empty for none. Only the path is saved; the file is not copied.</summary>
+    public string ClientCertificatePath
+    {
+        get => _settings.ClientCertificatePath;
+        set => ChangeSettings(s => s with { ClientCertificatePath = value }, nameof(ClientCertificatePath));
+    }
+
+    private string _clientCertificatePassword = "";
+
+    /// <summary>The certificate's password. It is a Secret: kept in secure storage, never in state.json or the workspace (ADR 0026).</summary>
+    public string ClientCertificatePassword
+    {
+        get => _clientCertificatePassword;
+        set
+        {
+            if (value == _clientCertificatePassword)
+                return;
+
+            _clientCertificatePassword = value;
+            try
+            {
+                var secrets = PersonalSecrets.WithClientCertificatePassword(_storedSecrets, value);
+                _vault.Save(secrets);
+                _storedSecrets = secrets;
+            }
+            catch (SecretVaultException ex)
+            {
+                StorageWarning = $"{ex.Message} The certificate password will last only until you close Ricochet.";
+            }
+
+            ApplySettings();
+            OnPropertyChanged(nameof(ClientCertificatePassword));
+        }
+    }
+
+    private string _connectionProblem = "";
+
+    /// <summary>Why the proxy or client certificate cannot be used, shown on the settings page. Empty when they can.</summary>
+    public string ConnectionProblem
+    {
+        get => _connectionProblem;
+        private set
+        {
+            if (SetProperty(ref _connectionProblem, value))
+                OnPropertyChanged(nameof(HasConnectionProblem));
+        }
+    }
+
+    public bool HasConnectionProblem => ConnectionProblem.Length > 0;
+
     /// <summary>Shown on every page while certificate checks are off, because that exposes credentials.</summary>
     public bool ShowTlsWarning => !_settings.VerifyTlsCertificates;
 
@@ -300,11 +359,14 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowTlsWarning));
     }
 
-    private void ApplySettings() => _sender.Configure(
+    private void ApplySettings() => ConnectionProblem = _sender.Configure(
         TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds),
         _settings.FollowRedirects,
         _settings.VerifyTlsCertificates,
-        _settings.MaxResponseMegabytes * 1024L * 1024L);
+        _settings.MaxResponseMegabytes * 1024L * 1024L,
+        _settings.ProxyUrl,
+        _settings.ClientCertificatePath,
+        _clientCertificatePassword) ?? "";
 
     [RelayCommand]
     private void DismissStorageWarning() => StorageWarning = "";
@@ -547,6 +609,22 @@ public sealed partial class MainViewModel : ObservableObject
     public bool IsUserPasswordAuth => IsBasicAuth || IsDigestAuth;
 
     /// <summary>
+    /// The value a {{name}} in the URL currently resolves to, for the hover tip. Null when it has no value
+    /// or is a Secret, so a Secret's value is never shown on screen.
+    /// </summary>
+    public string? VariableValueForHover(string name)
+    {
+        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries()];
+        var match = scopes.SelectMany(scope => scope ?? []).LastOrDefault(entry => entry.Enabled && entry.Key == name);
+        if (match is null)
+            return null;
+        if (match.IsSecret)
+            return "Secret, hidden";
+        if (match.IsPrompt)
+            return "Asked each time it is sent";
+        return match.Value;
+    }
+
     /// <summary>Every Variable a send of the open Request can see, lowest priority first, layered the same way a send layers them (ADR 0009).</summary>
     public IReadOnlyList<KeyValue> VariablesInScope() => VariablesInScope(DotEnv.Read(_store.FolderPath));
 
@@ -746,7 +824,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         foreach (var variable in EditingVariablesScope.Variables.Items.Where(row => row.Key.Trim().Length > 0))
-            VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret,
+            VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret, variable.IsPrompt,
                 VariablesEnvironment.Variables, VariablesEnvironment.Name, MoveVariable));
     }
 
@@ -759,7 +837,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         // The environment keeps a value it already has. Otherwise it takes the collection's default.
-        environment.Variables.AddIfMissing(variable.Key, variable.Value, variable.IsSecret);
+        environment.Variables.AddIfMissing(variable.Key, variable.Value, variable.IsSecret, variable.IsPrompt);
         defaults.Items.Remove(variable);
         await PersistAsync();
     }
@@ -1065,27 +1143,39 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         // The request is hidden behind the page, so the shortcut must not send it unseen.
-        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen)
+        if (IsEnvironmentsPageOpen || IsVariablesPageOpen || IsSettingsPageOpen || IsPromptDialogOpen)
             return;
+
+        var request = CurrentRequest();
+        var collectionId = CurrentCollection?.Id;
+
+        // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
+        var dotEnv = DotEnv.Read(_store.FolderPath);
+        var variables = VariablesInScope(dotEnv);
+
+        // Values for prompt Variables are asked first, for this send only (ADR 0019). Cancelling the prompt sends nothing.
+        var prompts = VariableResolver.FindPromptVariables(request, variables);
+        IReadOnlyDictionary<string, string>? answers = null;
+        if (prompts.Count > 0)
+        {
+            answers = await AskForPromptValuesAsync(prompts);
+            if (answers is null)
+                return;
+        }
 
         using var cts = new CancellationTokenSource();
         _sendCts = cts;
         IsSending = true;
         ClearResponse();
 
-        var request = CurrentRequest();
         // History keeps this copy, with generated values filled in and Variables as written (ADR 0008).
         var historyRequest = request;
-        var collectionId = CurrentCollection?.Id;
         var unresolved = "";
         var envProblems = "";
         try
         {
-            // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
-            var dotEnv = DotEnv.Read(_store.FolderPath);
             envProblems = DotEnvNotice(dotEnv);
-            var variables = VariablesInScope(dotEnv);
-            var resolution = VariableResolver.Resolve(request, variables);
+            var resolution = VariableResolver.Resolve(request, variables, answers);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
             var names = VariableResolver.FindPlaceholders(resolved);
@@ -1488,6 +1578,35 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     private void CloseImportReport() => ImportReport = "";
+
+    [ObservableProperty] private bool _isPromptDialogOpen;
+    public ObservableCollection<PromptVariableRowViewModel> PromptRows { get; } = [];
+    private TaskCompletionSource<IReadOnlyDictionary<string, string>?>? _promptAnswer;
+
+    private Task<IReadOnlyDictionary<string, string>?> AskForPromptValuesAsync(IReadOnlyList<PromptVariable> prompts)
+    {
+        PromptRows.Clear();
+        foreach (var prompt in prompts)
+            PromptRows.Add(new PromptVariableRowViewModel(prompt.Name, prompt.Default));
+
+        _promptAnswer = new TaskCompletionSource<IReadOnlyDictionary<string, string>?>();
+        IsPromptDialogOpen = true;
+        return _promptAnswer.Task;
+    }
+
+    [RelayCommand]
+    private void ConfirmPrompt() => FinishPrompt(PromptRows.ToDictionary(row => row.Name, row => row.Value));
+
+    [RelayCommand]
+    private void CancelPrompt() => FinishPrompt(null);
+
+    private void FinishPrompt(IReadOnlyDictionary<string, string>? answers)
+    {
+        IsPromptDialogOpen = false;
+        PromptRows.Clear();
+        _promptAnswer?.TrySetResult(answers);
+        _promptAnswer = null;
+    }
 
     [ObservableProperty] private bool _isSpecDialogOpen;
     [ObservableProperty] private string _specUrl = "";

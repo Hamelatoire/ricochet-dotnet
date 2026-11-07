@@ -8,6 +8,9 @@ namespace Ricochet.Core;
 /// <summary>The request to send, and the copy History keeps: built-in function values filled in, Variables left as written.</summary>
 public sealed record ResolvedRequests(ApiRequest Sent, ApiRequest History);
 
+/// <summary>A prompt Variable the request uses (ADR 0019). Default is its stored value, which the prompt starts from.</summary>
+public sealed record PromptVariable(string Name, string Default);
+
 /// <summary>
 /// Replaces {{name}} placeholders with variables and built-in functions (ADR 0008).
 /// Unknown names are left as written so the problem stays visible.
@@ -56,17 +59,62 @@ public static partial class VariableResolver
     public static ApiRequest Apply(ApiRequest request, IEnumerable<KeyValue> variables) => Resolve(request, variables).Sent;
 
     /// <summary>
+    /// The prompt Variables this request uses, directly or through other Variables, with the value each one
+    /// would otherwise have. A prompt Variable's own stored value is not searched further, because the answer replaces it (ADR 0019).
+    /// </summary>
+    public static IReadOnlyList<PromptVariable> FindPromptVariables(ApiRequest request, IEnumerable<KeyValue> variables)
+    {
+        var winners = new Dictionary<string, KeyValue>();
+        foreach (var variable in variables)
+        {
+            if (variable.Enabled && variable.Key.Trim().Length > 0 && !(variable.IsSecret && variable.Value.Length == 0))
+                winners[variable.Key.Trim()] = variable;
+        }
+
+        var found = new List<PromptVariable>();
+        var seen = new HashSet<string>();
+        var pending = new Queue<string>(FindPlaceholders(request));
+        while (pending.Count > 0)
+        {
+            var name = pending.Dequeue();
+            if (!seen.Add(name) || !winners.TryGetValue(name, out var variable))
+                continue;
+
+            if (variable.IsPrompt)
+            {
+                found.Add(new PromptVariable(name, variable.Value));
+                continue;
+            }
+
+            foreach (Match match in Placeholder().Matches(variable.Value))
+                pending.Enqueue(match.Groups[1].Value.Trim());
+        }
+
+        return found;
+    }
+
+    /// <summary>
     /// Resolves once, so the request sent and the History copy hold the same generated values. The History copy keeps
     /// Variables as written, so a Secret's value never reaches History through it.
+    /// <paramref name="answers"/> holds the values typed into the prompt for this send only (ADR 0019). An empty answer
+    /// leaves its Variable unset, so it is reported rather than sent blank.
     /// </summary>
-    public static ResolvedRequests Resolve(ApiRequest request, IEnumerable<KeyValue> variables)
+    public static ResolvedRequests Resolve(ApiRequest request, IEnumerable<KeyValue> variables, IReadOnlyDictionary<string, string>? answers = null)
     {
         var lookup = new Dictionary<string, string>();
         foreach (var variable in variables)
         {
-            // A Secret with no value on this machine counts as unset, so it gets reported rather than sent blank.
-            if (variable.Enabled && variable.Key.Length > 0 && !(variable.IsSecret && variable.Value.Length == 0))
+            // A Secret or prompt Variable with no value here counts as unset, so it gets reported rather than sent blank.
+            if (variable.Enabled && variable.Key.Length > 0 && !((variable.IsSecret || variable.IsPrompt) && variable.Value.Length == 0))
                 lookup[variable.Key.Trim()] = variable.Value;
+        }
+
+        foreach (var (name, answer) in answers ?? new Dictionary<string, string>())
+        {
+            if (answer.Length == 0)
+                lookup.Remove(name);
+            else
+                lookup[name] = answer;
         }
 
         // A variable is expanded once per send, so every use of it sees the same generated values (ADR 0008).
