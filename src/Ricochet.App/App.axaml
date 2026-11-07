@@ -162,6 +162,10 @@
     <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
     <CornerRadius x:Key="OverlayCornerRadius">10</CornerRadius>
     <Thickness x:Key="TextControlBorderThemeThicknessFocused">1</Thickness>
+
+    <!-- Density (ADR 0042): row heights and click targets are named here, so the layout is tuned in one place. Text sizes do not change. -->
+    <x:Double x:Key="TreeRowMinHeight">28</x:Double>
+    <x:Double x:Key="IconTargetSize">28</x:Double>
     </ResourceDictionary>
   </Application.Resources>
 
@@ -410,6 +414,8 @@
       <Setter Property="Padding" Value="7" />
       <Setter Property="FontSize" Value="10.5" />
       <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="MinWidth" Value="{StaticResource IconTargetSize}" />
+      <Setter Property="MinHeight" Value="{StaticResource IconTargetSize}" />
     </Style>
     <Style Selector="Button PathIcon">
       <Setter Property="Width" Value="14" />
@@ -419,7 +425,8 @@
     <Style Selector="Button.folderaction">
       <Setter Property="FontSize" Value="15" />
       <Setter Property="Padding" Value="6,1" />
-      <Setter Property="MinWidth" Value="26" />
+      <Setter Property="MinWidth" Value="{StaticResource IconTargetSize}" />
+      <Setter Property="MinHeight" Value="{StaticResource IconTargetSize}" />
     </Style>
     <Style Selector="Button.mini PathIcon">
       <Setter Property="Width" Value="11" />
@@ -440,7 +447,7 @@
     <!-- Rounded rows in the sidebar -->
     <Style Selector="TreeViewItem">
       <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="MinHeight" Value="{StaticResource TreeRowMinHeight}" />
     </Style>
     <Style Selector="TreeViewItem /template/ Border#PART_LayoutRoot">
       <Setter Property="CornerRadius" Value="8" />

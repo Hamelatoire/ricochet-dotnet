@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # A denser layout with larger controls
