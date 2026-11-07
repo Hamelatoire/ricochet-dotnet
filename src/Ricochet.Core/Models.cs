@@ -71,6 +71,9 @@ public sealed record CollectionItem
     public ApiRequest? Request { get; set; }
     public IReadOnlyList<CollectionItem> Children { get; set; } = [];
     public IReadOnlyList<StoredScript> Scripts { get; set; } = [];
+
+    /// <summary>On a Folder: the Variables for the Requests inside it (ADR 0020). Empty on a Request.</summary>
+    public IReadOnlyList<KeyValue> Variables { get; set; } = [];
 }
 
 public sealed record Collection

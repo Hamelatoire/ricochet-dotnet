@@ -498,7 +498,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public string? VariableValueForHover(string name)
     {
-        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries()];
+        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), FolderScope(), ActiveEnvironment.Variables.ToEntries()];
         var match = scopes.SelectMany(scope => scope ?? []).LastOrDefault(entry => entry.Enabled && entry.Key == name);
         if (match is null)
             return null;
@@ -506,6 +506,10 @@ public sealed partial class MainViewModel : ObservableObject
             return "Secret, hidden";
         return match.Value;
     }
+
+    /// <summary>The Variables of the Folders around the request on screen, outermost first (ADR 0020).</summary>
+    private IReadOnlyList<KeyValue> FolderScope() =>
+        _currentNode?.Root.ToCollection() is { } collection ? VariableResolver.FolderScope(collection, _currentNode.Id) : [];
 
     [ObservableProperty] private TreeNodeViewModel? _selectedNode;
     [ObservableProperty] private HistoryEntry? _selectedHistory;
@@ -584,6 +588,18 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool HasEditingVariablesCollection => EditingVariablesCollection is not null;
 
+    /// <summary>The collection or folder whose Variables the page edits. A folder's Variables apply to the requests inside it (ADR 0020).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VariablesScopeHint))]
+    private TreeNodeViewModel? _editingVariablesScope;
+
+    /// <summary>The collection being edited and each folder in it, for choosing what the page edits.</summary>
+    public ObservableCollection<TreeNodeViewModel> VariableScopes { get; } = [];
+
+    public string VariablesScopeHint => EditingVariablesScope is { Parent: not null }
+        ? "Variables for the requests inside this folder. They override the collection's, and an environment's values override them."
+        : "Variable names and defaults for this collection";
+
     // The Environments and Variables pages share one place on screen, so closing Environments also closes Variables.
     partial void OnIsEnvironmentsPageOpenChanged(bool value)
     {
@@ -605,6 +621,19 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnEditingVariablesCollectionChanged(TreeNodeViewModel? oldValue, TreeNodeViewModel? newValue)
     {
+        EditingVariablesScope = newValue;
+        RefreshVariableScopes();
+    }
+
+    partial void OnEditingVariablesScopeChanged(TreeNodeViewModel? oldValue, TreeNodeViewModel? newValue)
+    {
+        // Clearing the picker's list also clears its selection, which must not leave the page editing nothing.
+        if (newValue is null && EditingVariablesCollection is not null)
+        {
+            EditingVariablesScope = EditingVariablesCollection;
+            return;
+        }
+
         if (oldValue is not null)
             oldValue.Variables.Items.CollectionChanged -= OnVariableNamesChanged;
         if (newValue is not null)
@@ -612,22 +641,41 @@ public sealed partial class MainViewModel : ObservableObject
         RebuildVariableOverrides();
     }
 
+    /// <summary>Lists the collection being edited, then every folder in it, in the order the sidebar shows them.</summary>
+    private void RefreshVariableScopes()
+    {
+        var keep = EditingVariablesScope;
+        VariableScopes.Clear();
+        if (EditingVariablesCollection is not null)
+            AddVariableScopes(EditingVariablesCollection);
+
+        // A folder that is still listed stays selected. One that was deleted or moved away falls back to the collection.
+        EditingVariablesScope = keep is not null && VariableScopes.Contains(keep) ? keep : EditingVariablesCollection;
+    }
+
+    private void AddVariableScopes(TreeNodeViewModel node)
+    {
+        VariableScopes.Add(node);
+        foreach (var child in node.Children.Where(c => c.IsContainer))
+            AddVariableScopes(child);
+    }
+
     private void OnVariableNamesChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildVariableOverrides();
 
     private void RebuildVariableOverrides()
     {
         VariableOverrides.Clear();
-        if (EditingVariablesCollection is null || VariablesEnvironment is null)
+        if (EditingVariablesScope is null || VariablesEnvironment is null)
             return;
 
-        foreach (var variable in EditingVariablesCollection.Variables.Items.Where(row => row.Key.Trim().Length > 0))
+        foreach (var variable in EditingVariablesScope.Variables.Items.Where(row => row.Key.Trim().Length > 0))
             VariableOverrides.Add(new VariableOverrideRowViewModel(variable.Key, variable.Value, variable.IsSecret,
                 VariablesEnvironment.Variables, VariablesEnvironment.Name, MoveVariable));
     }
 
     private async void MoveVariable(VariableOverrideRowViewModel row)
     {
-        var defaults = EditingVariablesCollection?.Variables;
+        var defaults = EditingVariablesScope?.Variables;
         var environment = VariablesEnvironment;
         var variable = defaults?.Items.FirstOrDefault(r => r.Key == row.Key);
         if (defaults is null || environment is null || variable is null)
@@ -647,6 +695,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsSettingsPageOpen = false;
         IsBulkPageOpen = false;
         EditingVariablesCollection = collection ?? CurrentCollection ?? EditingVariablesCollection ?? Collections.FirstOrDefault();
+        EditingVariablesScope = EditingVariablesCollection;
+        RefreshVariableScopes();
         VariablesEnvironment = HasActiveEnvironment ? ActiveEnvironment
             : EditableEnvironments.Contains(VariablesEnvironment!) ? VariablesEnvironment
             : EditableEnvironments.FirstOrDefault();
@@ -889,6 +939,7 @@ public sealed partial class MainViewModel : ObservableObject
             var variables = VariableResolver.Layer(
                 Globals.ToEntries(),
                 CurrentCollection?.Variables.ToEntries(),
+                FolderScope(),
                 ActiveEnvironment.Variables.ToEntries(),
                 CapturedFor(collectionId));
             var resolution = VariableResolver.Resolve(request, variables);
@@ -1038,6 +1089,7 @@ public sealed partial class MainViewModel : ObservableObject
         parent.IsExpanded = true;
         SelectedNode = folder; // Highlights the new folder, which the tree then scrolls to.
         folder.StartRename();
+        RefreshVariableScopes();
         await PersistAsync();
     }
 
@@ -1063,6 +1115,7 @@ public sealed partial class MainViewModel : ObservableObject
                 CurrentCollection = null;
         }
 
+        RefreshVariableScopes();
         await PersistAsync();
     }
 
@@ -1089,6 +1142,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         source.MoveTo(destination);
+        RefreshVariableScopes();
         await PersistAsync();
     }
 
