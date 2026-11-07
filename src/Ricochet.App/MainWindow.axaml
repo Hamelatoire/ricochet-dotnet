@@ -889,6 +889,33 @@
       </Border>
     </Border>
 
+    <!-- Values for prompt Variables (ADR 0019): asked before a send, used for that send only, never saved -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsPromptDialogOpen}">
+      <Border Classes="dialog" Width="520" MaxHeight="600">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Values for this send" Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+                     Text="This request uses variables marked Prompt. Each value is used for this send only, and is not saved." />
+          <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Cancel" Command="{Binding CancelPromptCommand}" AutomationProperties.Name="Cancel send" />
+            <Button Classes="primary" Content="Send" Command="{Binding ConfirmPromptCommand}" AutomationProperties.Name="Send with these values" />
+          </StackPanel>
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding PromptRows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PromptVariableRowViewModel">
+                  <StackPanel Spacing="4" Margin="0,0,0,12">
+                    <TextBlock Text="{Binding Name}" FontFamily="{DynamicResource MonoFont}" FontSize="12" Classes="muted" />
+                    <TextBox Classes="mono" Text="{Binding Value}" PlaceholderText="Value" AutomationProperties.Name="{Binding Name, StringFormat='Value for {0}'}" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Border>
+
     <!-- Choose which exports to import from a Postman data dump (ADR 0038) -->
     <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsDumpChoiceOpen}">
       <Border Classes="dialog" Width="640" MaxHeight="620" x:DataType="vm:DumpChoiceViewModel" DataContext="{Binding DumpChoice}">
