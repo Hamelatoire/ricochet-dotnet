@@ -166,4 +166,18 @@ public class BulkRunnerTests
         Assert.False(results[0].Succeeded);
         Assert.Contains("region", results[0].Detail);
     }
+
+    [Fact]
+    public async Task A_given_override_is_masked_in_the_detail_of_a_failed_id_like_a_secret()
+    {
+        // RunOptions.Overrides are treated as Secrets in reports, so a value given for a bulk run is masked too.
+        var handler = new Handler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent("key ovr-val-456 was rejected") });
+        var runner = new BulkRunner(new RequestSender(new HttpClient(handler)));
+        var results = new List<BulkItemResult>();
+
+        await runner.RunAsync(Empty(), Plain(), null, Template(), "id", ["p1"], results.Add, overrides: [new KeyValue("key", "ovr-val-456")]);
+
+        Assert.DoesNotContain("ovr-val-456", results[0].Detail);
+        Assert.Contains("***", results[0].Detail);
+    }
 }

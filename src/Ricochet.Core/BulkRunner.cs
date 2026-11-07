@@ -117,7 +117,7 @@ public sealed class BulkRunner(RequestSender sender)
     {
         var variables = VariableResolver.Layer(workspace.Globals, collection.Variables, folderScope, environment?.Variables, overrides, [new KeyValue(placeholder, id)]);
         var resolved = VariableResolver.Apply(template, variables);
-        var secrets = CollectionRunner.SecretsToMask(variables, [], [], resolved);
+        var secrets = CollectionRunner.SecretsToMask(variables, overrides, [], resolved);
 
         // Sending a literal {{name}} could reach the wrong place, so an unresolved one stops this id only.
         var missing = VariableResolver.FindPlaceholders(resolved);
