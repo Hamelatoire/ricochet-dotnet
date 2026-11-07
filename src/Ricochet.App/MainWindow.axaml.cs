@@ -216,7 +216,7 @@ public partial class MainWindow : Window
             AllowMultiple = true,
             FileTypeFilter =
             [
-                new FilePickerFileType("Postman exports") { Patterns = ["*.json"] },
+                new FilePickerFileType("Postman exports") { Patterns = ["*.json", "*.zip"] },
                 FilePickerFileTypes.All,
             ],
         });
