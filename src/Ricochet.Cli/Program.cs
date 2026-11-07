@@ -34,7 +34,9 @@ internal static class Program
 
         Variables can also come from environment variables named RICOCHET_VAR_<name>.
         Prefer those for secrets in CI, because --var values can show up in process lists.
-        Values set either way are masked in the output.
+        A .env file in the workspace folder supplies variables too, for local runs. Its values
+        yield to the workspace's own variables, and --var and RICOCHET_VAR_ values win over both.
+        Values from any of these are masked in the output.
 
         Exit codes:
           0  Everything passed.
@@ -109,6 +111,11 @@ internal static class Program
 
         workspace = WorkspaceSecrets.Merge(workspace, WorkspaceSecrets.ForWorkspace(LoadSecrets(), folder.Id));
 
+        // A .env file is for local runs (ADR 0021). Its values are Secrets, and they never go back into the workspace.
+        var dotEnv = DotEnv.Read(folder.Root);
+        foreach (var problem in dotEnv.Problems)
+            Console.Error.WriteLine($"Warning: {problem}");
+
         var colors = new Colors(!Console.IsOutputRedirected && Environment.GetEnvironmentVariable("NO_COLOR") is null);
         string? currentCollection = null;
         var startedAt = DateTimeOffset.Now;
@@ -128,6 +135,7 @@ internal static class Program
                 FolderName = options.FolderName,
                 EnvironmentName = options.Environment,
                 Overrides = [.. VariablesFromEnvironment(), .. options.Variables],
+                LocalVariables = dotEnv.Variables,
                 StopOnFirstFailure = options.Bail,
             },
             result =>

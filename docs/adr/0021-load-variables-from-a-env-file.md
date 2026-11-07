@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Load variables from a .env file
@@ -16,3 +16,7 @@ Ricochet will read an optional .env file in the workspace folder for local runs.
 ## Consequences
 
 - The .env file must be listed in .gitignore, which the workspace .gitignore decision covers (ADR 0031).
+
+## Built
+
+`DotEnv` in Core reads `.env` from the workspace folder. Its values are Secrets, and they are the lowest-priority scope: a Global, Collection, Environment or captured value with the same name wins, and `--var` or `RICOCHET_VAR_` win over all of them. The App reads the file on each send and each bulk run; the CLI reads it on each run. Values are masked in CLI output. Nothing returns them as part of a Workspace, so they are never saved. Malformed lines are skipped and reported. The file is not imported or rewritten.

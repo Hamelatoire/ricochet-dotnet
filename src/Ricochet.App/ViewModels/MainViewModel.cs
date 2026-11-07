@@ -884,9 +884,14 @@ public sealed partial class MainViewModel : ObservableObject
         var historyRequest = request;
         var collectionId = CurrentCollection?.Id;
         var unresolved = "";
+        var envProblems = "";
         try
         {
+            // The .env file is read on each send, so an edit to it applies at once (ADR 0021).
+            var dotEnv = DotEnv.Read(_store.FolderPath);
+            envProblems = string.Join('\n', dotEnv.Problems);
             var variables = VariableResolver.Layer(
+                dotEnv.Variables,
                 Globals.ToEntries(),
                 CurrentCollection?.Variables.ToEntries(),
                 ActiveEnvironment.Variables.ToEntries(),
@@ -915,7 +920,7 @@ public sealed partial class MainViewModel : ObservableObject
             foreach (var failure in captureOutcome.Failures)
                 TestResults.Add(new TestResultRow("FAIL", $"{failure.Description}: {failure.Message}", false));
 
-            Notice = JoinNotices(ScriptNotice(), unresolved, CredentialNotice(request), response.Truncated
+            Notice = JoinNotices(ScriptNotice(), unresolved, envProblems, CredentialNotice(request), response.Truncated
                 ? $"Response too large: showing the first {FormatSize(response.Body.Length)}."
                 : "");
             AddHistory(historyRequest, response.StatusCode, (long)response.Elapsed.TotalMilliseconds, collectionId);
