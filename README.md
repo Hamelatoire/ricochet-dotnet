@@ -13,6 +13,10 @@ Working today: sending requests with headers, bodies and auth (bearer, basic, AP
 
 Download `ricochet-setup-<version>-win-x64.exe` from the [latest release](https://github.com/Hamelatoire/ricochet-dotnet/releases/latest) and run it. The installer puts Ricochet in your own programs folder, so it needs no administrator rights. It can also add a desktop shortcut and put the `ricochet` command on your `PATH`, and both are off until you choose them. Uninstalling removes the program and leaves your workspace and settings alone.
 
+| Install mode | License | Finished |
+| --- | --- | --- |
+| ![The install mode dialog](docs/screenshots/installer-mode.png) | ![The license page](docs/screenshots/installer-license.png) | ![The final page](docs/screenshots/installer-finish.png) |
+
 Release builds aren't signed yet, so Windows may warn before running the installer. The zips for each platform on the same page need no installer.
 
 ## Themes
