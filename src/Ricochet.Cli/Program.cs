@@ -24,6 +24,8 @@ internal static class Program
         Options:
           --collection <name>    Run only this collection.
           --folder <name>        Run only requests inside folders with this name.
+          --tag <name>           Run only requests with this tag, given by their folders. Repeatable; any match counts.
+          --exclude-tag <name>   Skip requests with this tag. Repeatable; wins over --tag.
           --env <name>           Use this environment.
           --var <name=value>     Set a variable, overriding every scope. Repeatable.
           --xunit <file>         Also write an xUnit XML report.
@@ -47,6 +49,8 @@ internal static class Program
         public string Folder { get; set; } = ".";
         public string? Collection { get; set; }
         public string? FolderName { get; set; }
+        public List<string> Tags { get; } = [];
+        public List<string> ExcludeTags { get; } = [];
         public string? Environment { get; set; }
         public string? Xunit { get; set; }
         public int TimeoutSeconds { get; set; } = 120;
@@ -126,6 +130,8 @@ internal static class Program
             {
                 CollectionName = options.Collection,
                 FolderName = options.FolderName,
+                IncludeTags = FolderTags.Normalize(options.Tags) ?? [],
+                ExcludeTags = FolderTags.Normalize(options.ExcludeTags) ?? [],
                 EnvironmentName = options.Environment,
                 Overrides = [.. VariablesFromEnvironment(), .. options.Variables],
                 StopOnFirstFailure = options.Bail,
@@ -242,6 +248,12 @@ internal static class Program
                 case "--folder":
                     options.FolderName = Value();
                     if (options.FolderName is null) { error = Missing(); return false; }
+                    break;
+                case "--tag":
+                case "--exclude-tag":
+                    var tag = Value();
+                    if (string.IsNullOrWhiteSpace(tag)) { error = Missing(); return false; }
+                    (arg == "--tag" ? options.Tags : options.ExcludeTags).Add(tag);
                     break;
                 case "--env":
                     options.Environment = Value();

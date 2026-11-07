@@ -37,7 +37,9 @@ public sealed partial class MainViewModel : ObservableObject
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
             workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder)));
-        History = new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
+        // A collection added later must follow the tag filter too (ADR 0030).
+        Collections.CollectionChanged += (_, _) => ApplyTagFilter();
+        History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
@@ -284,6 +286,18 @@ public sealed partial class MainViewModel : ObservableObject
     public IReadOnlyList<string> ThemeChoices { get; } = ThemeSettings.Choices;
 
     /// <summary>System, Light or Dark. Kept on this machine only, in state.json.</summary>
+    /// <summary>Shows only the folders and requests with this tag, or inside a folder that has it (ADR 0030). Empty shows everything.</summary>
+    [ObservableProperty] private string _tagFilter = "";
+
+    partial void OnTagFilterChanged(string value) => ApplyTagFilter();
+
+    private void ApplyTagFilter()
+    {
+        var filter = (TagFilter ?? "").Trim();
+        foreach (var node in Collections)
+            node.ApplyTagFilter(filter);
+    }
+
     [ObservableProperty] private string _themeChoice = ThemeSettings.SystemChoice;
 
     partial void OnThemeChoiceChanged(string value) => _store.SetTheme(ThemeSettings.StoredValue(value));

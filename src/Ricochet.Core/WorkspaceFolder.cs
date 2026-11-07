@@ -33,6 +33,9 @@ public sealed record FolderFile
     public string Name { get; set; } = "";
     public IReadOnlyList<StoredScript> Scripts { get; set; } = [];
     public IReadOnlyList<string> Order { get; set; } = [];
+
+    /// <summary>Null when there are none, so the file gains nothing (ADR 0030).</summary>
+    public IReadOnlyList<string>? Tags { get; set; }
 }
 
 public sealed record RequestFile
@@ -297,6 +300,7 @@ public sealed class WorkspaceFolder(string root)
                 Id = file.Id,
                 Name = file.Name ?? "",
                 Scripts = file.Scripts ?? [],
+                Tags = FolderTags.Normalize(file.Tags),
                 Children = ReadChildren(relative, file.Order ?? [], issues),
             };
         }
@@ -443,7 +447,7 @@ public sealed class WorkspaceFolder(string root)
 
             var dir = PathFor(parent, item.Name, item.Id, "");
             Add($"{dir}/{FolderFileName}",
-                new FolderFile { Id = item.Id, Name = item.Name, Scripts = item.Scripts, Order = item.Children.Select(c => c.Id).ToList() },
+                new FolderFile { Id = item.Id, Name = item.Name, Scripts = item.Scripts, Tags = FolderTags.Normalize(item.Tags), Order = item.Children.Select(c => c.Id).ToList() },
                 WorkspaceJsonContext.Default.FolderFile);
             foreach (var child in item.Children)
                 AddItem(child, dir);
