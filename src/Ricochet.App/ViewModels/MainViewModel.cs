@@ -23,6 +23,9 @@ public sealed partial class MainViewModel : ObservableObject
     private IReadOnlyDictionary<string, string> _storedSecrets;
     private IDisposable? _folderWatcher;
 
+    /// <summary>The mock server dialog (ADR 0027). It is not part of the Workspace, so it is not saved.</summary>
+    public MockServerViewModel Mock { get; } = new();
+
     // The last response and what produced it, kept so it can be saved as an example (ADR 0023).
     private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _lastExchange;
 
@@ -42,7 +45,9 @@ public sealed partial class MainViewModel : ObservableObject
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
             workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder)));
-        History = new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
+        // A collection added later must follow the tag filter too (ADR 0030).
+        Collections.CollectionChanged += (_, _) => ApplyTagFilter();
+        History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
@@ -143,6 +148,9 @@ public sealed partial class MainViewModel : ObservableObject
         new(AuthKinds.Bearer, "Bearer token"),
         new(AuthKinds.Basic, "Basic"),
         new(AuthKinds.ApiKey, "API key"),
+        new(AuthKinds.Digest, "Digest"),
+        new(AuthKinds.OAuth1, "OAuth 1.0"),
+        new(AuthKinds.AwsSigV4, "AWS Signature v4"),
     ];
 
     public ObservableCollection<TreeNodeViewModel> Collections { get; }
@@ -164,7 +172,8 @@ public sealed partial class MainViewModel : ObservableObject
     private string _body = "";
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsBearerAuth), nameof(IsBasicAuth), nameof(IsApiKeyAuth), nameof(IsNoAuth), nameof(AuthTabTitle))]
+    [NotifyPropertyChangedFor(nameof(IsBearerAuth), nameof(IsBasicAuth), nameof(IsApiKeyAuth), nameof(IsNoAuth), nameof(AuthTabTitle),
+        nameof(IsUserPasswordAuth), nameof(IsOAuth1Auth), nameof(IsAwsAuth), nameof(IsDigestAuth))]
     private AuthOption _selectedAuth;
 
     public ObservableCollection<AssertionRowViewModel> Assertions { get; } = [];
@@ -365,6 +374,18 @@ public sealed partial class MainViewModel : ObservableObject
     public IReadOnlyList<string> ThemeChoices { get; } = ThemeSettings.Choices;
 
     /// <summary>System, Light or Dark. Kept on this machine only, in state.json.</summary>
+    /// <summary>Shows only the folders and requests with this tag, or inside a folder that has it (ADR 0030). Empty shows everything.</summary>
+    [ObservableProperty] private string _tagFilter = "";
+
+    partial void OnTagFilterChanged(string value) => ApplyTagFilter();
+
+    private void ApplyTagFilter()
+    {
+        var filter = (TagFilter ?? "").Trim();
+        foreach (var node in Collections)
+            node.ApplyTagFilter(filter);
+    }
+
     [ObservableProperty] private string _themeChoice = ThemeSettings.SystemChoice;
 
     partial void OnThemeChoiceChanged(string value) => _store.SetTheme(ThemeSettings.StoredValue(value));
@@ -568,25 +589,36 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _authKeyValue = "";
     [ObservableProperty] private bool _authKeyInQuery;
 
+    // Digest uses the username and password above. These are the settings of the signing kinds (ADR 0024).
+    [ObservableProperty] private string _authConsumerKey = "";
+    [ObservableProperty] private string _authConsumerSecret = "";
+    [ObservableProperty] private string _authTokenSecret = "";
+    [ObservableProperty] private string _authAwsAccessKeyId = "";
+    [ObservableProperty] private string _authAwsSecretAccessKey = "";
+    [ObservableProperty] private string _authAwsSessionToken = "";
+    [ObservableProperty] private string _authAwsRegion = "";
+    [ObservableProperty] private string _authAwsService = "";
+
     public bool IsNoAuth => SelectedAuth.Kind == AuthKinds.None;
     public bool IsBearerAuth => SelectedAuth.Kind == AuthKinds.Bearer;
     public bool IsBasicAuth => SelectedAuth.Kind == AuthKinds.Basic;
     public bool IsApiKeyAuth => SelectedAuth.Kind == AuthKinds.ApiKey;
+    public bool IsDigestAuth => SelectedAuth.Kind == AuthKinds.Digest;
+    public bool IsOAuth1Auth => SelectedAuth.Kind == AuthKinds.OAuth1;
+    public bool IsAwsAuth => SelectedAuth.Kind == AuthKinds.AwsSigV4;
+    public bool IsUserPasswordAuth => IsBasicAuth || IsDigestAuth;
 
     /// <summary>
-    /// The value a {{name}} in the URL currently resolves to, for the hover tip. Null when it has no value
-    /// or is a Secret, so a Secret's value is never shown on screen.
-    /// </summary>
-    public string? VariableValueForHover(string name)
-    {
-        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries()];
-        var match = scopes.SelectMany(scope => scope ?? []).LastOrDefault(entry => entry.Enabled && entry.Key == name);
-        if (match is null)
-            return null;
-        if (match.IsSecret)
-            return "Secret, hidden";
-        return match.Value;
-    }
+    /// <summary>Every Variable a send of the open Request can see, lowest priority first, layered the same way a send layers them (ADR 0009).</summary>
+    public IReadOnlyList<KeyValue> VariablesInScope() => VariablesInScope(DotEnv.Read(_store.FolderPath));
+
+    private IReadOnlyList<KeyValue> VariablesInScope(DotEnv.Result dotEnv) =>
+        VariableResolver.Layer(
+            Globals.ToEntries(),
+            CurrentCollection?.Variables.ToEntries(),
+            ActiveEnvironment.Variables.ToEntries(),
+            CapturedFor(CurrentCollection?.Id),
+            dotEnv.Variables);
 
     [ObservableProperty] private TreeNodeViewModel? _selectedNode;
     [ObservableProperty] private HistoryEntry? _selectedHistory;
@@ -800,10 +832,31 @@ public sealed partial class MainViewModel : ObservableObject
     public bool ShowEmptyState => !IsSending && !HasStatus;
 
     [ObservableProperty] private string _timingText = "";
-    [ObservableProperty] private bool _isSuccess;
-    [ObservableProperty] private bool _isFailure;
+
+    /// <summary>The colour family of the status code, which picks the status badge's colour.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSuccess), nameof(IsRedirect), nameof(IsClientError), nameof(IsServerError), nameof(IsFailure))]
+    private ResponseStatusClass _statusClass;
+
+    /// <summary>Set when the request could not be sent at all, so there is no status code.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsFailure))]
+    private bool _sendFailed;
+
+    public bool IsSuccess => StatusClass == ResponseStatusClass.Success;
+    public bool IsRedirect => StatusClass == ResponseStatusClass.Redirect;
+    public bool IsClientError => StatusClass == ResponseStatusClass.ClientError;
+    public bool IsServerError => StatusClass == ResponseStatusClass.ServerError;
+    public bool IsFailure => SendFailed || IsServerError;
+
     [ObservableProperty] private string _responseHeaders = "";
     [ObservableProperty] private string _responseBody = "";
+
+    /// <summary>The body as received, before any pretty-printing, for saving to a file.</summary>
+    public byte[] ResponseBytes { get; private set; } = [];
+
+    /// <summary>A file name for saving <see cref="ResponseBytes"/>, from the response's media type.</summary>
+    public string ResponseFileName { get; private set; } = ResponseStatus.SuggestedBodyFileName(null);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasNotice))]
@@ -898,11 +951,37 @@ public sealed partial class MainViewModel : ObservableObject
         AuthKeyName = auth.KeyName;
         AuthKeyValue = auth.KeyValue;
         AuthKeyInQuery = auth.KeyInQuery;
+
+        var details = auth.Details ?? new AuthDetails();
+        AuthConsumerKey = details.ConsumerKey;
+        AuthConsumerSecret = details.ConsumerSecret;
+        AuthTokenSecret = details.TokenSecret;
+        AuthAwsAccessKeyId = details.AwsAccessKeyId;
+        AuthAwsSecretAccessKey = details.AwsSecretAccessKey;
+        AuthAwsSessionToken = details.AwsSessionToken;
+        AuthAwsRegion = details.AwsRegion;
+        AuthAwsService = details.AwsService;
     }
 
-    private RequestAuth? CurrentAuth() => SelectedAuth.Kind == AuthKinds.None
-        ? null
-        : new RequestAuth
+    private RequestAuth? CurrentAuth()
+    {
+        if (SelectedAuth.Kind == AuthKinds.None)
+            return null;
+
+        // Details are only written when one is set, so a Request with none keeps its file as it was.
+        var details = new AuthDetails
+        {
+            ConsumerKey = AuthConsumerKey,
+            ConsumerSecret = AuthConsumerSecret,
+            TokenSecret = AuthTokenSecret,
+            AwsAccessKeyId = AuthAwsAccessKeyId,
+            AwsSecretAccessKey = AuthAwsSecretAccessKey,
+            AwsSessionToken = AuthAwsSessionToken,
+            AwsRegion = AuthAwsRegion,
+            AwsService = AuthAwsService,
+        };
+
+        return new RequestAuth
         {
             Kind = SelectedAuth.Kind,
             Token = AuthToken,
@@ -911,7 +990,9 @@ public sealed partial class MainViewModel : ObservableObject
             KeyName = AuthKeyName,
             KeyValue = AuthKeyValue,
             KeyInQuery = AuthKeyInQuery,
+            Details = details == new AuthDetails() ? null : details,
         };
+    }
 
     private string ScriptNotice() => _currentNode?.HasScripts == true
         ? "This request has Postman scripts, on it or on a parent, which are not run. It may rely on values they would set."
@@ -924,6 +1005,9 @@ public sealed partial class MainViewModel : ObservableObject
             { Kind: AuthKinds.Bearer, Token: "" } => "a token",
             { Kind: AuthKinds.Basic, Password: "" } => "a password",
             { Kind: AuthKinds.ApiKey, KeyValue: "" } => "an API key value",
+            { Kind: AuthKinds.Digest, Password: "" } => "a password",
+            { Kind: AuthKinds.OAuth1, Details.ConsumerSecret: "" } => "a consumer secret",
+            { Kind: AuthKinds.AwsSigV4, Details.AwsSecretAccessKey: "" } => "an AWS secret access key",
             _ => null,
         };
 
@@ -943,11 +1027,13 @@ public sealed partial class MainViewModel : ObservableObject
     {
         StatusText = "";
         TimingText = "";
-        IsSuccess = false;
-        IsFailure = false;
+        StatusClass = ResponseStatusClass.Neutral;
+        SendFailed = false;
         ResponseHeaders = "";
         ResponseIsJson = false;
         ResponseBody = "";
+        ResponseBytes = [];
+        ResponseFileName = ResponseStatus.SuggestedBodyFileName(null);
         Notice = "";
         TestResults.Clear();
         _lastExchange = null;
@@ -1009,12 +1095,7 @@ public sealed partial class MainViewModel : ObservableObject
             // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
             var dotEnv = DotEnv.Read(_store.FolderPath);
             envProblems = DotEnvNotice(dotEnv);
-            var variables = VariableResolver.Layer(
-                Globals.ToEntries(),
-                CurrentCollection?.Variables.ToEntries(),
-                ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId),
-                dotEnv.Variables);
+            var variables = VariablesInScope(dotEnv);
             var resolution = VariableResolver.Resolve(request, variables);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
@@ -1053,7 +1134,7 @@ public sealed partial class MainViewModel : ObservableObject
         catch (RequestFailedException ex)
         {
             StatusText = "Failed";
-            IsFailure = true;
+            SendFailed = true;
             Notice = JoinNotices(ex.Message, unresolved, CredentialNotice(request), ScriptNotice());
             AddHistory(historyRequest, statusCode: null, elapsedMs: 0, collectionId);
         }
@@ -1069,12 +1150,13 @@ public sealed partial class MainViewModel : ObservableObject
     private void ShowResponse(ApiResponse response, FormattedBody formatted)
     {
         StatusText = $"{response.StatusCode} {response.ReasonPhrase}".Trim();
-        IsSuccess = response.StatusCode is >= 200 and < 400;
-        IsFailure = !IsSuccess;
+        StatusClass = ResponseStatus.Classify(response.StatusCode);
         TimingText = $"{response.Elapsed.TotalMilliseconds:N0} ms  ·  {FormatSize(response.Body.Length)}";
         ResponseHeaders = string.Join('\n', response.Headers.Select(h => $"{h.Key}: {h.Value}"));
         ResponseIsJson = formatted.IsJson;
         ResponseBody = formatted.Text;
+        ResponseBytes = response.Body;
+        ResponseFileName = ResponseStatus.SuggestedBodyFileName(response.MediaType);
     }
 
     private static string FormatSize(long bytes) => bytes switch
