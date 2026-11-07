@@ -1,5 +1,5 @@
 ---
-status: accepted (built in Core only; the app and CLI do not turn cookies on yet)
+status: accepted (built in Core and the CLI with --cookies; the app does not turn cookies on yet)
 ---
 
 # Keep cookies between Requests, in memory only
