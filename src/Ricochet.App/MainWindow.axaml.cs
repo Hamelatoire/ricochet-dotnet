@@ -36,6 +36,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _jsonHighlighting = new(CreateJsonHighlighting);
         InitializeTreeDrag();
+        InitializeTreeKeys();
         UrlEditor.TextArea.TextView.LineTransformers.Add(new VariableColorizer(new SolidColorBrush(Color.Parse("#FF7A50"))));
         UrlEditor.TextChanged += OnUrlEditorTextChanged;
         UrlEditor.PointerMoved += OnUrlEditorPointerMoved;
@@ -84,6 +85,43 @@ public partial class MainWindow : Window
         DragDrop.AddDragOverHandler(CollectionsTree, OnTreeDragOver);
         DragDrop.AddDragLeaveHandler(CollectionsTree, (_, _) => ClearDropHint());
         DragDrop.AddDropHandler(CollectionsTree, OnTreeDrop);
+    }
+
+    // Keys for the Collections tree. Handled before the tree's own keys, so arrows move the selection here, not the focus.
+    private void InitializeTreeKeys() =>
+        CollectionsTree.AddHandler(InputElement.KeyDownEvent, OnTreeKeyDown, RoutingStrategies.Tunnel);
+
+    private void OnTreeKeyDown(object? sender, KeyEventArgs e)
+    {
+        // The rename box and the row buttons keep their own keys, and Ctrl/Shift/Alt combinations are left for shortcuts.
+        if (_viewModel is null || e.KeyModifiers != KeyModifiers.None || e.Source is TextBox or Button)
+            return;
+
+        e.Handled = true;
+        switch (e.Key)
+        {
+            case Key.Up:
+                _viewModel.MoveTreeSelectionCommand.Execute(-1);
+                break;
+            case Key.Down:
+                _viewModel.MoveTreeSelectionCommand.Execute(1);
+                break;
+            case Key.Right:
+                _viewModel.ExpandTreeSelectionCommand.Execute(null);
+                break;
+            case Key.Left:
+                _viewModel.CollapseTreeSelectionCommand.Execute(null);
+                break;
+            case Key.Enter:
+                _viewModel.OpenTreeSelectionCommand.Execute(null);
+                break;
+            case Key.F2:
+                _viewModel.RenameTreeSelectionCommand.Execute(null);
+                break;
+            default:
+                e.Handled = false;
+                break;
+        }
     }
 
     private void OnTreePointerPressed(object? sender, PointerPressedEventArgs e)
