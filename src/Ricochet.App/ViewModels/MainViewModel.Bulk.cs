@@ -164,6 +164,7 @@ public sealed partial class MainViewModel
         var collection = (CurrentCollection ?? _currentNode?.Root)?.ToCollection() ?? new Collection();
         var environment = HasActiveEnvironment ? ActiveEnvironment.ToEnvironment() : null;
         var workspace = Snapshot();
+        var dotEnv = DotEnv.Read(_store.FolderPath);
         var placeholder = string.IsNullOrWhiteSpace(BulkPlaceholder) ? BulkRunner.DefaultPlaceholder : BulkPlaceholder.Trim();
 
         // Ids can finish out of order, so "processed" means the leading run of finished ids. Resume starts after that
@@ -173,6 +174,8 @@ public sealed partial class MainViewModel
         var header = $"--- Run from {ids[start]}, {Math.Clamp(BulkThreads, 1, 16)} thread(s), {ids.Count - start} id(s), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ---";
         BulkLog.Add(header);
         _store.AppendBulkLog($"{BulkKey} {header}");
+        foreach (var notice in DotEnvNotice(dotEnv).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            BulkLog.Add($"Warning: {notice}");
 
         var finishedFlags = new bool[ids.Count];
         var processed = start;
@@ -208,7 +211,7 @@ public sealed partial class MainViewModel
                     SaveBulkProgress(ids, lastProcessed, processed);
                     SetBulkProgress(processed, ids.Count);
                     BulkStatus = $"{processed} of {ids.Count} processed. Last id: {lastProcessed ?? "none"}. {CallsText(callsSent, callsOk)}";
-                }), cts.Token, threads);
+                }), cts.Token, threads, dotEnv.Variables);
 
             var lastId = frontier > 0 ? ids[frontier - 1] : null;
             SetBulkProgress(processed, ids.Count);

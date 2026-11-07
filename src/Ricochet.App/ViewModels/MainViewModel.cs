@@ -150,7 +150,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The environments without the "No environment" choice, which has nothing to edit.</summary>
     public ObservableCollection<EnvironmentViewModel> EditableEnvironments { get; }
 
-    public KeyValueListViewModel Headers { get; } = new();
+    public KeyValueListViewModel Headers { get; } = new(keyPlaceholder: "Header name", valuePlaceholder: "Header value");
     public KeyValueListViewModel Globals { get; } = new(allowSecrets: true);
 
     [ObservableProperty] private string _requestName = "";
@@ -590,6 +590,31 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseSettingsPage() => IsSettingsPageOpen = false;
 
+    /// <summary>
+    /// Escape: closes the topmost thing that is open, using the same path as its own Cancel, Done or Close button.
+    /// Dialogs come first, then a rename in the sidebar, then the side pages. Only one thing closes per press.
+    /// </summary>
+    [RelayCommand]
+    private void CloseTopPanel()
+    {
+        if (HasPendingCopy)
+            CancelCopy();
+        else if (HasImportReport)
+            CloseImportReport();
+        else if (IsSpecDialogOpen)
+            CloseSpecDialog();
+        else if (AllNodes(Collections).FirstOrDefault(n => n.IsRenaming) is { } renaming)
+            renaming.CancelRenameCommand.Execute(null);
+        else if (IsBulkPageOpen)
+            CloseBulkPage();
+        else if (IsVariablesPageOpen)
+            CloseVariablesPageCommand.Execute(null);
+        else if (IsEnvironmentsPageOpen)
+            CloseEnvironmentsPageCommand.Execute(null);
+        else if (IsSettingsPageOpen)
+            CloseSettingsPage();
+    }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSidePageOpen))]
     private bool _isVariablesPageOpen;
@@ -724,6 +749,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool HasNotice => Notice.Length > 0;
 
+    [RelayCommand]
+    private void DismissNotice() => Notice = "";
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasImportReport))]
     private string _importReport = "";
@@ -842,6 +870,10 @@ public sealed partial class MainViewModel : ObservableObject
             WorkspaceSecrets.HasHiddenValues(request) ? $"Headers showing {SecretRules.HiddenValue} were removed from History, so enter them again." : "");
     }
 
+    /// <summary>Says which lines of the .env file were skipped, so that a missing value isn't a mystery.</summary>
+    internal static string DotEnvNotice(DotEnv.Result dotEnv) =>
+        string.Join('\n', dotEnv.SkippedLines.Select(line => $"{DotEnv.FileName} line {line} was skipped, because it is not KEY=VALUE."));
+
     private static string JoinNotices(params string[] notices) =>
         string.Join('\n', notices.Where(n => n.Length > 0));
 
@@ -909,13 +941,18 @@ public sealed partial class MainViewModel : ObservableObject
         var historyRequest = request;
         var collectionId = CurrentCollection?.Id;
         var unresolved = "";
+        var envProblems = "";
         try
         {
+            // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
+            var dotEnv = DotEnv.Read(_store.FolderPath);
+            envProblems = DotEnvNotice(dotEnv);
             var variables = VariableResolver.Layer(
                 Globals.ToEntries(),
                 CurrentCollection?.Variables.ToEntries(),
                 ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId));
+                CapturedFor(collectionId),
+                dotEnv.Variables);
             var resolution = VariableResolver.Resolve(request, variables);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
@@ -942,7 +979,7 @@ public sealed partial class MainViewModel : ObservableObject
             foreach (var failure in captureOutcome.Failures)
                 TestResults.Add(new TestResultRow("FAIL", $"{failure.Description}: {failure.Message}", false));
 
-            Notice = JoinNotices(ScriptNotice(), unresolved, CredentialNotice(request), response.Truncated
+            Notice = JoinNotices(ScriptNotice(), unresolved, envProblems, CredentialNotice(request), response.Truncated
                 ? $"Response too large: showing the first {FormatSize(response.Body.Length)}."
                 : "");
             AddHistory(historyRequest, response.StatusCode, (long)response.Elapsed.TotalMilliseconds, collectionId);
@@ -1198,18 +1235,70 @@ public sealed partial class MainViewModel : ObservableObject
         await PersistAsync();
     }
 
-    /// <summary>Imports each file on its own, so one bad file does not stop the others.</summary>
+    /// <summary>The data dump whose exports the user is choosing from, or null. Shown over the window (ADR 0038).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsDumpChoiceOpen))]
+    private DumpChoiceViewModel? _dumpChoice;
+
+    public bool IsDumpChoiceOpen => DumpChoice is not null;
+
+    /// <summary>Imports each file on its own, so one bad file does not stop the others. A data dump opens a choice instead.</summary>
     public async Task ImportFilesAsync(IReadOnlyList<string> paths)
     {
-        var parsed = await Task.Run(() => paths.Select(ParseFile).ToList());
+        var dumps = paths.Where(IsDumpPath).ToList();
+        var parsed = await Task.Run(() => paths.Where(p => !IsDumpPath(p)).Select(ParseFile).ToList());
 
         var report = new List<string>();
         foreach (var (name, result, error) in parsed)
             report.Add(result is null ? $"{name}\nNot imported. {error}" : $"{name}\n{ApplyImport(result)}");
 
+        if (dumps.Count > 1)
+            report.Add($"Import one data dump at a time. Not imported: {string.Join(", ", dumps.Skip(1).Select(Path.GetFileName))}");
+
+        if (dumps.Count > 0)
+        {
+            var (name, listing, error) = await Task.Run(() => ReadDumpFile(dumps[0]));
+            if (listing is null)
+                report.Add($"{name}\nNot imported. {error}");
+            else
+                DumpChoice = new DumpChoiceViewModel(name, listing, ImportDumpAsync, CloseDumpChoice);
+        }
+
         ImportReport = string.Join("\n\n", report);
         await PersistAsync();
     }
+
+    private static bool IsDumpPath(string path) => Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase);
+
+    private static (string Name, IReadOnlyList<DumpEntry>? Listing, string? Error) ReadDumpFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return (name, PostmanImporter.ReadDump(stream), null);
+        }
+        catch (Exception ex) when (ex is PostmanImportException or IOException or UnauthorizedAccessException)
+        {
+            return (name, null, ex.Message);
+        }
+    }
+
+    /// <summary>Imports only the exports the user kept ticked. Nothing else in the dump is touched.</summary>
+    private async Task ImportDumpAsync(DumpChoiceViewModel choice)
+    {
+        var results = PostmanImporter.Selected(choice.Listing, choice.SelectedFileNames);
+        var report = results.Count == 0
+            ? $"{choice.DumpName}\nNothing was selected, so nothing was imported."
+            : $"{choice.DumpName}\n\n{string.Join("\n\n", results.Select(ApplyImport))}";
+
+        DumpChoice = null;
+        ImportReport = report;
+        await PersistAsync();
+    }
+
+    [RelayCommand]
+    private void CloseDumpChoice() => DumpChoice = null;
 
     private static (string Name, ImportResult? Result, string? Error) ParseFile(string path)
     {
@@ -1271,6 +1360,9 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSpecPreview))] private string _specPreview = "";
 
     public bool HasSpecError => SpecError.Length > 0;
+
+    [RelayCommand]
+    private void DismissSpecError() => SpecError = "";
     public bool HasSpecPreview => SpecPreview.Length > 0;
 
     private static readonly Lazy<HttpClient> SpecClient = new(() => RequestSender.CreateDefaultClient());
