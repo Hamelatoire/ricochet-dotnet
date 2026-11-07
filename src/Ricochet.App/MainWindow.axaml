@@ -505,9 +505,26 @@
                   <TextBlock Classes="muted" Text="This request sends no credentials." IsVisible="{Binding IsNoAuth}" />
                   <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthToken}"
                            PlaceholderText="Token" PasswordChar="•" IsVisible="{Binding IsBearerAuth}" />
-                  <StackPanel Spacing="6" IsVisible="{Binding IsBasicAuth}">
+                  <StackPanel Spacing="6" IsVisible="{Binding IsUserPasswordAuth}">
                     <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthUsername}" PlaceholderText="Username" />
                     <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthPassword}" PlaceholderText="Password" PasswordChar="•" />
+                  </StackPanel>
+                  <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Width="420" HorizontalAlignment="Left" IsVisible="{Binding IsDigestAuth}"
+                             Text="Sends once, reads the server's challenge, then sends again with a signature. MD5 or SHA-256 with qop auth." />
+                  <StackPanel Spacing="6" IsVisible="{Binding IsOAuth1Auth}">
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthConsumerKey}" PlaceholderText="Consumer key" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthConsumerSecret}" PlaceholderText="Consumer secret" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthToken}" PlaceholderText="Access token" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthTokenSecret}" PlaceholderText="Token secret" PasswordChar="•" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Width="420" HorizontalAlignment="Left"
+                               Text="Signs each request with HMAC-SHA1. Leave the access token empty if you have none." />
+                  </StackPanel>
+                  <StackPanel Spacing="6" IsVisible="{Binding IsAwsAuth}">
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsAccessKeyId}" PlaceholderText="Access key id" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsSecretAccessKey}" PlaceholderText="Secret access key" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsSessionToken}" PlaceholderText="Session token (optional)" PasswordChar="•" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsRegion}" PlaceholderText="Region, such as us-east-1" />
+                    <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthAwsService}" PlaceholderText="Service, such as execute-api" />
                   </StackPanel>
                   <StackPanel Spacing="6" IsVisible="{Binding IsApiKeyAuth}">
                     <TextBox Classes="mono" Width="420" HorizontalAlignment="Left" Text="{Binding AuthKeyName}" PlaceholderText="Key name" />

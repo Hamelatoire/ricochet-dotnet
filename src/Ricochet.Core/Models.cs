@@ -17,8 +17,16 @@ public static class AuthKinds
     public const string Bearer = "bearer";
     public const string Basic = "basic";
     public const string ApiKey = "apikey";
+    public const string Digest = "digest";
+    public const string OAuth1 = "oauth1";
+    public const string AwsSigV4 = "awsv4";
 }
 
+/// <summary>
+/// One request's auth settings. Fields of other auth kinds are kept so switching back loses nothing, but only the
+/// chosen kind is sent. Token, Password and KeyValue are Secrets (see <see cref="WorkspaceSecrets"/>), as are the
+/// Secret fields of <see cref="Details"/>.
+/// </summary>
 public sealed record RequestAuth
 {
     public string Kind { get; set; } = AuthKinds.None;
@@ -28,6 +36,40 @@ public sealed record RequestAuth
     public string KeyName { get; set; } = "";
     public string KeyValue { get; set; } = "";
     public bool KeyInQuery { get; set; }
+
+    /// <summary>
+    /// Settings for the OAuth 1.0 and AWS kinds (ADR 0024). Null when none are set, so a Request that does not use them
+    /// adds nothing to its file.
+    /// </summary>
+    public AuthDetails? Details { get; set; }
+}
+
+/// <summary>Settings for the signing auth kinds. Fields that are Secrets are stored in the vault, never in the file.</summary>
+public sealed record AuthDetails
+{
+    /// <summary>OAuth 1.0 consumer key. Not a Secret.</summary>
+    public string ConsumerKey { get; set; } = "";
+
+    /// <summary>OAuth 1.0 consumer secret. A Secret.</summary>
+    public string ConsumerSecret { get; set; } = "";
+
+    /// <summary>OAuth 1.0 token secret, paired with the auth's Token. A Secret.</summary>
+    public string TokenSecret { get; set; } = "";
+
+    /// <summary>AWS access key id. Not a Secret: AWS does not treat it as one.</summary>
+    public string AwsAccessKeyId { get; set; } = "";
+
+    /// <summary>AWS secret access key. A Secret.</summary>
+    public string AwsSecretAccessKey { get; set; } = "";
+
+    /// <summary>AWS session token for temporary credentials. A Secret.</summary>
+    public string AwsSessionToken { get; set; } = "";
+
+    /// <summary>AWS region, such as us-east-1. Not a Secret.</summary>
+    public string AwsRegion { get; set; } = "";
+
+    /// <summary>AWS service name, such as execute-api. Not a Secret.</summary>
+    public string AwsService { get; set; } = "";
 }
 
 public sealed record ApiRequest

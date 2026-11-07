@@ -204,7 +204,7 @@ public sealed class CollectionRunner(RequestSender sender)
         // Captures are often tokens, and nothing marks which ones, so all of them are masked.
         var values = variables.Where(v => v.IsSecret).Concat(overrides).Concat(captured).Select(v => v.Value).ToList();
         if (resolved.Auth is { } auth)
-            values.AddRange([auth.Token, auth.Password, auth.KeyValue]);
+            values.AddRange(WorkspaceSecrets.AuthSecretValues(auth));
 
         // Longest first, so that a value containing another is masked whole.
         return values.Where(v => v.Length >= MinMaskedLength).Distinct().OrderByDescending(v => v.Length).ToList();

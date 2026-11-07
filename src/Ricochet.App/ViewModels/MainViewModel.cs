@@ -133,6 +133,9 @@ public sealed partial class MainViewModel : ObservableObject
         new(AuthKinds.Bearer, "Bearer token"),
         new(AuthKinds.Basic, "Basic"),
         new(AuthKinds.ApiKey, "API key"),
+        new(AuthKinds.Digest, "Digest"),
+        new(AuthKinds.OAuth1, "OAuth 1.0"),
+        new(AuthKinds.AwsSigV4, "AWS Signature v4"),
     ];
 
     public ObservableCollection<TreeNodeViewModel> Collections { get; }
@@ -154,7 +157,8 @@ public sealed partial class MainViewModel : ObservableObject
     private string _body = "";
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsBearerAuth), nameof(IsBasicAuth), nameof(IsApiKeyAuth), nameof(IsNoAuth), nameof(AuthTabTitle))]
+    [NotifyPropertyChangedFor(nameof(IsBearerAuth), nameof(IsBasicAuth), nameof(IsApiKeyAuth), nameof(IsNoAuth), nameof(AuthTabTitle),
+        nameof(IsUserPasswordAuth), nameof(IsOAuth1Auth), nameof(IsAwsAuth), nameof(IsDigestAuth))]
     private AuthOption _selectedAuth;
 
     public ObservableCollection<AssertionRowViewModel> Assertions { get; } = [];
@@ -487,10 +491,24 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _authKeyValue = "";
     [ObservableProperty] private bool _authKeyInQuery;
 
+    // Digest uses the username and password above. These are the settings of the signing kinds (ADR 0024).
+    [ObservableProperty] private string _authConsumerKey = "";
+    [ObservableProperty] private string _authConsumerSecret = "";
+    [ObservableProperty] private string _authTokenSecret = "";
+    [ObservableProperty] private string _authAwsAccessKeyId = "";
+    [ObservableProperty] private string _authAwsSecretAccessKey = "";
+    [ObservableProperty] private string _authAwsSessionToken = "";
+    [ObservableProperty] private string _authAwsRegion = "";
+    [ObservableProperty] private string _authAwsService = "";
+
     public bool IsNoAuth => SelectedAuth.Kind == AuthKinds.None;
     public bool IsBearerAuth => SelectedAuth.Kind == AuthKinds.Bearer;
     public bool IsBasicAuth => SelectedAuth.Kind == AuthKinds.Basic;
     public bool IsApiKeyAuth => SelectedAuth.Kind == AuthKinds.ApiKey;
+    public bool IsDigestAuth => SelectedAuth.Kind == AuthKinds.Digest;
+    public bool IsOAuth1Auth => SelectedAuth.Kind == AuthKinds.OAuth1;
+    public bool IsAwsAuth => SelectedAuth.Kind == AuthKinds.AwsSigV4;
+    public bool IsUserPasswordAuth => IsBasicAuth || IsDigestAuth;
 
     /// <summary>
     /// The value a {{name}} in the URL currently resolves to, for the hover tip. Null when it has no value
@@ -786,11 +804,37 @@ public sealed partial class MainViewModel : ObservableObject
         AuthKeyName = auth.KeyName;
         AuthKeyValue = auth.KeyValue;
         AuthKeyInQuery = auth.KeyInQuery;
+
+        var details = auth.Details ?? new AuthDetails();
+        AuthConsumerKey = details.ConsumerKey;
+        AuthConsumerSecret = details.ConsumerSecret;
+        AuthTokenSecret = details.TokenSecret;
+        AuthAwsAccessKeyId = details.AwsAccessKeyId;
+        AuthAwsSecretAccessKey = details.AwsSecretAccessKey;
+        AuthAwsSessionToken = details.AwsSessionToken;
+        AuthAwsRegion = details.AwsRegion;
+        AuthAwsService = details.AwsService;
     }
 
-    private RequestAuth? CurrentAuth() => SelectedAuth.Kind == AuthKinds.None
-        ? null
-        : new RequestAuth
+    private RequestAuth? CurrentAuth()
+    {
+        if (SelectedAuth.Kind == AuthKinds.None)
+            return null;
+
+        // Details are only written when one is set, so a Request with none keeps its file as it was.
+        var details = new AuthDetails
+        {
+            ConsumerKey = AuthConsumerKey,
+            ConsumerSecret = AuthConsumerSecret,
+            TokenSecret = AuthTokenSecret,
+            AwsAccessKeyId = AuthAwsAccessKeyId,
+            AwsSecretAccessKey = AuthAwsSecretAccessKey,
+            AwsSessionToken = AuthAwsSessionToken,
+            AwsRegion = AuthAwsRegion,
+            AwsService = AuthAwsService,
+        };
+
+        return new RequestAuth
         {
             Kind = SelectedAuth.Kind,
             Token = AuthToken,
@@ -799,7 +843,9 @@ public sealed partial class MainViewModel : ObservableObject
             KeyName = AuthKeyName,
             KeyValue = AuthKeyValue,
             KeyInQuery = AuthKeyInQuery,
+            Details = details == new AuthDetails() ? null : details,
         };
+    }
 
     private string ScriptNotice() => _currentNode?.HasScripts == true
         ? "This request has Postman scripts, on it or on a parent, which are not run. It may rely on values they would set."
@@ -812,6 +858,9 @@ public sealed partial class MainViewModel : ObservableObject
             { Kind: AuthKinds.Bearer, Token: "" } => "a token",
             { Kind: AuthKinds.Basic, Password: "" } => "a password",
             { Kind: AuthKinds.ApiKey, KeyValue: "" } => "an API key value",
+            { Kind: AuthKinds.Digest, Password: "" } => "a password",
+            { Kind: AuthKinds.OAuth1, Details.ConsumerSecret: "" } => "a consumer secret",
+            { Kind: AuthKinds.AwsSigV4, Details.AwsSecretAccessKey: "" } => "an AWS secret access key",
             _ => null,
         };
 
