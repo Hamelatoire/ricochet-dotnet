@@ -614,7 +614,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public string? VariableValueForHover(string name)
     {
-        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries()];
+        IEnumerable<KeyValue>?[] scopes = [Globals.ToEntries(), CurrentCollection?.Variables.ToEntries(), ActiveEnvironment.Variables.ToEntries(), DotEnv.Read(_store.FolderPath).Variables];
         var match = scopes.SelectMany(scope => scope ?? []).LastOrDefault(entry => entry.Enabled && entry.Key == name);
         if (match is null)
             return null;

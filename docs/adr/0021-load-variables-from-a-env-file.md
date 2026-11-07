@@ -21,3 +21,5 @@ Ricochet will read an optional .env file in the workspace folder for local runs.
 ## Built
 
 The CLI was built first (PR #39). The app now reads the file on each send and each bulk run, and its values are overrides too, so they win over Globals, Collection, Environment and captured values. A skipped line is reported in the app's notice or the bulk log. Nothing returns .env values as part of a Workspace, so they are never saved.
+
+The app's URL hover and chip tips show a .env value as "Secret, hidden", and a saved response example masks it, as they do for any Secret. The values are Secrets because `DotEnv.Parse` marks each non-empty value as one; an empty value stays plain, so it still counts as set. The app does not read RICOCHET_VAR_ environment variables yet, so those values still need the CLI.
