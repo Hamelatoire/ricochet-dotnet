@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -203,6 +204,37 @@ public partial class MainWindow : Window
             _hintItem.Classes.Remove(_hintClass);
         _hintItem = null;
         _hintClass = null;
+    }
+
+    /// <summary>Reads an OpenAPI description the user picks for the mock server. The file is only read.</summary>
+    private async void OnLoadMockDescriptionClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null)
+            return;
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Choose an OpenAPI description",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("OpenAPI in JSON") { Patterns = ["*.json"] },
+                FilePickerFileTypes.All,
+            ],
+        });
+
+        if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path)
+            return;
+
+        try
+        {
+            var text = await File.ReadAllTextAsync(path);
+            _viewModel.Mock.LoadDescription(text, Path.GetFileName(path));
+        }
+        catch (IOException ex)
+        {
+            _viewModel.Mock.Error = $"The file could not be read: {ex.Message}";
+        }
     }
 
     private async void OnImportClick(object? sender, RoutedEventArgs e)

@@ -23,6 +23,9 @@ public sealed partial class MainViewModel : ObservableObject
     private IReadOnlyDictionary<string, string> _storedSecrets;
     private IDisposable? _folderWatcher;
 
+    /// <summary>The mock server dialog (ADR 0027). It is not part of the Workspace, so it is not saved.</summary>
+    public MockServerViewModel Mock { get; } = new();
+
     public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault)
     {
         _sender = sender;
