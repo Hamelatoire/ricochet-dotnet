@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Generate a .gitignore for new workspaces
