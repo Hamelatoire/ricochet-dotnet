@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built in Core and the app; saved examples not built yet)
 ---
 
 # Mock servers built from examples or an OpenAPI description

@@ -1,5 +1,5 @@
 ---
-status: accepted (built in Core; no App or CLI command yet)
+status: accepted (built in Core and the CLI; no app command yet)
 ---
 
 # Export a collection to Postman and OpenAPI

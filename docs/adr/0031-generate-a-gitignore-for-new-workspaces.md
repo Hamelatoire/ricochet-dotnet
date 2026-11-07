@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built)
 ---
 
 # Generate a .gitignore for new workspaces

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built in Core only; no app or CLI entry point yet)
 ---
 
 # Generated HTML documentation for a collection

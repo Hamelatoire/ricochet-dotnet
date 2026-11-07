@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built)
 ---
 
 # Declarative assertions instead of running JavaScript

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built in Core and the CLI; the app does not read data files yet)
 ---
 
 # Run a collection once per row of a CSV or JSON data file

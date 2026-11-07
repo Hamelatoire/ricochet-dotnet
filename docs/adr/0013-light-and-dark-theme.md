@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built)
 ---
 
 # Support a light and a dark theme, following the system by default

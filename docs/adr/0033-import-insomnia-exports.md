@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built in Core only; not yet wired into the app or CLI, and YAML exports are not read)
 ---
 
 # Import Insomnia exports
