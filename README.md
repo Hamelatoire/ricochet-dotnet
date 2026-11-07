@@ -19,10 +19,6 @@ Download `ricochet-setup-<version>-win-x64.exe` from the [latest release](https:
 | --- | --- | --- |
 | ![The install mode dialog](docs/screenshots/installer-mode.png) | ![The license page](docs/screenshots/installer-license.png) | ![The final page](docs/screenshots/installer-finish.png) |
 
-Once running, Ricochet shows its icon in the taskbar (zoomed in here):
-
-![Ricochet's icon in the Windows taskbar](docs/screenshots/app-icon-taskbar.png)
-
 Release builds aren't signed yet, so Windows may warn before running the installer. The zips for each platform on the same page need no installer.
 
 ## Themes
