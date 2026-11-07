@@ -55,7 +55,7 @@ public sealed class WorkspaceFolder(string root)
     /// <summary>Written once, when a workspace folder is first saved, so personal files are not committed by accident (ADR 0031).</summary>
     public const string GitIgnoreFileName = ".gitignore";
 
-    private static readonly string GitIgnoreContent = string.Join('\n',
+    internal static readonly string GitIgnoreContent = string.Join('\n',
     [
         "# Written by Ricochet when this workspace was created. Edit it as you like; Ricochet won't overwrite it.",
         "# Temporary files left by an interrupted save",

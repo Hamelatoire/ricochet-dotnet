@@ -16,12 +16,6 @@ public sealed record RunOptions
     /// <summary>Values given for this run. They override every scope, and are treated as Secrets in reports.</summary>
     public IReadOnlyList<KeyValue> Overrides { get; init; } = [];
 
-    /// <summary>
-    /// Values from this machine's .env file (ADR 0021). They are the lowest priority, so a Global, Collection or
-    /// Environment Variable with the same name wins. They are Secrets, so they are masked, and never written to the Workspace.
-    /// </summary>
-    public IReadOnlyList<KeyValue> LocalVariables { get; init; } = [];
-
     public bool StopOnFirstFailure { get; init; }
 }
 
@@ -165,7 +159,7 @@ public sealed class CollectionRunner(RequestSender sender)
 
     private async Task<RequestRunResult> RunOneAsync(Planned item, Workspace workspace, ApiEnvironment? environment, List<KeyValue> captured, RunOptions options, CancellationToken cancellationToken)
     {
-        var variables = VariableResolver.Layer(options.LocalVariables, workspace.Globals, item.Collection.Variables, environment?.Variables, captured, options.Overrides);
+        var variables = VariableResolver.Layer(workspace.Globals, item.Collection.Variables, environment?.Variables, captured, options.Overrides);
         var resolved = VariableResolver.Apply(item.Request, variables);
 
         RequestRunResult Failed(string error, int? status = null, long elapsed = 0) =>

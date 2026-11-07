@@ -156,8 +156,8 @@ public sealed partial class MainViewModel
         var header = $"--- Run from {ids[start]}, {Math.Clamp(BulkThreads, 1, 16)} thread(s), {ids.Count - start} id(s), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ---";
         BulkLog.Add(header);
         _store.AppendBulkLog($"{BulkKey} {header}");
-        foreach (var problem in dotEnv.Problems)
-            BulkLog.Add($"Warning: {problem}");
+        foreach (var notice in DotEnvNotice(dotEnv).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            BulkLog.Add($"Warning: {notice}");
 
         var finishedFlags = new bool[ids.Count];
         var processed = start;

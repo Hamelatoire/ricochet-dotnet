@@ -820,6 +820,10 @@ public sealed partial class MainViewModel : ObservableObject
             WorkspaceSecrets.HasHiddenValues(request) ? $"Headers showing {SecretRules.HiddenValue} were removed from History, so enter them again." : "");
     }
 
+    /// <summary>Says which lines of the .env file were skipped, so that a missing value isn't a mystery.</summary>
+    internal static string DotEnvNotice(DotEnv.Result dotEnv) =>
+        string.Join('\n', dotEnv.SkippedLines.Select(line => $"{DotEnv.FileName} line {line} was skipped, because it is not KEY=VALUE."));
+
     private static string JoinNotices(params string[] notices) =>
         string.Join('\n', notices.Where(n => n.Length > 0));
 
@@ -887,15 +891,15 @@ public sealed partial class MainViewModel : ObservableObject
         var envProblems = "";
         try
         {
-            // The .env file is read on each send, so an edit to it applies at once (ADR 0021).
+            // The .env file is read on each send, so an edit to it applies at once. Its values are overrides, as in the CLI (ADR 0021).
             var dotEnv = DotEnv.Read(_store.FolderPath);
-            envProblems = string.Join('\n', dotEnv.Problems);
+            envProblems = DotEnvNotice(dotEnv);
             var variables = VariableResolver.Layer(
-                dotEnv.Variables,
                 Globals.ToEntries(),
                 CurrentCollection?.Variables.ToEntries(),
                 ActiveEnvironment.Variables.ToEntries(),
-                CapturedFor(collectionId));
+                CapturedFor(collectionId),
+                dotEnv.Variables);
             var resolution = VariableResolver.Resolve(request, variables);
             var resolved = resolution.Sent;
             historyRequest = resolution.History;
