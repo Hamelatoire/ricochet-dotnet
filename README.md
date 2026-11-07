@@ -10,7 +10,10 @@ A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, 
 ## Features
 
 - Send requests with headers, bodies, and bearer, basic, API key, Digest, OAuth 1.0 or AWS Signature v4 auth.
+- Refuse header values that contain a line break, so a value can't add headers of its own.
 - Organise requests into collections and folders, with environments and scoped `{{variables}}`.
+- Warn about a `{{` that is never closed. The command line runner fails such a request without sending it.
+- Open several requests as tabs. Press Ctrl+K (Cmd+K on macOS) for a palette of actions and requests, or Ctrl+P for requests only.
 - Hide folders and requests you aren't using, without deleting them.
 - Keep secrets in your operating system's secure storage.
 - Add tests to a request, and save values from a response for later requests.
