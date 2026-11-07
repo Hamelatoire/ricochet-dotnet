@@ -58,7 +58,7 @@ public static class WorkspaceSecrets
         var result = new Dictionary<string, string>();
         foreach (var (key, value) in vault)
         {
-            if (!key.StartsWith(WorkspacePrefix, StringComparison.Ordinal))
+            if (!key.StartsWith(WorkspacePrefix, StringComparison.Ordinal) && !key.StartsWith(PersonalSecrets.Prefix, StringComparison.Ordinal))
                 result.TryAdd(key, value);
         }
 
@@ -78,7 +78,9 @@ public static class WorkspaceSecrets
         var result = new Dictionary<string, string>();
         foreach (var (key, value) in vault)
         {
-            if (key.StartsWith(WorkspacePrefix, StringComparison.Ordinal) && !key.StartsWith(prefix, StringComparison.Ordinal))
+            // Personal Secrets belong to no Workspace, so they survive a save of this one.
+            var isOtherWorkspace = key.StartsWith(WorkspacePrefix, StringComparison.Ordinal) && !key.StartsWith(prefix, StringComparison.Ordinal);
+            if (isOtherWorkspace || key.StartsWith(PersonalSecrets.Prefix, StringComparison.Ordinal))
                 result[key] = value;
         }
 

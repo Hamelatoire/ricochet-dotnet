@@ -52,6 +52,12 @@ public sealed record PersonalSettings
     public bool VerifyTlsCertificates { get; set; } = true;
     public int MaxResponseMegabytes { get; set; } = 100;
     public bool WrapResponse { get; set; } = true;
+
+    /// <summary>An HTTP proxy, such as http://proxy.example.com:8080. Empty uses the operating system's proxy (ADR 0026).</summary>
+    public string ProxyUrl { get; set; } = "";
+
+    /// <summary>A PKCS #12 file (.pfx or .p12) holding a client certificate. Empty sends none. Its path only: the file is never copied. The password is a Secret, in secure storage.</summary>
+    public string ClientCertificatePath { get; set; } = "";
 }
 
 /// <summary>The ids pasted for a Request's bulk run, and the last one that was processed.</summary>

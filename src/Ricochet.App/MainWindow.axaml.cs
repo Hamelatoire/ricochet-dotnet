@@ -272,6 +272,22 @@ public partial class MainWindow : Window
             await _viewModel.OpenWorkspaceFolderAsync(path);
     }
 
+    private async void OnBrowseCertificateClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null)
+            return;
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Choose a client certificate",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Certificate files") { Patterns = ["*.pfx", "*.p12"] }],
+        });
+
+        if (files.Count > 0 && files[0].TryGetLocalPath() is { } path)
+            _viewModel.ClientCertificatePath = path;
+    }
+
     private async void OnCopyResponseClick(object? sender, RoutedEventArgs e)
     {
         if (_viewModel is null || Clipboard is not { } clipboard)

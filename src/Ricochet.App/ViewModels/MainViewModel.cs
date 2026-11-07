@@ -29,10 +29,12 @@ public sealed partial class MainViewModel : ObservableObject
         _store = store;
         _vault = vault;
         _storedSecrets = LoadSecrets();
+        _clientCertificatePassword = PersonalSecrets.ClientCertificatePassword(_storedSecrets) ?? "";
+        // Load first: settings and the theme are read from the state that Load reads.
+        var loaded = store.Load();
         _settings = store.Settings;
         ApplySettings();
 
-        var loaded = store.Load();
         _themeChoice = ThemeSettings.ChoiceName(store.Theme);
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
@@ -260,6 +262,63 @@ public sealed partial class MainViewModel : ObservableObject
         set => ChangeSettings(s => s with { WrapResponse = value }, nameof(WrapResponse));
     }
 
+    /// <summary>An HTTP proxy, or empty for the operating system's proxy (ADR 0026).</summary>
+    public string ProxyUrl
+    {
+        get => _settings.ProxyUrl;
+        set => ChangeSettings(s => s with { ProxyUrl = value }, nameof(ProxyUrl));
+    }
+
+    /// <summary>A .pfx or .p12 file, or empty for none. Only the path is saved; the file is not copied.</summary>
+    public string ClientCertificatePath
+    {
+        get => _settings.ClientCertificatePath;
+        set => ChangeSettings(s => s with { ClientCertificatePath = value }, nameof(ClientCertificatePath));
+    }
+
+    private string _clientCertificatePassword = "";
+
+    /// <summary>The certificate's password. It is a Secret: kept in secure storage, never in state.json or the workspace (ADR 0026).</summary>
+    public string ClientCertificatePassword
+    {
+        get => _clientCertificatePassword;
+        set
+        {
+            if (value == _clientCertificatePassword)
+                return;
+
+            _clientCertificatePassword = value;
+            try
+            {
+                var secrets = PersonalSecrets.WithClientCertificatePassword(_storedSecrets, value);
+                _vault.Save(secrets);
+                _storedSecrets = secrets;
+            }
+            catch (SecretVaultException ex)
+            {
+                StorageWarning = $"{ex.Message} The certificate password will last only until you close Ricochet.";
+            }
+
+            ApplySettings();
+            OnPropertyChanged(nameof(ClientCertificatePassword));
+        }
+    }
+
+    private string _connectionProblem = "";
+
+    /// <summary>Why the proxy or client certificate cannot be used, shown on the settings page. Empty when they can.</summary>
+    public string ConnectionProblem
+    {
+        get => _connectionProblem;
+        private set
+        {
+            if (SetProperty(ref _connectionProblem, value))
+                OnPropertyChanged(nameof(HasConnectionProblem));
+        }
+    }
+
+    public bool HasConnectionProblem => ConnectionProblem.Length > 0;
+
     /// <summary>Shown on every page while certificate checks are off, because that exposes credentials.</summary>
     public bool ShowTlsWarning => !_settings.VerifyTlsCertificates;
 
@@ -272,11 +331,14 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowTlsWarning));
     }
 
-    private void ApplySettings() => _sender.Configure(
+    private void ApplySettings() => ConnectionProblem = _sender.Configure(
         TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds),
         _settings.FollowRedirects,
         _settings.VerifyTlsCertificates,
-        _settings.MaxResponseMegabytes * 1024L * 1024L);
+        _settings.MaxResponseMegabytes * 1024L * 1024L,
+        _settings.ProxyUrl,
+        _settings.ClientCertificatePath,
+        _clientCertificatePassword) ?? "";
 
     [RelayCommand]
     private void DismissStorageWarning() => StorageWarning = "";

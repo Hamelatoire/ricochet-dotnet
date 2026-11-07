@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -16,6 +18,9 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     private TimeSpan _timeout = timeout ?? TimeSpan.FromMinutes(2);
     private long _maxBodyBytes = maxBodyBytes;
 
+    /// <summary>Set when the proxy or client certificate settings cannot be used. Every request fails with it until they change.</summary>
+    private string? _configurationProblem;
+
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*://")]
     private static partial Regex HasScheme();
 
@@ -23,7 +28,7 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     /// A client configured for an API tool: no hidden cookie jar, and our own timeout handling.
     /// Turning off certificate verification accepts any certificate, so only do it on purpose.
     /// </summary>
-    public static HttpClient CreateDefaultClient(bool followRedirects = true, bool verifyCertificates = true)
+    public static HttpClient CreateDefaultClient(bool followRedirects = true, bool verifyCertificates = true, Uri? proxy = null, X509Certificate2? clientCertificate = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -32,8 +37,21 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
             UseCookies = false,
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         };
-        if (!verifyCertificates)
-            handler.SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = (_, _, _, _) => true };
+        if (proxy is not null)
+        {
+            handler.UseProxy = true;
+            handler.Proxy = new WebProxy(proxy);
+        }
+
+        if (!verifyCertificates || clientCertificate is not null)
+        {
+            var ssl = new SslClientAuthenticationOptions();
+            if (!verifyCertificates)
+                ssl.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+            if (clientCertificate is not null)
+                ssl.ClientCertificates = new X509CertificateCollection { clientCertificate };
+            handler.SslOptions = ssl;
+        }
 
         return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
     }
@@ -41,14 +59,82 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     /// <summary>
     /// Applies new settings to the requests sent from now on. A request already in progress finishes with the
     /// settings it started with. The client it replaced is not disposed, so that request can still finish.
+    /// Returns the problem with the proxy or client certificate settings, to show beside them, or null when they are usable.
+    /// An empty proxy uses the operating system's proxy, and an empty certificate path sends no certificate (ADR 0026).
     /// </summary>
-    public void Configure(TimeSpan timeout, bool followRedirects, bool verifyCertificates, long maxBodyBytes)
+    public string? Configure(
+        TimeSpan timeout,
+        bool followRedirects,
+        bool verifyCertificates,
+        long maxBodyBytes,
+        string proxyUrl = "",
+        string clientCertificatePath = "",
+        string? clientCertificatePassword = null)
     {
+        string? problem = null;
+        Uri? proxy = null;
+        X509Certificate2? certificate = null;
+
+        try
+        {
+            proxy = ParseProxy(proxyUrl);
+            if (clientCertificatePath.Trim().Length > 0)
+                certificate = LoadClientCertificate(clientCertificatePath, clientCertificatePassword);
+        }
+        catch (RequestFailedException ex)
+        {
+            problem = ex.Message;
+        }
+
         lock (_gate)
         {
             _timeout = timeout;
             _maxBodyBytes = maxBodyBytes;
-            _client = CreateDefaultClient(followRedirects, verifyCertificates);
+            _configurationProblem = problem;
+            _client = CreateDefaultClient(followRedirects, verifyCertificates, proxy, certificate);
+        }
+
+        return problem;
+    }
+
+    /// <summary>
+    /// Reads a proxy address such as "proxy.example.com:8080". Empty means no explicit proxy. Credentials in the address are refused,
+    /// because they would be kept in plain text, and proxy logins are not supported yet.
+    /// </summary>
+    /// <exception cref="RequestFailedException">The address is not an http or https address.</exception>
+    public static Uri? ParseProxy(string text)
+    {
+        var value = text.Trim();
+        if (value.Length == 0)
+            return null;
+
+        if (!HasScheme().IsMatch(value))
+            value = "http://" + value;
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.Host.Length == 0)
+            throw new RequestFailedException($"Invalid proxy address: {text.Trim()}. Use a form such as http://proxy.example.com:8080.");
+
+        if (uri.UserInfo.Length > 0)
+            throw new RequestFailedException("Proxy logins are not supported yet. Remove the user name and password from the proxy address.");
+
+        return uri;
+    }
+
+    /// <summary>Loads a client certificate from a PKCS #12 file (.pfx or .p12). The password is kept only in memory.</summary>
+    /// <exception cref="RequestFailedException">The file is missing, or cannot be read with this password.</exception>
+    public static X509Certificate2 LoadClientCertificate(string path, string? password)
+    {
+        var fullPath = path.Trim();
+        if (!File.Exists(fullPath))
+            throw new RequestFailedException($"The client certificate file was not found: {fullPath}");
+
+        try
+        {
+            return X509CertificateLoader.LoadPkcs12FromFile(fullPath, string.IsNullOrEmpty(password) ? null : password);
+        }
+        catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
+        {
+            throw new RequestFailedException($"The client certificate could not be loaded from {fullPath}: {ex.Message}", ex);
         }
     }
 
@@ -59,12 +145,17 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         HttpClient client;
         TimeSpan timeout;
         long maxBodyBytes;
+        string? problem;
         lock (_gate)
         {
             client = _client;
             timeout = _timeout;
             maxBodyBytes = _maxBodyBytes;
+            problem = _configurationProblem;
         }
+
+        if (problem is not null)
+            throw new RequestFailedException(problem);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);

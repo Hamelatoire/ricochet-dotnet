@@ -62,7 +62,7 @@
                        Text="{Binding WorkspaceFolderName}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
           </Grid>
           <Button DockPanel.Dock="Bottom" HorizontalAlignment="Stretch" Margin="0,8,0,0" Content="Settings" Command="{Binding OpenSettingsPageCommand}"
-                  AutomationProperties.Name="Settings" ToolTip.Tip="Timeouts, redirects, certificate checks, response size and the workspace folder" />
+                  AutomationProperties.Name="Settings" ToolTip.Tip="Timeouts, redirects, proxy, client certificate, certificate checks, response size and the workspace folder" />
           <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,8,0,0">
             <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Theme" />
             <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding ThemeChoice}"
@@ -378,6 +378,40 @@
                   <CheckBox Grid.Column="1" IsChecked="{Binding VerifyTlsCertificates}" Content="On" VerticalAlignment="Top"
                             AutomationProperties.Name="Verify TLS certificates" />
                 </Grid>
+              </StackPanel>
+
+              <StackPanel Spacing="12">
+                <TextBlock Text="Network" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Proxy address" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Send requests through this HTTP proxy, such as proxy.example.com:8080. Empty uses the operating system's proxy. Proxy logins are not supported yet." />
+                  </StackPanel>
+                  <TextBox Grid.Column="1" Text="{Binding ProxyUrl, UpdateSourceTrigger=LostFocus}" Watermark="Operating system's proxy"
+                           VerticalAlignment="Top" AutomationProperties.Name="Proxy address" />
+                </Grid>
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Client certificate file" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A .pfx or .p12 file sent to servers that ask for one. The file stays where it is; only its path is saved." />
+                  </StackPanel>
+                  <Grid Grid.Column="1" ColumnDefinitions="*,Auto" VerticalAlignment="Top">
+                    <TextBox Grid.Column="0" Text="{Binding ClientCertificatePath, UpdateSourceTrigger=LostFocus}" Watermark="No certificate"
+                             AutomationProperties.Name="Client certificate file" />
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Browse…" Click="OnBrowseCertificateClick"
+                            AutomationProperties.Name="Browse for client certificate" />
+                  </Grid>
+                </Grid>
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Client certificate password" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Kept in your operating system's secure storage, never in the workspace. Leave empty if the file has no password." />
+                  </StackPanel>
+                  <TextBox Grid.Column="1" PasswordChar="•" Text="{Binding ClientCertificatePassword, UpdateSourceTrigger=LostFocus}"
+                           VerticalAlignment="Top" AutomationProperties.Name="Client certificate password" />
+                </Grid>
+                <SelectableTextBlock Text="{Binding ConnectionProblem}" IsVisible="{Binding HasConnectionProblem}" Foreground="{DynamicResource Failure}"
+                                     FontSize="12" TextWrapping="Wrap" />
               </StackPanel>
 
               <StackPanel Spacing="12">
