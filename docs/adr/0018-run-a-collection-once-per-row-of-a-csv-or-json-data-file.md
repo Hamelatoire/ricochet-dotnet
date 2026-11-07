@@ -24,4 +24,4 @@ We will let a run take a data file and run the collection once per row, with eac
 - CSV: the first line is the header, RFC 4180 quoting is honoured, blank and comma-only lines are skipped, and a leading byte-order mark is ignored. JSON: a top-level array of objects. Strings are used as written, numbers and booleans keep their text, `null` is empty, nested values are kept as JSON, and empty objects are skipped.
 - Row values come after the given overrides, so a row wins when both name the same Variable. Values are masked in output like other overrides.
 - With `StopOnFirstFailure`, a failing row stops the whole data run.
-- Not yet wired: the CLI and the App do not read data files yet, so no command-line flag or UI exists for this.
+- The CLI reads a data file with `--data <file>`, and `DataRowReports` joins the row reports into one report for `--xunit` and the exit code. Not yet wired: the App does not read data files, so no UI exists for this.
