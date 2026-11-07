@@ -453,6 +453,130 @@ public sealed class WorkspaceFolderTests : IDisposable
         var finished = await Task.WhenAny(changed.Task, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
         Assert.Same(changed.Task, finished);
     }
+
+    [Fact]
+    public void Hidden_item_ids_are_saved_and_loaded_unchanged()
+    {
+        var sample = Sample();
+        string[] hidden = ["i3aaaaaaaa", "f1aaaaaaaa"];
+        Saved(sample with { Collections = [sample.Collections[0] with { HiddenItemIds = hidden }] });
+
+        var (loaded, issues) = new WorkspaceFolder(_root).Load();
+
+        Assert.Empty(issues);
+        Assert.Equal(hidden, loaded.Collections[0].HiddenItemIds);
+    }
+
+    [Fact]
+    public void A_collection_with_no_hidden_items_writes_no_hiddenItemIds_key()
+    {
+        var folder = Saved();
+        var collectionFile = Path.Combine(_root, "collections", "shop-api-c1aaaaaa", "collection.json");
+        Assert.False(System.Text.Json.JsonDocument.Parse(File.ReadAllText(collectionFile)).RootElement.TryGetProperty("hiddenItemIds", out _));
+
+        var sample = Sample();
+        folder.Save(sample with { Collections = [sample.Collections[0] with { HiddenItemIds = ["i3aaaaaaaa"] }] });
+        Assert.True(System.Text.Json.JsonDocument.Parse(File.ReadAllText(collectionFile)).RootElement.TryGetProperty("hiddenItemIds", out _));
+
+        folder.Save(sample with { Collections = [sample.Collections[0] with { HiddenItemIds = null }] });
+        Assert.False(System.Text.Json.JsonDocument.Parse(File.ReadAllText(collectionFile)).RootElement.TryGetProperty("hiddenItemIds", out _));
+        Assert.Null(new WorkspaceFolder(_root).Load().Workspace.Collections[0].HiddenItemIds);
+    }
+
+    [Fact]
+    public void Folder_tags_are_saved_and_loaded()
+    {
+        var sample = Sample();
+        var orders = sample.Collections[0].Items[1] with { Tags = ["smoke", "Slow"] };
+        var items = new List<CollectionItem> { sample.Collections[0].Items[0], orders, sample.Collections[0].Items[2] };
+        Saved(sample with { Collections = [sample.Collections[0] with { Items = items }] });
+
+        var (loaded, issues) = new WorkspaceFolder(_root).Load();
+
+        Assert.Empty(issues);
+        var folder = Assert.Single(loaded.Collections[0].Items, i => i.Id == "f1aaaaaaaa");
+        Assert.Equal(["smoke", "Slow"], folder.Tags);
+    }
+
+    [Fact]
+    public void Folder_tags_are_trimmed_and_deduplicated_on_save()
+    {
+        var sample = Sample();
+        var orders = sample.Collections[0].Items[1] with { Tags = ["  smoke ", "SMOKE", "", "Slow"] };
+        var items = new List<CollectionItem> { sample.Collections[0].Items[0], orders, sample.Collections[0].Items[2] };
+        Saved(sample with { Collections = [sample.Collections[0] with { Items = items }] });
+
+        var (loaded, _) = new WorkspaceFolder(_root).Load();
+
+        Assert.Equal(["smoke", "Slow"], Assert.Single(loaded.Collections[0].Items, i => i.Id == "f1aaaaaaaa").Tags);
+    }
+
+    [Fact]
+    public void A_folder_with_no_tags_writes_no_tags_key()
+    {
+        Saved();
+        var folderFile = Path.Combine(_root, "collections", "shop-api-c1aaaaaa", "orders-f1aaaaaa", "folder.json");
+
+        Assert.False(System.Text.Json.JsonDocument.Parse(File.ReadAllText(folderFile)).RootElement.TryGetProperty("tags", out _));
+    }
+
+    [Fact]
+    public void A_request_moved_to_another_folder_on_disk_loads_under_its_new_parent()
+    {
+        var folder = Saved();
+        var toDir = Path.Combine(_root, "collections", "shop-api-c1aaaaaa", "orders-f1aaaaaa");
+        File.Move(RequestPath("zebra", "i1aaaaaa"), Path.Combine(toDir, "zebra-i1aaaaaa.json"));
+
+        var (loaded, _) = folder.Load();
+
+        var orders = Assert.Single(loaded.Collections[0].Items, i => i.Id == "f1aaaaaaaa");
+        Assert.Contains(orders.Children, c => c.Id == "i1aaaaaaaa" && c.Name == "Zebra");
+        Assert.DoesNotContain(loaded.Collections[0].Items, i => i.Id == "i1aaaaaaaa");
+
+        // Saving the moved Request keeps it where it now is, and the next load has nothing to report.
+        folder.Save(loaded);
+        var (reloaded, issues) = new WorkspaceFolder(_root).Load();
+        Assert.Empty(issues);
+        Assert.Equal(["Create", "Zebra"], Assert.Single(reloaded.Collections[0].Items, i => i.Id == "f1aaaaaaaa").Children.Select(c => c.Name));
+        Assert.True(File.Exists(Path.Combine(toDir, "zebra-i1aaaaaa.json")));
+    }
+
+    [Fact]
+    public void A_conflicted_environment_is_reported_and_kept_while_everything_else_loads()
+    {
+        Saved();
+        var environmentFile = Path.Combine(_root, "environments", "staging-e1aaaaaa.json");
+        const string conflicted = "<<<<<<< HEAD\n{ }\n=======\n{ }\n>>>>>>> theirs\n";
+        File.WriteAllText(environmentFile, conflicted);
+
+        var folder = new WorkspaceFolder(_root);
+        var (loaded, issues) = folder.Load();
+
+        Assert.Contains(issues, i => i.Path == "environments/staging-e1aaaaaa.json");
+        Assert.Empty(loaded.Environments);
+        Assert.Equal(["Zebra", "Orders", "Apple"], loaded.Collections[0].Items.Select(i => i.Name));
+        Assert.Equal("1", loaded.Globals[0].Value);
+
+        folder.Save(loaded);
+        Assert.Equal(conflicted, File.ReadAllText(environmentFile));
+    }
+
+    [Fact]
+    public void A_gitignore_the_user_edited_is_kept_on_the_next_save()
+    {
+        var folder = Saved();
+        var gitignore = Path.Combine(_root, WorkspaceFolder.GitIgnoreFileName);
+        File.AppendAllText(gitignore, "scratch/\n");
+
+        folder.Save(Sample() with { Globals = [new("g", "2")] });
+        Assert.EndsWith("scratch/\n", File.ReadAllText(gitignore));
+        Assert.False(folder.HasOutsideChanges());
+
+        var fresh = new WorkspaceFolder(_root);
+        var (loaded, _) = fresh.Load();
+        fresh.Save(loaded);
+        Assert.EndsWith("scratch/\n", File.ReadAllText(gitignore));
+    }
 }
 
 public sealed class WorkspaceStoreTests : IDisposable
