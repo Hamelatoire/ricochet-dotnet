@@ -23,6 +23,9 @@ public sealed partial class MainViewModel : ObservableObject
     private IReadOnlyDictionary<string, string> _storedSecrets;
     private IDisposable? _folderWatcher;
 
+    // The last response and what produced it, kept so it can be saved as an example (ADR 0023).
+    private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _lastExchange;
+
     public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault)
     {
         _sender = sender;
@@ -42,6 +45,11 @@ public sealed partial class MainViewModel : ObservableObject
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
         Captures.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
+        Examples.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(ExamplesTabTitle));
+            OnPropertyChanged(nameof(HasExamples));
+        };
         TestResults.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(ResponseTestsTabTitle));
@@ -161,6 +169,17 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<TestResultRow> TestResults { get; } = [];
 
     public ObservableCollection<CaptureRowViewModel> Captures { get; } = [];
+
+    /// <summary>The examples saved on the current Request (ADR 0023).</summary>
+    public ObservableCollection<ResponseExampleRowViewModel> Examples { get; } = [];
+
+    [ObservableProperty] private string _exampleName = "";
+
+    /// <summary>True once there is a response that can be saved as an example.</summary>
+    [ObservableProperty] private bool _canSaveExample;
+
+    public bool HasExamples => Examples.Count > 0;
+    public string ExamplesTabTitle => Examples.Count > 0 ? $"Examples  {Examples.Count}" : "Examples";
 
     /// <summary>Names only, because captures are often tokens. Their values live in memory, never in a file.</summary>
     public ObservableCollection<string> CapturedNames { get; } = [];
@@ -772,6 +791,9 @@ public sealed partial class MainViewModel : ObservableObject
         Captures.Clear();
         foreach (var capture in request.Captures ?? [])
             Captures.Add(NewCaptureRow(capture));
+        Examples.Clear();
+        foreach (var example in request.Examples ?? [])
+            Examples.Add(NewExampleRow(example));
         ClearResponse();
         Notice = ScriptNotice();
     }
@@ -834,6 +856,8 @@ public sealed partial class MainViewModel : ObservableObject
         ResponseBody = "";
         Notice = "";
         TestResults.Clear();
+        _lastExchange = null;
+        CanSaveExample = false;
     }
 
     private ApiRequest CurrentRequest() => new()
@@ -847,6 +871,7 @@ public sealed partial class MainViewModel : ObservableObject
         Auth = CurrentAuth(),
         Assertions = Assertions.Count > 0 ? Assertions.Select(a => a.ToAssertion()).ToList() : null,
         Captures = Captures.Count > 0 ? Captures.Select(c => c.ToCapture()).ToList() : null,
+        Examples = Examples.Count > 0 ? Examples.Select(e => e.Example).ToList() : null,
     };
 
     [RelayCommand]
@@ -901,6 +926,8 @@ public sealed partial class MainViewModel : ObservableObject
             var response = await _sender.SendAsync(resolved, cts.Token);
             var formatted = await Task.Run(() => ResponseFormatter.Format(response), cts.Token);
             ShowResponse(response, formatted);
+            _lastExchange = (resolved, variables, CapturedFor(collectionId), response);
+            CanSaveExample = true;
             var testResults = await Task.Run(() => AssertionEvaluator.Evaluate(resolved.Assertions, response), cts.Token);
             foreach (var result in testResults)
             {
@@ -960,9 +987,68 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void AddHistory(ApiRequest request, int? statusCode, long elapsedMs, string? collectionId)
     {
-        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
+        // Examples belong to the Request in the Workspace, not to each send of it.
+        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request with { Examples = null }, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
         while (History.Count > Workspace.MaxHistory)
             History.RemoveAt(History.Count - 1);
+    }
+
+    private ResponseExampleRowViewModel NewExampleRow(ResponseExample example) =>
+        new(example, row => _ = RemoveExampleAsync(row), ShowExample);
+
+    /// <summary>Saves the last response on the saved Request. Unsaved edits to the form stay unsaved.</summary>
+    [RelayCommand]
+    private async Task SaveExampleAsync()
+    {
+        if (_lastExchange is not { } last)
+            return;
+
+        if (_currentNode?.Request is not { } saved)
+        {
+            Notice = "Save the request first, then save a response as an example.";
+            return;
+        }
+
+        var name = ExampleName.Trim().Length > 0 ? ExampleName : $"Example {Examples.Count + 1}";
+        ResponseExample example;
+        try
+        {
+            example = ResponseExamples.Create(name, last.Sent, last.Variables, last.Captured, last.Response);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Notice = ex.Message;
+            return;
+        }
+
+        _currentNode.Request = saved with { Examples = (saved.Examples ?? []).Append(example).ToList() };
+        Examples.Add(NewExampleRow(example));
+        ExampleName = "";
+        Notice = $"Saved example \"{example.Name}\". Credentials were masked.";
+        await PersistAsync();
+    }
+
+    private async Task RemoveExampleAsync(ResponseExampleRowViewModel row)
+    {
+        Examples.Remove(row);
+        if (_currentNode?.Request is { } saved)
+        {
+            var remaining = (saved.Examples ?? []).Where(e => e.Id != row.Example.Id).ToList();
+            _currentNode.Request = saved with { Examples = remaining.Count > 0 ? remaining : null };
+        }
+
+        await PersistAsync();
+    }
+
+    /// <summary>Shows a saved example in the response panel. It is not a new response, so it can't be saved again.</summary>
+    private void ShowExample(ResponseExample example)
+    {
+        ClearResponse();
+        var response = new ApiResponse(example.StatusCode, example.ReasonPhrase, example.Headers,
+            System.Text.Encoding.UTF8.GetBytes(example.Body), example.MediaType, null, TimeSpan.Zero, false);
+        ShowResponse(response, ResponseFormatter.Format(response));
+        TimingText = $"Saved example \"{example.Name}\"";
+        Notice = "This is a saved example, not a new response.";
     }
 
     [RelayCommand]

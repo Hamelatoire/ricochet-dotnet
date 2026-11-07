@@ -20,6 +20,7 @@ namespace Ricochet.Core;
 [JsonSerializable(typeof(RequestFile))]
 [JsonSerializable(typeof(ApiEnvironment))]
 [JsonSerializable(typeof(ApiRequest))]
+[JsonSerializable(typeof(ResponseExample))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 internal sealed partial class WorkspaceJsonContext : JsonSerializerContext;
 
