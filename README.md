@@ -7,9 +7,15 @@ A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, 
 - Decisions: [docs/adr](docs/adr)
 - Vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
-## Status
+## Features
 
-Working today: sending requests with headers, bodies and auth (bearer, basic, API key), collections with folders, environments, scoped `{{variables}}`, secrets in OS secure storage, tests with a CI command, history, and formatted JSON responses.
+- Send requests with headers, bodies, and bearer, basic or API key auth.
+- Organise requests into collections and folders, with environments and scoped `{{variables}}`.
+- Keep secrets in your operating system's secure storage.
+- Add tests to a request, and save values from a response for later requests.
+- Import Postman exports, or create a collection from an OpenAPI 3 description.
+- Run a workspace from the command line in CI.
+- Follow the light or dark theme of your system.
 
 ## Install on Windows
 
@@ -20,6 +26,26 @@ Download `ricochet-setup-<version>-win-x64.exe` from the [latest release](https:
 | ![The install mode dialog](docs/screenshots/installer-mode.png) | ![The license page](docs/screenshots/installer-license.png) | ![The final page](docs/screenshots/installer-finish.png) |
 
 Release builds aren't signed yet, so Windows may warn before running the installer. The zips for each platform on the same page need no installer.
+
+## Test your APIs
+
+Add checks to a request in its **Tests** tab, such as "Status equals 200" or "JSON value `items[0].id` exists". They run every time you send it, and the results appear beside the response. Save the request to keep them. See [ADR 0006](docs/adr/0006-declarative-tests-not-scripts.md) for why these are checks rather than scripts.
+
+Paths for JSON values look like `items[0].name` or `$.a['b.c']`, and `items.length` counts an array. Expected values can use `{{variables}}`.
+
+To chain requests, add a saved value in the same tab. For example, on a login request, save the JSON value `data.token` as `token`, then use `{{token}}` in later requests in that collection. Saved values stay in memory and are never written to a file. In the app they last until you close it, so send the login again after a restart, and you can see their names or clear them under **Variables > Saved**.
+
+## Import from Postman
+
+Export your collections (v2.0 or v2.1), environments and globals from Postman as JSON, then choose **Import** and select the files. The results list everything that could not be carried over. Scripts are kept but not run, and OAuth 2 and file uploads are not imported yet. See [ADR 0002](docs/adr/0002-import-postman-exports.md) for details.
+
+## Collections from an OpenAPI URL
+
+Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in JSON, and press **Fetch**. Ricochet shows what it will add or change before you press **Apply**. Each operation becomes a request, grouped into folders by tag. Running the same address again updates that collection and keeps the headers, bodies, tests and saved values you added. See [ADR 0014](docs/adr/0014-collections-from-openapi-url.md).
+
+| Preview before applying | Stripe's public API, imported (612 requests) |
+| --- | --- |
+| ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Stripe API imported into Ricochet](docs/screenshots/openapi-stripe-nested-dark.png) |
 
 ## Themes
 
@@ -40,26 +66,6 @@ Choose **Settings** at the bottom of the sidebar for preferences that stay on th
 When the workspace folder is a git repository, the sidebar shows its branch under the folder name, with commits ahead and behind its upstream. Ricochet only reads this, using the git on your computer. It never fetches, commits or pushes, so the counts reflect what git last fetched. See [ADR 0011](docs/adr/0011-read-only-git-status.md).
 
 ![The sidebar showing the git branch](docs/screenshots/sidebar-git-branch.png)
-
-## Collections from an OpenAPI URL
-
-Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in JSON, and press **Fetch**. Ricochet shows what it will add or change before you press **Apply**. Each operation becomes a request, grouped into folders by tag. Running the same address again updates that collection and keeps the headers, bodies, tests and saved values you added. See [ADR 0014](docs/adr/0014-collections-from-openapi-url.md).
-
-| Preview before applying | Stripe's public API, imported (612 requests) |
-| --- | --- |
-| ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Stripe API imported into Ricochet](docs/screenshots/openapi-stripe-nested-dark.png) |
-
-## Import from Postman
-
-Export your collections (v2.0 or v2.1), environments and globals from Postman as JSON, then choose **Import** and select the files. The results list everything that could not be carried over. Scripts are kept but not run, and OAuth 2 and file uploads are not imported yet. See [ADR 0002](docs/adr/0002-import-postman-exports.md) for details.
-
-## Test your APIs
-
-Add checks to a request in its **Tests** tab, such as "Status equals 200" or "JSON value `items[0].id` exists". They run every time you send it, and the results appear beside the response. Save the request to keep them. See [ADR 0006](docs/adr/0006-declarative-tests-not-scripts.md) for why these are checks rather than scripts.
-
-Paths for JSON values look like `items[0].name` or `$.a['b.c']`, and `items.length` counts an array. Expected values can use `{{variables}}`.
-
-To chain requests, add a saved value in the same tab. For example, on a login request, save the JSON value `data.token` as `token`, then use `{{token}}` in later requests in that collection. Saved values stay in memory and are never written to a file. In the app they last until you close it, so send the login again after a restart, and you can see their names or clear them under **Variables > Saved**.
 
 ## Run in CI
 
@@ -83,7 +89,19 @@ Requests run in order, and saved values carry forward within a collection. Runni
 
 On Windows, Smart App Control can block a newly built `ricochet.exe` because it's unsigned. Signing release builds is the lasting fix. In development, you can run the same code with `dotnet run --project src/Ricochet.Cli -- run`.
 
-## Develop
+## Your data
+
+Your work is stored as a folder of small JSON files, one per request, so it can be shared through git. By default that folder is in your user application data (`%APPDATA%\Ricochet\workspace` on Windows). To keep it in a repository, choose **Change…** at the bottom of the sidebar and pick a folder: a folder without a workspace gets a copy after you confirm, and one that has a workspace is opened. If files change while Ricochet is open, for example after a `git pull`, it reloads them. Files it can't read, such as one with merge conflict markers, are reported and left untouched.
+
+History, the active environment and secrets stay in your personal application data and are never written to the shared folder. Set `RICOCHET_DATA` to use a different personal folder.
+
+For what Ricochet stores and sends, see the [user data policy](docs/PRIVACY.md).
+
+Values you mark as **Secret**, and values typed into auth fields, are kept out of that file and in your system's secure storage instead: DPAPI on Windows, Keychain on macOS, and Secret Service on Linux (which needs `secret-tool` from `libsecret-tools`). The macOS and Linux versions have not been tested yet. If secure storage isn't available, Secrets last only until you close the app, and Ricochet tells you so.
+
+**Everything else in the workspace folder is plain text, and is shared if you commit it.** That includes other variables and any credentials typed directly into a header or URL, though Ricochet warns you when it spots one. Use a `{{variable}}` marked Secret for these. History hides common credential headers.
+
+## Build from source
 
 Requires the .NET 10 SDK.
 
@@ -95,9 +113,7 @@ dotnet run --project src/Ricochet.App
 dotnet test --project tests/Ricochet.Core.Tests
 ```
 
-## Publish a native build
-
-Run this on the operating system you are building for, because Native AOT does not cross-compile between them. Replace `win-x64` with `osx-arm64` or `linux-x64` as needed.
+To build a native app, run this on the operating system you are building for, because Native AOT does not cross-compile between them. Replace `win-x64` with `osx-arm64` or `linux-x64` as needed.
 
 ```bash
 dotnet publish src/Ricochet.App -c Release -r win-x64 -o publish/win-x64
@@ -122,15 +138,3 @@ git push origin v0.2.0
 ```
 
 The builds are not code signed, so Windows and macOS may warn about them or block them.
-
-## Your data
-
-Your work is stored as a folder of small JSON files, one per request, so it can be shared through git. By default that folder is in your user application data (`%APPDATA%\Ricochet\workspace` on Windows). To keep it in a repository, choose **Change…** at the bottom of the sidebar and pick a folder: a folder without a workspace gets a copy after you confirm, and one that has a workspace is opened. If files change while Ricochet is open, for example after a `git pull`, it reloads them. Files it can't read, such as one with merge conflict markers, are reported and left untouched.
-
-History, the active environment and secrets stay in your personal application data and are never written to the shared folder. Set `RICOCHET_DATA` to use a different personal folder.
-
-For what Ricochet stores and sends, see the [user data policy](docs/PRIVACY.md).
-
-Values you mark as **Secret**, and values typed into auth fields, are kept out of that file and in your system's secure storage instead: DPAPI on Windows, Keychain on macOS, and Secret Service on Linux (which needs `secret-tool` from `libsecret-tools`). The macOS and Linux versions have not been tested yet. If secure storage isn't available, Secrets last only until you close the app, and Ricochet tells you so.
-
-**Everything else in the workspace folder is plain text, and is shared if you commit it.** That includes other variables and any credentials typed directly into a header or URL, though Ricochet warns you when it spots one. Use a `{{variable}}` marked Secret for these. History hides common credential headers.
