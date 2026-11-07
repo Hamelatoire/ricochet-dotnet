@@ -100,8 +100,8 @@
                     </Style>
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
-                    <TreeDataTemplate ItemsSource="{Binding Children}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                    <TreeDataTemplate ItemsSource="{Binding VisibleChildren}" x:DataType="vm:TreeNodeViewModel">
+                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
@@ -122,7 +122,13 @@
                                 Command="{Binding ToggleRenameCommand}" ToolTip.Tip="Rename" AutomationProperties.Name="Rename" />
                         <Button Grid.Column="3" Classes="mini folderaction" Margin="4,0,0,0" Content="+" IsVisible="{Binding IsContainer}"
                                 Command="{Binding NewFolderCommand}" ToolTip.Tip="New folder" AutomationProperties.Name="New folder" />
-                        <Button Grid.Column="4" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                        <Button Grid.Column="4" Classes="mini" Margin="4,0,0,0" Content="{Binding HideLabel}" IsVisible="{Binding HideVisible}"
+                                Command="{Binding HideOrShowCommand}" ToolTip.Tip="Hide (keeps it in the workspace, skipped by runs)"
+                                AutomationProperties.Name="Hide" />
+                        <Button Grid.Column="4" Margin="4,0,0,0" Padding="8,2" FontSize="12" Content="{Binding HideLabel}" IsVisible="{Binding ShowHiddenVisible}"
+                                Command="{Binding HideOrShowCommand}" ToolTip.Tip="Show the hidden folders and requests again"
+                                AutomationProperties.Name="Show hidden" />
+                        <Button Grid.Column="5" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
                                 Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete" />
                       </Grid>
                     </TreeDataTemplate>
