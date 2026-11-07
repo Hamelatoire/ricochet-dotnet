@@ -76,6 +76,16 @@ public static partial class EnvironmentTransfer
         return JsonSerializer.Serialize(file, WorkspaceJsonContext.Default.EnvironmentFile);
     }
 
+    /// <summary>How many Secret variables an Environment has. Their values are never exported or imported.</summary>
+    public static int SecretCount(ApiEnvironment environment) => environment.Variables.Count(v => v.IsSecret);
+
+    /// <summary>Finds the Environment with this name, ignoring case. Null when there is none, or more than one.</summary>
+    public static ApiEnvironment? FindEnvironment(IEnumerable<ApiEnvironment> environments, string name)
+    {
+        var matches = environments.Where(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
     /// <summary>Reads a Ricochet environment file, or a Postman environment export.</summary>
     /// <exception cref="EnvironmentImportException">The file is not an environment we can read.</exception>
     public static EnvironmentImportResult Import(string json, string fileName)

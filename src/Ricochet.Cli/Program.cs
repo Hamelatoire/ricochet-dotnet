@@ -3,11 +3,12 @@ using Ricochet.Core;
 
 namespace Ricochet.Cli;
 
-/// <summary>Runs a Workspace's requests and assertions, for CI. It only reads the Workspace.</summary>
+/// <summary>Runs a Workspace's requests and assertions, for CI. Only `env import` writes to the Workspace.</summary>
 internal static class Program
 {
     private const int ExitPassed = 0;
     private const int ExitTestsFailed = 1;
+    private const int ExitRefused = 1;
     private const int ExitCannotRun = 2;
     private const int ExitCancelled = 130;
     private const string VariablePrefix = "RICOCHET_VAR_";
@@ -18,6 +19,7 @@ internal static class Program
         Usage:
           ricochet run [folder] [options]
           ricochet export <collection> --postman <file> | --openapi <file>   (see ricochet export --help)
+          ricochet env export <environment> <file.json> | env import <file.json>   (see ricochet env --help)
 
         Arguments:
           folder                 The workspace folder. Defaults to the current folder.
@@ -74,6 +76,9 @@ internal static class Program
 
         if (args[0] == "export")
             return ExportCommand(args.Skip(1).ToList());
+
+        if (args[0] == "env")
+            return EnvCommand(args.Skip(1).ToList());
 
         if (args[0] != "run")
             return CannotRun($"Unknown command \"{args[0]}\". Try: ricochet --help");
@@ -564,6 +569,223 @@ internal static class Program
         {
             error = "Choose at least one format: --postman <file> or --openapi <file>.";
             return false;
+        }
+
+        return true;
+    }
+
+    private const string EnvUsage = """
+        Ricochet: move one environment in or out of a file, without its secret values (ADR 0036).
+
+        Usage:
+          ricochet env export <environment> <file.json> [--workspace <folder>] [--force]
+          ricochet env import <file.json> [--workspace <folder>] [--replace]
+
+        Arguments:
+          environment            The name of the environment to export.
+          file.json              The file to write (export) or read (import).
+
+        Options:
+          --workspace <folder>   The workspace folder. Defaults to the current folder.
+          --force                Export: overwrite a file that already exists.
+          --replace              Import: overwrite an environment with the same name. Without it, a name clash is refused.
+          --help                 Show this help.
+
+        Secret values are never exported, and import never writes one. Secret variables come back without
+        a value, so set them again. A Secret this machine already has keeps its value when you replace.
+        Export files are never written inside the workspace folder.
+
+        Exit codes:
+          0  The environment was exported or imported.
+          1  The import was refused, because an environment with that name already exists and --replace was not given.
+          2  The command could not run, for example because the environment does not exist, the file cannot be
+             read or written, or the workspace is unreadable.
+        """;
+
+    private sealed class EnvArguments
+    {
+        public List<string> Positional { get; } = [];
+        public string Workspace { get; set; } = ".";
+        public bool Force { get; set; }
+        public bool Replace { get; set; }
+    }
+
+    private static int EnvCommand(List<string> args)
+    {
+        if (args.Count == 0 || args[0] is "--help" or "-h")
+        {
+            Console.WriteLine(EnvUsage);
+            return args.Count == 0 ? ExitCannotRun : ExitPassed;
+        }
+
+        if (!TryParseEnv(args.Skip(1).ToList(), out var options, out var parseError))
+            return parseError is null ? ExitPassed : CannotRun(parseError);
+
+        return args[0] switch
+        {
+            "export" => EnvExport(options!),
+            "import" => EnvImport(options!),
+            _ => CannotRun($"Unknown command \"env {args[0]}\". Try: ricochet env --help"),
+        };
+    }
+
+    private static int EnvExport(EnvArguments options)
+    {
+        if (options.Positional.Count != 2)
+            return CannotRun("Usage: ricochet env export <environment> <file.json>. Try: ricochet env --help");
+        if (options.Replace)
+            return CannotRun("--replace is for env import. Try: ricochet env --help");
+
+        var name = options.Positional[0];
+        var file = options.Positional[1];
+        if (!WorkspaceFolder.LooksLikeWorkspace(options.Workspace))
+            return CannotRun($"\"{Path.GetFullPath(options.Workspace)}\" is not a Ricochet workspace folder.");
+
+        var folder = new WorkspaceFolder(Path.GetFullPath(options.Workspace));
+        var (workspace, issues) = folder.Load();
+        if (issues.Count > 0)
+        {
+            foreach (var issue in issues)
+                Console.Error.WriteLine($"{issue.Path}: {issue.Problem}");
+            return CannotRun("Some workspace files could not be used. Fix them and export again.");
+        }
+
+        // Merged only so the report can count the Secrets; the export itself never writes their values.
+        workspace = WorkspaceSecrets.Merge(workspace, WorkspaceSecrets.ForWorkspace(LoadSecrets(), folder.Id));
+        var environment = EnvironmentTransfer.FindEnvironment(workspace.Environments, name);
+        if (environment is null)
+        {
+            var names = workspace.Environments.Select(e => e.Name).Where(n => n.Length > 0).ToList();
+            var known = names.Count == 0 ? "The workspace has no environments." : "Environments: " + string.Join(", ", names) + ".";
+            return CannotRun($"No environment is named \"{name}\", or more than one has that name. {known}");
+        }
+
+        try
+        {
+            ExportFiles.Write(file, EnvironmentTransfer.Export(environment), folder.Root, options.Force);
+        }
+        catch (ExportFileException ex)
+        {
+            return CannotRun(ex.Message);
+        }
+
+        var left = EnvironmentTransfer.SecretCount(environment);
+        Console.WriteLine($"Exported environment \"{environment.Name}\" to {Path.GetFullPath(file)}");
+        Console.WriteLine(left == 0
+            ? "No Secret values were left out."
+            : $"Left out {left} Secret {(left == 1 ? "value" : "values")}. Secret values are never exported; set them again on the machine that imports this file.");
+        return ExitPassed;
+    }
+
+    private static int EnvImport(EnvArguments options)
+    {
+        if (options.Positional.Count != 1)
+            return CannotRun("Usage: ricochet env import <file.json>. Try: ricochet env --help");
+        if (options.Force)
+            return CannotRun("--force is for env export. Use --replace to overwrite an environment on import.");
+
+        var file = options.Positional[0];
+        string json;
+        try
+        {
+            json = File.ReadAllText(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return CannotRun($"Could not read \"{Path.GetFullPath(file)}\": {ex.Message}");
+        }
+
+        EnvironmentImportResult imported;
+        try
+        {
+            imported = EnvironmentTransfer.Import(json, Path.GetFileName(file));
+        }
+        catch (EnvironmentImportException ex)
+        {
+            return CannotRun(ex.Message);
+        }
+
+        if (!WorkspaceFolder.LooksLikeWorkspace(options.Workspace))
+            return CannotRun($"\"{Path.GetFullPath(options.Workspace)}\" is not a Ricochet workspace folder.");
+
+        var folder = new WorkspaceFolder(Path.GetFullPath(options.Workspace));
+        var (workspace, issues) = folder.Load();
+        if (issues.Count > 0)
+        {
+            foreach (var issue in issues)
+                Console.Error.WriteLine($"{issue.Path}: {issue.Problem}");
+            return CannotRun("Some workspace files could not be used. Fix them and import again.");
+        }
+
+        var incoming = imported.Environment;
+        var clashed = workspace.Environments.Any(e => e.Name.Equals(incoming.Name, StringComparison.OrdinalIgnoreCase));
+        var placement = EnvironmentTransfer.Place(workspace.Environments, incoming, options.Replace ? EnvironmentClash.Replace : EnvironmentClash.Skip);
+        if (placement.Placed is null)
+        {
+            Console.Error.WriteLine($"Environment \"{incoming.Name}\" already exists in this workspace, so nothing was imported. Pass --replace to overwrite it.");
+            return ExitRefused;
+        }
+
+        // Split moves every Secret value out of the Workspace, and its values are dropped here rather than stored.
+        // The vault is never written, so this machine's Secret values stay as they were.
+        var (clean, _) = WorkspaceSecrets.Split(workspace with { Environments = placement.Environments });
+        try
+        {
+            folder.Save(clean);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return CannotRun($"Could not save the workspace: {ex.Message}");
+        }
+
+        Console.WriteLine(clashed ? $"Replaced environment \"{incoming.Name}\" in {folder.Root}" : $"Imported environment \"{incoming.Name}\" into {folder.Root}");
+        Console.WriteLine(imported.Summary);
+        foreach (var issue in imported.Issues)
+            Console.WriteLine($"Note: {issue.Category}: {issue.Detail}");
+
+        var secrets = EnvironmentTransfer.SecretCount(incoming);
+        if (secrets > 0)
+            Console.WriteLine($"Note: Secret values are never imported ({secrets} Secret {(secrets == 1 ? "variable" : "variables")}). A value this machine already has is kept; set any others in the app.");
+
+        return ExitPassed;
+    }
+
+    /// <returns>False to stop. A null error means help was shown, which is not a failure.</returns>
+    private static bool TryParseEnv(List<string> args, out EnvArguments? result, out string? error)
+    {
+        var options = new EnvArguments();
+        result = options;
+        error = null;
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+            switch (arg)
+            {
+                case "--help" or "-h":
+                    Console.WriteLine(EnvUsage);
+                    return false;
+                case "--force":
+                    options.Force = true;
+                    break;
+                case "--replace":
+                    options.Replace = true;
+                    break;
+                case "--workspace":
+                    i++;
+                    if (i >= args.Count || string.IsNullOrWhiteSpace(args[i])) { error = "--workspace needs a folder."; return false; }
+                    options.Workspace = args[i];
+                    break;
+                default:
+                    if (arg.StartsWith('-'))
+                    {
+                        error = $"Unknown option \"{arg}\". Try: ricochet env --help";
+                        return false;
+                    }
+
+                    options.Positional.Add(arg);
+                    break;
+            }
         }
 
         return true;
