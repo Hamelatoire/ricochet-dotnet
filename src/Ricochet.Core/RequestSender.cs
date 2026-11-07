@@ -15,15 +15,19 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     private HttpClient _client = client;
     private TimeSpan _timeout = timeout ?? TimeSpan.FromMinutes(2);
     private long _maxBodyBytes = maxBodyBytes;
+    private bool _followRedirects = true;
+    private bool _verifyCertificates = true;
+    private CookieContainer? _cookies; // Null unless cookies are kept (ADR 0012). Held in memory only.
+    private HttpClient? _clientWithoutCookies; // Used for a Request that writes its own Cookie header, so the stored cookies don't add to it.
 
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*://")]
     private static partial Regex HasScheme();
 
     /// <summary>
-    /// A client configured for an API tool: no hidden cookie jar, and our own timeout handling.
+    /// A client configured for an API tool: no hidden cookie jar unless <paramref name="cookies"/> is given, and our own timeout handling.
     /// Turning off certificate verification accepts any certificate, so only do it on purpose.
     /// </summary>
-    public static HttpClient CreateDefaultClient(bool followRedirects = true, bool verifyCertificates = true)
+    public static HttpClient CreateDefaultClient(bool followRedirects = true, bool verifyCertificates = true, CookieContainer? cookies = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -32,6 +36,12 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
             UseCookies = false,
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         };
+        if (cookies is not null)
+        {
+            // The handler stores Set-Cookie from every hop of a redirect, and sends the cookies back on each hop.
+            handler.UseCookies = true;
+            handler.CookieContainer = cookies;
+        }
         if (!verifyCertificates)
             handler.SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = (_, _, _, _) => true };
 
@@ -41,14 +51,36 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     /// <summary>
     /// Applies new settings to the requests sent from now on. A request already in progress finishes with the
     /// settings it started with. The client it replaced is not disposed, so that request can still finish.
+    /// With <paramref name="keepCookies"/>, cookies set by responses are sent on later requests from this sender (ADR 0012).
+    /// Cookies already kept survive a call that keeps them on, and are dropped when it turns them off.
     /// </summary>
-    public void Configure(TimeSpan timeout, bool followRedirects, bool verifyCertificates, long maxBodyBytes)
+    public void Configure(TimeSpan timeout, bool followRedirects, bool verifyCertificates, long maxBodyBytes, bool keepCookies = false)
     {
         lock (_gate)
         {
             _timeout = timeout;
             _maxBodyBytes = maxBodyBytes;
-            _client = CreateDefaultClient(followRedirects, verifyCertificates);
+            _followRedirects = followRedirects;
+            _verifyCertificates = verifyCertificates;
+            _cookies = keepCookies ? _cookies ?? new CookieContainer() : null;
+            _client = CreateDefaultClient(followRedirects, verifyCertificates, _cookies);
+            _clientWithoutCookies = _cookies is null ? null : CreateDefaultClient(followRedirects, verifyCertificates);
+        }
+    }
+
+    /// <summary>
+    /// Forgets every cookie kept by this sender, so the requests sent from now on start logged out.
+    /// A request already in progress keeps the cookies it started with. Does nothing when cookies aren't kept.
+    /// </summary>
+    public void ResetCookies()
+    {
+        lock (_gate)
+        {
+            if (_cookies is null)
+                return;
+
+            _cookies = new CookieContainer();
+            _client = CreateDefaultClient(_followRedirects, _verifyCertificates, _cookies);
         }
     }
 
@@ -57,11 +89,13 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
     public async Task<ApiResponse> SendAsync(ApiRequest request, CancellationToken cancellationToken = default)
     {
         HttpClient client;
+        HttpClient? clientWithoutCookies;
         TimeSpan timeout;
         long maxBodyBytes;
         lock (_gate)
         {
             client = _client;
+            clientWithoutCookies = _clientWithoutCookies;
             timeout = _timeout;
             maxBodyBytes = _maxBodyBytes;
         }
@@ -73,7 +107,8 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         {
             using var message = BuildMessage(request);
             var stopwatch = Stopwatch.StartNew();
-            using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+            var sendingClient = clientWithoutCookies is not null && message.Headers.Contains("Cookie") ? clientWithoutCookies : client;
+            using var response = await sendingClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
             var (body, truncated) = await ReadBodyAsync(response.Content, maxBodyBytes, timeoutCts.Token);
             stopwatch.Stop();
 

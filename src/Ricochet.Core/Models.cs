@@ -49,6 +49,24 @@ public sealed record ApiRequest
 
     /// <summary>Set on Requests made from an OpenAPI description: the operationId, or "METHOD /path" when there is none.</summary>
     public string? SpecKey { get; set; }
+
+    /// <summary>Null rather than empty when there are none, for the same reason (ADR 0023).</summary>
+    public IReadOnlyList<ResponseExample>? Examples { get; set; }
+}
+
+/// <summary>
+/// A response the user saved on a Request as an expected example (ADR 0023). Credentials are masked
+/// before it is stored, the same way History masks them.
+/// </summary>
+public sealed record ResponseExample
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "";
+    public int StatusCode { get; set; }
+    public string ReasonPhrase { get; set; } = "";
+    public IReadOnlyList<KeyValue> Headers { get; set; } = [];
+    public string? MediaType { get; set; }
+    public string Body { get; set; } = "";
 }
 
 public sealed record ApiResponse(
