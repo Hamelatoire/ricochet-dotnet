@@ -33,7 +33,7 @@
   </Window.KeyBindings>
 
   <Grid>
-    <Grid ColumnDefinitions="310,Auto,*">
+    <Grid x:Name="MainColumns" ColumnDefinitions="310,Auto,*">
       <!-- Sidebar -->
       <Border Grid.Column="0" Padding="16,46,12,12">
         <DockPanel>
@@ -195,7 +195,7 @@
         </DockPanel>
       </Border>
 
-      <GridSplitter Grid.Column="1" Width="8" ResizeDirection="Columns" />
+      <GridSplitter x:Name="SidebarSplitter" Grid.Column="1" Width="8" ResizeDirection="Columns" />
 
       <!-- Bulk run page -->
       <Border Grid.Column="2" Classes="card" Padding="24,20" Margin="0,46,12,12" IsVisible="{Binding IsBulkPageOpen}">
@@ -526,7 +526,7 @@
       </Border>
 
       <!-- Request and response -->
-      <Grid Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsSidePageOpen}">
+      <Grid x:Name="RequestResponse" Grid.Column="2" RowDefinitions="*,Auto,*" Margin="0,46,12,12" IsVisible="{Binding !IsSidePageOpen}">
         <Border Grid.Row="0" Classes="card" Padding="20,16,20,6">
         <DockPanel>
           <!-- Open Requests (ADR 0041). A tab keeps its unsent edits, and a mark shows the ones that are not saved. -->
@@ -861,7 +861,7 @@
         </DockPanel>
         </Border>
 
-        <GridSplitter Grid.Row="1" Height="8" ResizeDirection="Rows" />
+        <GridSplitter x:Name="RequestSplitter" Grid.Row="1" Height="8" ResizeDirection="Rows" />
 
         <Border Grid.Row="2" Classes="card" Padding="20,14,20,12">
           <Panel>
