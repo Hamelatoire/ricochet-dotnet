@@ -75,7 +75,11 @@
           </Grid>
           <TabControl>
             <TabItem Header="Collections">
-              <Panel>
+              <Grid RowDefinitions="Auto,*">
+                <TextBox Grid.Row="0" Text="{Binding TagFilter}" PlaceholderText="Filter by tag" Margin="0,8,0,8"
+                         AutomationProperties.Name="Filter by tag"
+                         ToolTip.Tip="Show only folders and requests with this tag, including those inside a folder that has it" />
+                <Panel Grid.Row="1">
                 <TreeView x:Name="CollectionsTree" ItemsSource="{Binding Collections}" SelectedItem="{Binding SelectedNode}"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           AutomationProperties.Name="Collection tree">
@@ -103,7 +107,7 @@
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding VisibleChildren}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
+                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
@@ -119,17 +123,32 @@
                             <KeyBinding Gesture="Enter" Command="{Binding CommitRenameCommand}" />
                           </TextBox.KeyBindings>
                         </TextBox>
-                        <Button Grid.Column="2" Classes="mini folderaction" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"
+                        <TextBlock Grid.Column="2" Classes="muted" FontSize="11" Margin="6,0,0,0" MaxWidth="120" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" Text="{Binding TagsLabel}" IsVisible="{Binding HasTags}"
+                                   ToolTip.Tip="{Binding TagsLabel}" />
+                        <TextBox Grid.Column="2" Classes="bare" Width="130" Margin="6,0,0,0" Text="{Binding TagsText}" IsVisible="{Binding IsEditingTags}"
+                                 VerticalAlignment="Center" Padding="2,2" FontSize="12" PlaceholderText="tag, tag"
+                                 views:FocusBehavior.FocusWhenVisible="True"
+                                 AutomationProperties.Name="Folder tags" ToolTip.Tip="Comma-separated. Enter saves, Escape cancels. Requests inside inherit them.">
+                          <TextBox.KeyBindings>
+                            <KeyBinding Gesture="Enter" Command="{Binding CommitTagsCommand}" />
+                            <KeyBinding Gesture="Escape" Command="{Binding CancelTagsCommand}" />
+                          </TextBox.KeyBindings>
+                        </TextBox>
+                        <Button Grid.Column="3" Classes="mini folderaction" Margin="4,0,0,0" Content="✎" IsVisible="{Binding IsContainer}"
                                 Command="{Binding ToggleRenameCommand}" ToolTip.Tip="Rename" AutomationProperties.Name="Rename" />
-                        <Button Grid.Column="3" Classes="mini folderaction" Margin="4,0,0,0" Content="+" IsVisible="{Binding IsContainer}"
+                        <Button Grid.Column="4" Classes="mini folderaction" Margin="4,0,0,0" Content="#" IsVisible="{Binding TagsVisible}"
+                                Command="{Binding ToggleTagsCommand}" ToolTip.Tip="Tags. Requests inside inherit them, and runs can include or skip them."
+                                AutomationProperties.Name="Tags" />
+                        <Button Grid.Column="5" Classes="mini folderaction" Margin="4,0,0,0" Content="+" IsVisible="{Binding IsContainer}"
                                 Command="{Binding NewFolderCommand}" ToolTip.Tip="New folder" AutomationProperties.Name="New folder" />
-                        <Button Grid.Column="4" Classes="mini" Margin="4,0,0,0" Content="{Binding HideLabel}" IsVisible="{Binding HideVisible}"
+                        <Button Grid.Column="6" Classes="mini" Margin="4,0,0,0" Content="{Binding HideLabel}" IsVisible="{Binding HideVisible}"
                                 Command="{Binding HideOrShowCommand}" ToolTip.Tip="Hide (keeps it in the workspace, skipped by runs)"
                                 AutomationProperties.Name="Hide" />
-                        <Button Grid.Column="4" Margin="4,0,0,0" Padding="8,2" FontSize="12" Content="{Binding HideLabel}" IsVisible="{Binding ShowHiddenVisible}"
+                        <Button Grid.Column="6" Margin="4,0,0,0" Padding="8,2" FontSize="12" Content="{Binding HideLabel}" IsVisible="{Binding ShowHiddenVisible}"
                                 Command="{Binding HideOrShowCommand}" ToolTip.Tip="Show the hidden folders and requests again"
                                 AutomationProperties.Name="Show hidden" />
-                        <Button Grid.Column="5" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                        <Button Grid.Column="7" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
                                 Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete (click again within 3 seconds to confirm)"
                                 AutomationProperties.Name="Delete" />
                       </Grid>
@@ -143,7 +162,8 @@
                   <Button Content="New request" Command="{Binding NewRequestCommand}" ToolTip.Tip="New request (Ctrl+N)"
                           AutomationProperties.Name="New request" />
                 </StackPanel>
-              </Panel>
+                </Panel>
+              </Grid>
             </TabItem>
             <TabItem Header="History">
               <ListBox ItemsSource="{Binding History}" SelectedItem="{Binding SelectedHistory}">

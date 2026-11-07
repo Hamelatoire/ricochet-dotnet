@@ -131,6 +131,9 @@ public sealed record CollectionItem
     public ApiRequest? Request { get; set; }
     public IReadOnlyList<CollectionItem> Children { get; set; } = [];
     public IReadOnlyList<StoredScript> Scripts { get; set; } = [];
+
+    /// <summary>Set on Folders only. Requests inherit them through the Folders they sit in (ADR 0030). Null when none.</summary>
+    public IReadOnlyList<string>? Tags { get; set; }
 }
 
 public sealed record Collection
