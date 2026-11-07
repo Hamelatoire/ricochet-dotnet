@@ -131,7 +131,7 @@ public sealed class BulkRunner(RequestSender sender, ExternalSecretResolver? sec
         }
 
         var resolved = VariableResolver.Apply(template, variables);
-        var secrets = CollectionRunner.SecretsToMask(variables, [], [], resolved);
+        var secrets = CollectionRunner.SecretsToMask(variables, overrides, [], resolved);
 
         // Sending a literal {{name}} could reach the wrong place, so an unresolved one stops this id only.
         var missing = VariableResolver.FindPlaceholders(resolved);
