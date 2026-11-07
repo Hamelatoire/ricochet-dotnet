@@ -784,6 +784,35 @@
       </Border>
     </Border>
 
+    <!-- Choose which exports to import from a Postman data dump (ADR 0038) -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsDumpChoiceOpen}">
+      <Border Classes="dialog" Width="640" MaxHeight="620" x:DataType="vm:DumpChoiceViewModel" DataContext="{Binding DumpChoice}">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="brand" Text="Choose what to import" Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+                     Text="{Binding DumpName, StringFormat='{}{0} holds these exports. All are selected. Untick any you do not want; only the ticked ones are imported.'}" />
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+            <TextBlock Grid.Column="0" Classes="muted" VerticalAlignment="Center" Text="{Binding Summary}"
+                       AutomationProperties.Name="Number of exports selected" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+              <Button Content="Cancel" Command="{Binding CancelCommand}" AutomationProperties.Name="Cancel the import" />
+              <Button Content="Import selected" Classes="primary" Command="{Binding ImportCommand}" IsEnabled="{Binding HasSelection}"
+                      AutomationProperties.Name="Import the selected exports" />
+            </StackPanel>
+          </Grid>
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding Entries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:DumpChoiceItem">
+                  <CheckBox Content="{Binding Label}" IsChecked="{Binding IsSelected}" Margin="0,4" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Border>
+
     <!-- From an OpenAPI URL (ADR 0014): fetch on request, preview, then apply -->
     <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsSpecDialogOpen}">
       <Border Classes="dialog" Width="640" MaxHeight="620">
