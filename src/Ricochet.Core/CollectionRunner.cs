@@ -41,8 +41,14 @@ public sealed record RequestRunResult(
     public IReadOnlyList<string> Captured { get; init; } = [];
 }
 
+/// <summary>A Request that was selected for the run but left out because it, or a Folder above it, is hidden (ADR 0032).</summary>
+public sealed record SkippedRequest(string Collection, string Path);
+
 public sealed record RunReport(IReadOnlyList<RequestRunResult> Results, bool Stopped)
 {
+    /// <summary>Hidden Requests that would otherwise have run. They are named, so a skipped test can't go unnoticed.</summary>
+    public IReadOnlyList<SkippedRequest> SkippedHidden { get; init; } = [];
+
     public bool Passed => Results.All(r => r.Passed);
     public int FailedRequests => Results.Count(r => !r.Passed);
     public int TotalAssertions => Results.Sum(r => r.Assertions.Count);
@@ -69,7 +75,7 @@ public sealed class CollectionRunner(RequestSender sender)
         CancellationToken cancellationToken = default)
     {
         var environment = FindEnvironment(workspace, options.EnvironmentName);
-        var planned = Plan(workspace, options);
+        var (planned, hidden) = Plan(workspace, options);
 
         var results = new List<RequestRunResult>();
         var stopped = false;
@@ -95,7 +101,7 @@ public sealed class CollectionRunner(RequestSender sender)
             }
         }
 
-        return new RunReport(results, stopped);
+        return new RunReport(results, stopped) { SkippedHidden = hidden };
     }
 
     private static ApiEnvironment? FindEnvironment(Workspace workspace, string? name)
@@ -113,7 +119,7 @@ public sealed class CollectionRunner(RequestSender sender)
         return list.Count > 0 ? string.Join(", ", list) : "none";
     }
 
-    private static List<Planned> Plan(Workspace workspace, RunOptions options)
+    private static (List<Planned> Planned, List<SkippedRequest> Hidden) Plan(Workspace workspace, RunOptions options)
     {
         var collections = workspace.Collections.AsEnumerable();
         if (!string.IsNullOrEmpty(options.CollectionName))
@@ -124,16 +130,21 @@ public sealed class CollectionRunner(RequestSender sender)
         }
 
         var planned = new List<Planned>();
+        var hidden = new List<SkippedRequest>();
         foreach (var collection in collections)
         {
             var folderMatched = string.IsNullOrEmpty(options.FolderName);
             foreach (var item in collection.Items)
-                Walk(collection, item, "", folderMatched, collection.Scripts.Count > 0, [], options, planned);
+                Walk(collection, item, "", folderMatched, collection.Scripts.Count > 0, [], false, options, planned, hidden);
         }
 
         // A run that tests nothing must not look like a success.
         if (planned.Count == 0)
         {
+            if (hidden.Count > 0)
+                throw new RunSetupException(hidden.Count == 1
+                    ? "The only request that would run is hidden. Show it in the app to run it."
+                    : $"All {hidden.Count} requests that would run are hidden. Show them in the app to run them.");
             if (!string.IsNullOrEmpty(options.FolderName))
                 throw new RunSetupException($"No requests were found in a folder named \"{options.FolderName}\".");
             if (options.IncludeTags.Count > 0 || options.ExcludeTags.Count > 0)
@@ -141,15 +152,14 @@ public sealed class CollectionRunner(RequestSender sender)
             throw new RunSetupException("There are no requests to run.");
         }
 
-        return planned;
+        return (planned, hidden);
     }
 
     private static void Walk(Collection collection, CollectionItem item, string parentPath, bool folderMatched, bool parentHasScripts,
-        IReadOnlyList<string> inheritedTags, RunOptions options, List<Planned> planned)
+        IReadOnlyList<string> inheritedTags, bool parentHidden, RunOptions options, List<Planned> planned, List<SkippedRequest> hidden)
     {
-        // A hidden folder, and everything in it, is not run (ADR 0032).
-        if (collection.HiddenItemIds?.Contains(item.Id) == true)
-            return;
+        // A hidden folder, and everything in it, is not run (ADR 0032). Hidden Requests that were selected are named instead.
+        var isHidden = parentHidden || collection.HiddenItemIds?.Contains(item.Id) == true;
 
         var path = parentPath.Length > 0 ? $"{parentPath} / {item.Name}" : item.Name;
         var hasScripts = parentHasScripts || item.Scripts.Count > 0;
@@ -160,13 +170,18 @@ public sealed class CollectionRunner(RequestSender sender)
         if (item.Request is { } request)
         {
             if (folderMatched && FolderTags.Selects(inheritedTags, options.IncludeTags, options.ExcludeTags))
-                planned.Add(new Planned(collection, path, request, hasScripts));
+            {
+                if (isHidden)
+                    hidden.Add(new SkippedRequest(collection.Name, path));
+                else
+                    planned.Add(new Planned(collection, path, request, hasScripts));
+            }
             return;
         }
 
         var matched = folderMatched || item.Name.Equals(options.FolderName, StringComparison.OrdinalIgnoreCase);
         foreach (var child in item.Children)
-            Walk(collection, child, path, matched, hasScripts, tags, options, planned);
+            Walk(collection, child, path, matched, hasScripts, tags, isHidden, options, planned, hidden);
     }
 
     private async Task<RequestRunResult> RunOneAsync(Planned item, Workspace workspace, ApiEnvironment? environment, List<KeyValue> captured, RunOptions options, CancellationToken cancellationToken)
@@ -233,6 +248,8 @@ public static class RunReports
         var text = new StringBuilder();
         text.Append($"{Count(report.Results.Count, "request")}: {report.Results.Count - report.FailedRequests} passed, {report.FailedRequests} failed. ");
         text.Append($"{Count(report.TotalAssertions, "assertion")}: {report.TotalAssertions - report.FailedAssertions} passed, {report.FailedAssertions} failed.");
+        if (report.SkippedHidden.Count > 0)
+            text.Append($" {Count(report.SkippedHidden.Count, "request")} skipped because hidden.");
         return text.ToString();
     }
 
@@ -246,6 +263,8 @@ public static class RunReports
             cautions.Add($"{Count(report.RequestsWithScripts, "request")} had Postman scripts that were not run, so any tests in them did not count.");
         if (report.RequestsWithoutAssertions > 0)
             cautions.Add($"{Count(report.RequestsWithoutAssertions, "request")} had no assertions, so only getting a response was checked.");
+        if (report.SkippedHidden.Count > 0)
+            cautions.Add($"Skipped hidden requests, which did not run: {string.Join(", ", report.SkippedHidden.Select(s => $"{s.Collection} / {s.Path}"))}.");
         return cautions;
     }
 
