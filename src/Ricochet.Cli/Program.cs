@@ -34,7 +34,8 @@ internal static class Program
           --insecure             Skip TLS certificate checks. Only for servers you trust, such as a local test server.
           --help                 Show this help.
 
-        Variables can also come from environment variables named RICOCHET_VAR_<name>.
+        Variables can also come from a .env file in the workspace folder, or from environment
+        variables named RICOCHET_VAR_<name>. Environment variables win over .env, and --var wins over both.
         Prefer those for secrets in CI, because --var values can show up in process lists.
         Values set either way are masked in the output.
 
@@ -113,6 +114,11 @@ internal static class Program
 
         workspace = WorkspaceSecrets.Merge(workspace, WorkspaceSecrets.ForWorkspace(LoadSecrets(), folder.Id));
 
+        // Lowest priority first: .env, then RICOCHET_VAR_ variables, then --var. Later entries win.
+        var dotEnv = DotEnv.Read(folder.Root);
+        foreach (var line in dotEnv.SkippedLines)
+            Console.Error.WriteLine($"Warning: {DotEnv.FileName} line {line} was skipped, because it is not KEY=VALUE.");
+
         var colors = new Colors(!Console.IsOutputRedirected && Environment.GetEnvironmentVariable("NO_COLOR") is null);
         string? currentCollection = null;
         var startedAt = DateTimeOffset.Now;
@@ -133,7 +139,7 @@ internal static class Program
                 IncludeTags = FolderTags.Normalize(options.Tags) ?? [],
                 ExcludeTags = FolderTags.Normalize(options.ExcludeTags) ?? [],
                 EnvironmentName = options.Environment,
-                Overrides = [.. VariablesFromEnvironment(), .. options.Variables],
+                Overrides = [.. dotEnv.Variables, .. VariablesFromEnvironment(), .. options.Variables],
                 StopOnFirstFailure = options.Bail,
             },
             result =>

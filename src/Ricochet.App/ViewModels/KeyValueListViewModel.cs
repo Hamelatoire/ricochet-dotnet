@@ -5,9 +5,12 @@ using Ricochet.Core;
 
 namespace Ricochet.App.ViewModels;
 
-public sealed partial class KeyValueRowViewModel(Action<KeyValueRowViewModel> remove, bool allowSecrets) : ObservableObject
+public sealed partial class KeyValueRowViewModel(
+    Action<KeyValueRowViewModel> remove, bool allowSecrets, string keyPlaceholder, string valuePlaceholder) : ObservableObject
 {
     public bool AllowSecrets { get; } = allowSecrets;
+
+    public string KeyPlaceholder { get; } = keyPlaceholder;
 
     [ObservableProperty] private bool _enabled = true;
     [ObservableProperty] private string _key = "";
@@ -20,20 +23,22 @@ public sealed partial class KeyValueRowViewModel(Action<KeyValueRowViewModel> re
     public char ValueMask => IsSecret ? '•' : '\0';
 
     // A Secret arriving through git or an import has no value here, and this is where the user learns that.
-    public string ValuePlaceholder => IsSecret ? "No value on this machine" : "Value";
+    public string ValuePlaceholder => IsSecret ? "No value on this machine" : valuePlaceholder;
 
     [RelayCommand]
     private void Remove() => remove(this);
 }
 
-public sealed partial class KeyValueListViewModel(bool allowSecrets = false) : ObservableObject
+public sealed partial class KeyValueListViewModel(
+    bool allowSecrets = false, string keyPlaceholder = "Variable name", string valuePlaceholder = "Value") : ObservableObject
 {
     public ObservableCollection<KeyValueRowViewModel> Items { get; } = [];
 
     [RelayCommand]
     private void Add() => Items.Add(NewRow());
 
-    private KeyValueRowViewModel NewRow() => new(row => Items.Remove(row), allowSecrets);
+    private KeyValueRowViewModel NewRow() =>
+        new(row => Items.Remove(row), allowSecrets, keyPlaceholder, valuePlaceholder);
 
     public void Load(IEnumerable<KeyValue> entries)
     {

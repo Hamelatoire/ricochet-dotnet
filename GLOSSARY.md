@@ -48,6 +48,10 @@ _Avoid_: Test script, check
 A rule on a Request that saves a value from its response into a Variable for later Requests. The value itself is kept only in memory.
 _Avoid_: Extract, post-response script
 
+**Example**:
+A response saved on a Request as an expected reply. Its credentials are masked, and it is stored in the Request's file.
+_Avoid_: Sample, mock response
+
 **Run**:
 Sending a selection of Requests in order and checking their Assertions, without changing the Workspace.
 _Avoid_: Monitor, test suite
