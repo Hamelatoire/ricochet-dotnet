@@ -2,5 +2,6 @@
   <Project Path="src/Ricochet.Core/Ricochet.Core.csproj" />
   <Project Path="src/Ricochet.App/Ricochet.App.csproj" />
   <Project Path="src/Ricochet.Cli/Ricochet.Cli.csproj" />
+  <Project Path="tests/Ricochet.App.Tests/Ricochet.App.Tests.csproj" />
   <Project Path="tests/Ricochet.Core.Tests/Ricochet.Core.Tests.csproj" />
 </Solution>
