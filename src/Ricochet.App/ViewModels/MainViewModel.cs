@@ -2,9 +2,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Globalization;
+using System.IO;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Ricochet.App.Services;
 using Ricochet.Core;
 
 namespace Ricochet.App.ViewModels;
@@ -23,6 +25,8 @@ public sealed partial class MainViewModel : ObservableObject
     private ISecretVault _vault;
     private IReadOnlyDictionary<string, string> _storedSecrets;
     private IDisposable? _folderWatcher;
+    private readonly IDialogs _dialogs;
+    private readonly IClipboardService _clipboard;
 
     /// <summary>The mock server dialog (ADR 0027). It is not part of the Workspace, so it is not saved.</summary>
     public MockServerViewModel Mock { get; } = new();
@@ -30,11 +34,13 @@ public sealed partial class MainViewModel : ObservableObject
     // The last response and what produced it, kept so it can be saved as an example (ADR 0023).
     private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _lastExchange;
 
-    public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault)
+    public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault, IDialogs dialogs, IClipboardService clipboard)
     {
         _sender = sender;
         _store = store;
         _vault = vault;
+        _dialogs = dialogs;
+        _clipboard = clipboard;
         _storedSecrets = LoadSecrets();
         _clientCertificatePassword = PersonalSecrets.ClientCertificatePassword(_storedSecrets) ?? "";
         // Load first: settings and the theme are read from the state that Load reads.
@@ -919,6 +925,92 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string _responseHeaders = "";
     [ObservableProperty] private string _responseBody = "";
+
+    // The response buttons show a short confirmation after they are used, then their normal label again.
+    [ObservableProperty] private string _copyBodyLabel = "Copy body";
+    [ObservableProperty] private string _copyHeadersLabel = "Copy headers";
+    [ObservableProperty] private string _saveBodyLabel = "Save body…";
+
+    [RelayCommand]
+    private async Task CopyBodyAsync()
+    {
+        await _clipboard.SetTextAsync(ResponseBody);
+        await ShowConfirmationAsync(v => CopyBodyLabel = v, "Copied", "Copy body");
+    }
+
+    [RelayCommand]
+    private async Task CopyHeadersAsync()
+    {
+        await _clipboard.SetTextAsync(ResponseHeaders);
+        await ShowConfirmationAsync(v => CopyHeadersLabel = v, "Copied", "Copy headers");
+    }
+
+    /// <summary>Saves the body as it was received, not pretty-printed. The file is only written, never read back.</summary>
+    [RelayCommand]
+    private async Task SaveBodyAsync()
+    {
+        if (!HasStatus || await _dialogs.PickResponseSavePathAsync(ResponseFileName) is not { } path)
+            return;
+
+        try
+        {
+            await File.WriteAllBytesAsync(path, ResponseBytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notice = $"Could not save the response body: {ex.Message}";
+            return;
+        }
+
+        await ShowConfirmationAsync(v => SaveBodyLabel = v, "Saved", "Save body…");
+    }
+
+    private static async Task ShowConfirmationAsync(Action<string> set, string confirmation, string normal)
+    {
+        set(confirmation);
+        await Task.Delay(1500);
+        set(normal);
+    }
+
+    [RelayCommand]
+    private async Task ImportPostmanFilesAsync()
+    {
+        var paths = await _dialogs.PickPostmanFilesAsync();
+        if (paths.Count > 0)
+            await ImportFilesAsync(paths);
+    }
+
+    [RelayCommand]
+    private async Task ChangeWorkspaceFolderAsync()
+    {
+        if (await _dialogs.PickWorkspaceFolderAsync() is { } path)
+            await OpenWorkspaceFolderAsync(path);
+    }
+
+    [RelayCommand]
+    private async Task BrowseClientCertificateAsync()
+    {
+        if (await _dialogs.PickClientCertificateAsync() is { } path)
+            ClientCertificatePath = path;
+    }
+
+    /// <summary>Reads an OpenAPI description the user picks for the mock server. The file is only read.</summary>
+    [RelayCommand]
+    private async Task LoadMockDescriptionFromFileAsync()
+    {
+        if (await _dialogs.PickOpenApiFileAsync() is not { } path)
+            return;
+
+        try
+        {
+            var text = await File.ReadAllTextAsync(path);
+            Mock.LoadDescription(text, Path.GetFileName(path));
+        }
+        catch (IOException ex)
+        {
+            Mock.Error = $"The file could not be read: {ex.Message}";
+        }
+    }
 
     /// <summary>The body as received, before any pretty-printing, for saving to a file.</summary>
     public byte[] ResponseBytes { get; private set; } = [];

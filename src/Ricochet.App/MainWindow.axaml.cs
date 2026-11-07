@@ -12,13 +12,14 @@ using Avalonia.Styling;
 using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Highlighting;
+using Ricochet.App.Services;
 using Ricochet.App.ViewModels;
 using Ricochet.Core;
 using Ricochet.App.Views;
 
 namespace Ricochet.App;
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, IDialogs, IClipboardService
 {
     private readonly Lazy<IHighlightingDefinition?> _jsonHighlighting;
     private ThemeVariant _theme = ThemeVariant.Dark;
@@ -264,42 +265,9 @@ public partial class MainWindow : Window
         _hintClass = null;
     }
 
-    /// <summary>Reads an OpenAPI description the user picks for the mock server. The file is only read.</summary>
-    private async void OnLoadMockDescriptionClick(object? sender, RoutedEventArgs e)
+    // The pickers are the platform's own dialogs, so the window owns them and the view model asks for paths (ADR 0039).
+    async Task<IReadOnlyList<string>> IDialogs.PickPostmanFilesAsync()
     {
-        if (_viewModel is null)
-            return;
-
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Choose an OpenAPI description",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("OpenAPI in JSON") { Patterns = ["*.json"] },
-                FilePickerFileTypes.All,
-            ],
-        });
-
-        if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path)
-            return;
-
-        try
-        {
-            var text = await File.ReadAllTextAsync(path);
-            _viewModel.Mock.LoadDescription(text, Path.GetFileName(path));
-        }
-        catch (IOException ex)
-        {
-            _viewModel.Mock.Error = $"The file could not be read: {ex.Message}";
-        }
-    }
-
-    private async void OnImportClick(object? sender, RoutedEventArgs e)
-    {
-        if (_viewModel is null)
-            return;
-
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = "Import Postman files",
@@ -311,17 +279,27 @@ public partial class MainWindow : Window
             ],
         });
 
-        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
-        if (paths.Count > 0)
-            await _viewModel.ImportFilesAsync(paths);
+        return files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
     }
 
-    /// <summary>Loads ids from a text file into the bulk page, one id per line. The file is only read, never changed.</summary>
-    private async void OnImportIdsClick(object? sender, RoutedEventArgs e)
+    async Task<string?> IDialogs.PickOpenApiFileAsync()
     {
-        if (_viewModel is null)
-            return;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Choose an OpenAPI description",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("OpenAPI in JSON") { Patterns = ["*.json"] },
+                FilePickerFileTypes.All,
+            ],
+        });
 
+        return files.FirstOrDefault()?.TryGetLocalPath();
+    }
+
+    async Task<string?> IDialogs.PickIdsFileAsync()
+    {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = "Import ids from a text file",
@@ -333,40 +311,22 @@ public partial class MainWindow : Window
             ],
         });
 
-        if (files.Count == 0 || files[0].TryGetLocalPath() is not { } path)
-            return;
-
-        try
-        {
-            var text = await File.ReadAllTextAsync(path);
-            _viewModel.LoadBulkIds(text, Path.GetFileName(path));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _viewModel.BulkStatus = $"Could not read {Path.GetFileName(path)}: {ex.Message}";
-        }
+        return files.Count == 0 ? null : files[0].TryGetLocalPath();
     }
 
-    private async void OnChangeFolderClick(object? sender, RoutedEventArgs e)
+    async Task<string?> IDialogs.PickWorkspaceFolderAsync()
     {
-        if (_viewModel is null)
-            return;
-
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
             Title = "Choose a workspace folder",
             AllowMultiple = false,
         });
 
-        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path)
-            await _viewModel.OpenWorkspaceFolderAsync(path);
+        return folders.Count == 0 ? null : folders[0].TryGetLocalPath();
     }
 
-    private async void OnBrowseCertificateClick(object? sender, RoutedEventArgs e)
+    async Task<string?> IDialogs.PickClientCertificateAsync()
     {
-        if (_viewModel is null)
-            return;
-
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = "Choose a client certificate",
@@ -374,44 +334,16 @@ public partial class MainWindow : Window
             FileTypeFilter = [new FilePickerFileType("Certificate files") { Patterns = ["*.pfx", "*.p12"] }],
         });
 
-        if (files.Count > 0 && files[0].TryGetLocalPath() is { } path)
-            _viewModel.ClientCertificatePath = path;
+        return files.Count == 0 ? null : files[0].TryGetLocalPath();
     }
 
-    private async void OnCopyResponseClick(object? sender, RoutedEventArgs e) =>
-        await CopyTextAsync(sender, _viewModel?.ResponseBody);
-
-    private async void OnCopyHeadersClick(object? sender, RoutedEventArgs e) =>
-        await CopyTextAsync(sender, _viewModel?.ResponseHeaders);
-
-    /// <summary>Copies text to the clipboard, and confirms it on the button itself before putting its label back.</summary>
-    private async Task CopyTextAsync(object? sender, string? text)
+    async Task<string?> IDialogs.PickResponseSavePathAsync(string suggestedFileName)
     {
-        if (text is null || Clipboard is not { } clipboard)
-            return;
-
-        await clipboard.SetTextAsync(text);
-
-        if (sender is Button button)
-        {
-            var label = button.Content;
-            button.Content = "Copied";
-            await Task.Delay(1500);
-            button.Content = label;
-        }
-    }
-
-    /// <summary>Saves the body as it was received, not pretty-printed. The file is only written, never read back.</summary>
-    private async void OnSaveResponseClick(object? sender, RoutedEventArgs e)
-    {
-        if (_viewModel is null || !_viewModel.HasStatus)
-            return;
-
-        var extension = Path.GetExtension(_viewModel.ResponseFileName);
+        var extension = Path.GetExtension(suggestedFileName);
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Save response body",
-            SuggestedFileName = _viewModel.ResponseFileName,
+            SuggestedFileName = suggestedFileName,
             DefaultExtension = extension.TrimStart('.'),
             FileTypeChoices =
             [
@@ -420,26 +352,13 @@ public partial class MainWindow : Window
             ],
         });
 
-        if (file?.TryGetLocalPath() is not { } path)
-            return;
+        return file?.TryGetLocalPath();
+    }
 
-        try
-        {
-            await File.WriteAllBytesAsync(path, _viewModel.ResponseBytes);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _viewModel.Notice = $"Could not save the response body: {ex.Message}";
-            return;
-        }
-
-        if (sender is Button button)
-        {
-            var label = button.Content;
-            button.Content = "Saved";
-            await Task.Delay(1500);
-            button.Content = label;
-        }
+    async Task IClipboardService.SetTextAsync(string text)
+    {
+        if (Clipboard is { } clipboard)
+            await clipboard.SetTextAsync(text);
     }
 
     // AvaloniaEdit's text is not a bindable property, so the response is pushed in from here.
