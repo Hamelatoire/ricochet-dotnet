@@ -268,7 +268,7 @@ public static partial class PostmanImporter
                 : ReadRequest(source, name, path, inheritedAuth);
 
             NoteDynamicVariables(request, path);
-            return new CollectionItem { Name = name, Request = request, Scripts = ReadScripts(item, path) };
+            return new CollectionItem { Name = name, Request = request, Scripts = ReadScripts(item, path, request) };
         }
 
         private ApiRequest ReadRequest(JsonElement source, string name, string path, RequestAuth? inheritedAuth)
@@ -569,7 +569,8 @@ public static partial class PostmanImporter
             return values;
         }
 
-        private List<StoredScript> ReadScripts(JsonElement owner, string location)
+        // Only a Request's own test script is translated (ADR 0037). Folder and Collection scripts stay as kept scripts.
+        private List<StoredScript> ReadScripts(JsonElement owner, string location, ApiRequest? request = null)
         {
             var scripts = new List<StoredScript>();
             foreach (var entry in Elements(Array(owner, "event")))
@@ -582,8 +583,20 @@ public static partial class PostmanImporter
                     continue; // Postman exports empty script stubs for many requests.
 
                 var listen = Text(entry, "listen") ?? "script";
+                var detail = listen;
+                if (request is not null && listen == "test")
+                {
+                    if (PostmanTestTranslator.TryTranslate(source, out var checks, out var notTranslated))
+                    {
+                        request.Assertions = (request.Assertions ?? []).Concat(checks).ToList();
+                        continue;
+                    }
+
+                    detail = $"{listen}, not translated: {notTranslated}";
+                }
+
                 scripts.Add(new StoredScript(listen, source));
-                _issues.Add(new ImportIssue(ImportCategories.Scripts, location, listen));
+                _issues.Add(new ImportIssue(ImportCategories.Scripts, location, detail));
             }
 
             return scripts;

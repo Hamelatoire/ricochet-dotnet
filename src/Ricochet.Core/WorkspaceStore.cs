@@ -14,12 +14,15 @@ namespace Ricochet.Core;
 [JsonSerializable(typeof(List<KeyValue>))]
 [JsonSerializable(typeof(BulkProgress))]
 [JsonSerializable(typeof(PersonalSettings))]
+[JsonSerializable(typeof(WindowPlacement))]
 [JsonSerializable(typeof(WorkspaceMarkerFile))]
 [JsonSerializable(typeof(CollectionFile))]
 [JsonSerializable(typeof(FolderFile))]
 [JsonSerializable(typeof(RequestFile))]
 [JsonSerializable(typeof(ApiEnvironment))]
+[JsonSerializable(typeof(EnvironmentFile))]
 [JsonSerializable(typeof(ApiRequest))]
+[JsonSerializable(typeof(ResponseExample))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 internal sealed partial class WorkspaceJsonContext : JsonSerializerContext;
 
@@ -37,6 +40,30 @@ public sealed record PersonalState
 
     /// <summary>Preferences for how this machine sends requests and shows responses (ADR 0007).</summary>
     public PersonalSettings Settings { get; set; } = new();
+
+    /// <summary>Where the main window was when the app last closed. Null means the default size and position.</summary>
+    public WindowPlacement? Window { get; set; }
+}
+
+/// <summary>
+/// Where the main window was. Position is in screen pixels; size is in device-independent units, as Avalonia uses.
+/// Size and position are the window's normal (not maximised) bounds, so restoring it from maximised still works.
+/// </summary>
+public sealed record WindowPlacement
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+    public double Width { get; set; }
+    public double Height { get; set; }
+    public bool IsMaximized { get; set; }
+
+    /// <summary>False for values no real window could have, such as a saved file edited by hand. A method, so it isn't saved as a field.</summary>
+    public bool IsReasonable() =>
+        double.IsFinite(Width) && double.IsFinite(Height)
+        && Width is >= 200 and <= 10000
+        && Height is >= 150 and <= 10000
+        && X is > -20000 and < 20000
+        && Y is > -20000 and < 20000;
 }
 
 /// <summary>
@@ -136,6 +163,25 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     {
         lock (_gate)
             SaveState(_state with { Settings = settings });
+    }
+
+    /// <summary>
+    /// Where the main window was last time. Null when nothing is saved, or when the saved value is not one a window could have,
+    /// so the window opens at its default size and position.
+    /// </summary>
+    public WindowPlacement? Window
+    {
+        get
+        {
+            lock (_gate)
+                return _state.Window is { } window && window.IsReasonable() ? window : null;
+        }
+    }
+
+    public void SaveWindow(WindowPlacement placement)
+    {
+        lock (_gate)
+            SaveState(_state with { Window = placement });
     }
 
     /// <summary>The bulk run progress saved for each Request.</summary>

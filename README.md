@@ -85,6 +85,8 @@ It exits with `0` if everything passed, `1` if a request or check failed, and `2
 
 A request needing a variable with no value fails without being sent. Secrets aren't in the repository, so provide them through environment variables named `RICOCHET_VAR_<name>`, for example `RICOCHET_VAR_token`. These and saved values are masked in the output and the report, but only when the value is at least 4 characters long.
 
+For a local run, a `.env` file in the workspace folder works too, with `KEY=VALUE` lines. Environment variables override it, and `--var` overrides both. Ricochet doesn't write these values anywhere, and new workspaces list `.env` in their `.gitignore`.
+
 Requests run in order, and saved values carry forward within a collection. Running only one folder won't include a login request outside it, so its requests fail without being sent. Postman scripts aren't run, so the summary says how many requests had any.
 
 On Windows, Smart App Control can block a newly built `ricochet.exe` because it's unsigned. Signing release builds is the lasting fix. In development, you can run the same code with `dotnet run --project src/Ricochet.Cli -- run`.

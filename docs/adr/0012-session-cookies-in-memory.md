@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Keep cookies between Requests, in memory only
@@ -27,3 +27,12 @@ Ricochet doesn't currently keep cookies: `Set-Cookie` is shown in the response a
 - This changes behaviour: a Request that used to be sent with no cookies can start sending them, so the Request tab must show exactly what was sent.
 - The app and the CLI can differ, because the app may hold a cookie from earlier sending while a Run starts empty. A Run that needs a session must include its login.
 - A login often sets its cookie on a redirect, and redirects are currently followed inside the HTTP client, where those responses can't be seen. So either the client must follow redirects itself, or each set of cookies needs its own HTTP handler. This must be settled alongside the plumbing in [ADR 0007](0007-personal-settings-page.md).
+
+## What was built
+
+- `RequestSender.Configure` takes an optional `keepCookies` flag, off by default. When it's on, the sender keeps one in-memory `CookieContainer` for its requests, and the handler stores `Set-Cookie` from every redirect hop and sends the cookies back on each hop. Redirects are settled this way: the HTTP client keeps the cookies itself, so no client-side redirect following was needed.
+- A Request that writes its own `Cookie` header is sent through a client without the store, so the header goes out exactly as written. Its `Set-Cookie` is not kept.
+- `RequestSender.ResetCookies()` forgets every kept cookie. Changing settings with the flag on keeps them, and turning the flag off drops them.
+- Nothing is written to a file. The cookies live only in the sender.
+
+Not built yet: the app and the CLI don't turn the flag on, and nothing calls `ResetCookies` when a Collection changes. The per-Request opt-out (it needs a field on the Request in `Models.cs`), the **Cookies** tab, and the Environment scoping are also still to do.
