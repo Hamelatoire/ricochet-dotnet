@@ -129,7 +129,8 @@
                                 Command="{Binding HideOrShowCommand}" ToolTip.Tip="Show the hidden folders and requests again"
                                 AutomationProperties.Name="Show hidden" />
                         <Button Grid.Column="5" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
-                                Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete" />
+                                Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete (click again within 3 seconds to confirm)"
+                                AutomationProperties.Name="Delete" />
                       </Grid>
                     </TreeDataTemplate>
                   </TreeView.ItemTemplate>
