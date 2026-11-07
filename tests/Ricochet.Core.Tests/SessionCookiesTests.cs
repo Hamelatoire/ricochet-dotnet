@@ -115,7 +115,7 @@ public class SessionCookiesTests
     private static RequestSender Sender(bool keepCookies)
     {
         var sender = new RequestSender(new HttpClient());
-        sender.Configure(TimeSpan.FromSeconds(10), followRedirects: true, verifyCertificates: true, RequestSender.DefaultMaxBodyBytes, keepCookies);
+        sender.Configure(TimeSpan.FromSeconds(10), followRedirects: true, verifyCertificates: true, RequestSender.DefaultMaxBodyBytes, keepCookies: keepCookies);
         return sender;
     }
 
