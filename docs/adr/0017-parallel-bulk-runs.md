@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built)
 ---
 
 # Send bulk-run ids in parallel, with a thread count

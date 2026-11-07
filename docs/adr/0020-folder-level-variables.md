@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built; not yet shown on a Request's own Variables tab)
 ---
 
 # Folder-level variables

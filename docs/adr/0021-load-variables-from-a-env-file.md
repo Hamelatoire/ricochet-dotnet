@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built; the app does not read RICOCHET_VAR_ variables yet)
 ---
 
 # Load variables from a .env file

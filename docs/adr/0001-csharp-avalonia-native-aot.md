@@ -1,3 +1,7 @@
+---
+status: accepted (built)
+---
+
 # C#, Avalonia and Native AOT for the desktop app
 
 The app must be fast and run on Windows, macOS and Linux, and its owner reads C# but not Rust. We chose C# on .NET with Avalonia for the UI, published with Native AOT, because keeping the code readable and debuggable by its owner matters more than the small runtime gain Rust could offer. Most of the sluggishness in tools like Postman comes from Electron, which this stack avoids.

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built; the app's tag filter only narrows the sidebar, it has no run action)
 ---
 
 # Folder tags, inherited by requests, with runner filters

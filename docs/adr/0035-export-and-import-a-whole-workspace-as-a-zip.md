@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built in Core and the CLI; no app screen yet)
 ---
 
 # Export and import a whole workspace as a ZIP

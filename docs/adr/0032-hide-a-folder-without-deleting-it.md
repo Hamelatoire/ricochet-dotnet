@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built)
 ---
 
 # Hide a folder without deleting it

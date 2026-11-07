@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built in Core only; no app or CLI button yet)
 ---
 
 # Generate a request as code

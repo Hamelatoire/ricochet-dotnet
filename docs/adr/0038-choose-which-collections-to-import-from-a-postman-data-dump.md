@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (built; the Replace, Copy and Skip choices are not built yet)
 ---
 
 # Choose which collections to import from a Postman data dump

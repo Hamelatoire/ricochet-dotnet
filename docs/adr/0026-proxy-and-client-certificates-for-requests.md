@@ -1,5 +1,5 @@
 ---
-status: accepted (built; verified on Windows only)
+status: accepted (built in the app; verified on Windows only; CLI options, PEM or key-file certificates and proxy logins not built)
 ---
 
 # Proxy and client certificates for requests
