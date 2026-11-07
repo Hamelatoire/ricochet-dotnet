@@ -231,12 +231,24 @@
     <Style Selector="Border.badge.failure">
       <Setter Property="Background" Value="{DynamicResource FailureBackground}" />
     </Style>
+    <Style Selector="Border.badge.warning">
+      <Setter Property="Background" Value="{DynamicResource WarningBackground}" />
+    </Style>
+    <Style Selector="Border.badge.redirect">
+      <Setter Property="Background" Value="{DynamicResource InfoBackground}" />
+    </Style>
     <Style Selector="Border.badge TextBlock">
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="Border.badge.success TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Success}" />
+    </Style>
+    <Style Selector="Border.badge.redirect TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Info}" />
+    </Style>
+    <Style Selector="Border.badge.warning TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Warning}" />
     </Style>
     <Style Selector="Border.badge.failure TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Failure}" />

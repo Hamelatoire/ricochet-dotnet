@@ -318,19 +318,67 @@ public partial class MainWindow : Window
             await _viewModel.OpenWorkspaceFolderAsync(path);
     }
 
-    private async void OnCopyResponseClick(object? sender, RoutedEventArgs e)
+    private async void OnCopyResponseClick(object? sender, RoutedEventArgs e) =>
+        await CopyTextAsync(sender, _viewModel?.ResponseBody);
+
+    private async void OnCopyHeadersClick(object? sender, RoutedEventArgs e) =>
+        await CopyTextAsync(sender, _viewModel?.ResponseHeaders);
+
+    /// <summary>Copies text to the clipboard, and confirms it on the button itself before putting its label back.</summary>
+    private async Task CopyTextAsync(object? sender, string? text)
     {
-        if (_viewModel is null || Clipboard is not { } clipboard)
+        if (text is null || Clipboard is not { } clipboard)
             return;
 
-        await clipboard.SetTextAsync(_viewModel.ResponseBody);
+        await clipboard.SetTextAsync(text);
 
-        // Confirms the copy on the button itself, then puts its label back.
         if (sender is Button button)
         {
+            var label = button.Content;
             button.Content = "Copied";
             await Task.Delay(1500);
-            button.Content = "Copy";
+            button.Content = label;
+        }
+    }
+
+    /// <summary>Saves the body as it was received, not pretty-printed. The file is only written, never read back.</summary>
+    private async void OnSaveResponseClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null || !_viewModel.HasStatus)
+            return;
+
+        var extension = Path.GetExtension(_viewModel.ResponseFileName);
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Save response body",
+            SuggestedFileName = _viewModel.ResponseFileName,
+            DefaultExtension = extension.TrimStart('.'),
+            FileTypeChoices =
+            [
+                new FilePickerFileType($"{extension.TrimStart('.').ToUpperInvariant()} files") { Patterns = [$"*{extension}"] },
+                FilePickerFileTypes.All,
+            ],
+        });
+
+        if (file?.TryGetLocalPath() is not { } path)
+            return;
+
+        try
+        {
+            await File.WriteAllBytesAsync(path, _viewModel.ResponseBytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _viewModel.Notice = $"Could not save the response body: {ex.Message}";
+            return;
+        }
+
+        if (sender is Button button)
+        {
+            var label = button.Content;
+            button.Content = "Saved";
+            await Task.Delay(1500);
+            button.Content = label;
         }
     }
 
