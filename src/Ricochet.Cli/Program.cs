@@ -20,6 +20,7 @@ internal static class Program
           ricochet run [folder] [options]
           ricochet export <collection> --postman <file> | --openapi <file>   (see ricochet export --help)
           ricochet zip export <workspace> <file.zip> | zip import <file.zip> <new-folder>   (see ricochet zip --help)
+          ricochet clone <git-url> <target-folder>   (see ricochet clone --help)
 
         Arguments:
           folder                 The workspace folder. Defaults to the current folder.
@@ -79,6 +80,9 @@ internal static class Program
 
         if (args[0] == "zip")
             return ZipCommand(args.Skip(1).ToList());
+
+        if (args[0] == "clone")
+            return await CloneCommand(args.Skip(1).ToList());
 
         if (args[0] != "run")
             return CannotRun($"Unknown command \"{args[0]}\". Try: ricochet --help");
@@ -389,6 +393,55 @@ internal static class Program
         }
 
         return true;
+    }
+
+    private const string CloneUsage = """
+        Ricochet: clone a git repository as a workspace (ADR 0034).
+
+        Usage:
+          ricochet clone <git-url> <target-folder>
+
+        The target folder must already exist and be empty. Ricochet runs git clone only: it never
+        commits, pushes or stores credentials. Authentication uses your existing git setup, and a
+        password in the address is refused.
+
+        Exit codes:
+          0  The clone succeeded and the folder is a Ricochet workspace.
+          1  The clone succeeded, but the folder is not a Ricochet workspace. The files stay on disk.
+          2  The clone could not run, for example because the target is not empty, git is not
+             installed, or the clone failed.
+        """;
+
+    private static async Task<int> CloneCommand(List<string> args)
+    {
+        if (args.Count == 0 || args[0] is "--help" or "-h")
+        {
+            Console.WriteLine(CloneUsage);
+            return args.Count == 0 ? ExitCannotRun : ExitPassed;
+        }
+
+        if (args.Count != 2 || args.Any(a => a.StartsWith('-')))
+            return CannotRun("Usage: ricochet clone <git-url> <target-folder>. Try: ricochet clone --help");
+
+        using var cancel = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            cancel.Cancel();
+        };
+
+        var result = await GitCloner.CloneAsync(args[0], args[1], cancel.Token);
+        if (!result.Succeeded)
+            return CannotRun(result.Message);
+
+        if (!result.IsWorkspace)
+        {
+            Console.Error.WriteLine(result.Message);
+            return ExitTestsFailed;
+        }
+
+        Console.WriteLine(result.Message);
+        return ExitPassed;
     }
 
     private static int CannotRun(string message)
