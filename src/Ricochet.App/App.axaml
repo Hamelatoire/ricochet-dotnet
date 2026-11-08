@@ -44,6 +44,9 @@
         <SolidColorBrush x:Key="UrlBarBackground" Color="#1D2026" />
         <SolidColorBrush x:Key="Scrim" Color="#B3050608" />
         <SolidColorBrush x:Key="LineNumbers" Color="#808795" />
+        <!-- Find bar on the response body (ADR 0045) -->
+        <SolidColorBrush x:Key="SearchPanelBackgroundBrush" Color="#23262E" />
+        <SolidColorBrush x:Key="SearchPanelBorderBrush" Color="#30343D" />
         <SolidColorBrush x:Key="JsonProperty" Color="#7DD3FC" />
         <SolidColorBrush x:Key="JsonString" Color="#86EFAC" />
         <SolidColorBrush x:Key="JsonNumber" Color="#FDBA74" />
@@ -115,6 +118,9 @@
         <SolidColorBrush x:Key="UrlBarBackground" Color="#EEF0F4" />
         <SolidColorBrush x:Key="Scrim" Color="#8C15171C" />
         <SolidColorBrush x:Key="LineNumbers" Color="#636B78" />
+        <!-- Find bar on the response body (ADR 0045) -->
+        <SolidColorBrush x:Key="SearchPanelBackgroundBrush" Color="#E8EAF0" />
+        <SolidColorBrush x:Key="SearchPanelBorderBrush" Color="#CDD2DB" />
         <SolidColorBrush x:Key="JsonProperty" Color="#0369A1" />
         <SolidColorBrush x:Key="JsonString" Color="#15803D" />
         <SolidColorBrush x:Key="JsonNumber" Color="#C2410C" />

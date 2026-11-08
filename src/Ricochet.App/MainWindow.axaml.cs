@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Highlighting;
+using AvaloniaEdit.Search;
 using Ricochet.App.Services;
 using Ricochet.App.ViewModels;
 using Ricochet.Core;
@@ -41,6 +42,17 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
     {
         InitializeComponent();
         _jsonHighlighting = new(CreateJsonHighlighting);
+        // Ctrl+F opens a find bar on the response body (ADR 0045). It searches the text as shown, case-insensitively by default.
+        var responseSearch = SearchPanel.Install(ResponseEditor);
+        // Escape closes the bar wherever focus is inside it, as it closes the palette and dialogs.
+        ResponseEditor.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Escape && responseSearch.IsOpened)
+            {
+                responseSearch.Close();
+                e.Handled = true;
+            }
+        }, RoutingStrategies.Bubble, handledEventsToo: true);
         InitializeTreeDrag();
         InitializeTreeKeys();
         UrlEditor.TextArea.TextView.LineTransformers.Add(new VariableColorizer(ChipsIn));
