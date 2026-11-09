@@ -126,11 +126,50 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Read only, to list the pull requests merged since the last tag for the release notes.
+      pull-requests: read
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
+
+      # Lists the pull requests merged since the previous tag and groups their titles by kind.
+      # A label wins over a title prefix. Pull requests with neither go under internal changes.
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          previous="$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -vx "$VERSION" | head -n 1)"
+          if [ -n "$previous" ]; then
+            since="$(date -u -d "$(git log -1 --format=%cI "$previous")" +%Y-%m-%dT%H:%M:%SZ)"
+          else
+            since="1970-01-01T00:00:00Z"
+          fi
+          gh pr list --repo "$GITHUB_REPOSITORY" --state merged --base main --limit 500 \
+            --json number,title,labels,mergedAt,url > merged.json
+          jq -r --arg since "$since" '
+            def kind:
+              if ([.labels[].name] | any(. == "feature" or . == "enhancement")) or (.title | test("^feat(\\(.*\\))?!?:"; "i")) then "Features"
+              elif ([.labels[].name] | any(. == "bug")) or (.title | test("^fix(\\(.*\\))?!?:"; "i")) then "Fixes"
+              elif ([.labels[].name] | any(. == "documentation")) or (.title | test("^docs?(\\(.*\\))?!?:"; "i")) then "Documentation"
+              else "Internal changes" end;
+            [ .[] | select(.mergedAt > $since) ] as $prs
+            | ["Features", "Fixes", "Documentation", "Internal changes"] as $order
+            | if ($prs | length) == 0 then "No changes recorded since the previous release."
+              else
+                $order[] as $group
+                | ([ $prs[] | select(kind == $group) ]) as $items
+                | select($items | length > 0)
+                | "## \($group)\n" + ([ $items[] | "- \(.title) ([#\(.number)](\(.url)))" ] | join("\n")) + "\n"
+              end
+          ' merged.json > release-notes.md
+          cat release-notes.md
 
       # A tag created here doesn't start this workflow again, because it uses the workflow's own token.
       - name: Create the release
@@ -142,4 +181,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$VERSION" \
-            --generate-notes
+            --notes-file release-notes.md
