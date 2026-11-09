@@ -11,6 +11,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 rand = "0.9"
+zip = { version = "9.5.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
