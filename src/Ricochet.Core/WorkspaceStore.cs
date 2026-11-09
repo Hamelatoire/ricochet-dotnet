@@ -47,12 +47,32 @@ public sealed record PersonalState
 
     /// <summary>The key column's share for each key-value table kind, such as "headers" (ADR 0074). Null when nothing was dragged.</summary>
     public Dictionary<string, double>? KeyValueSplits { get; set; }
+    /// <summary>Where the panels were dragged to (ADR 0043). Null means the defaults.</summary>
+    public PanelLayout? Panels { get; set; }
 
     /// <summary>The Requests open as tabs, by id, in tab order (ADR 0041). Null when none are open.</summary>
     public IReadOnlyList<string>? OpenTabs { get; set; }
 
     /// <summary>The id of the tab that was showing. Null when none was.</summary>
     public string? ActiveTab { get; set; }
+}
+
+/// <summary>
+/// The sidebar's width and the request pane's height, in device-independent units (ADR 0043). Each is optional, so an
+/// older file, or one that only has one of them, opens with the other at its default.
+/// </summary>
+public sealed record PanelLayout
+{
+    public double? SidebarWidth { get; set; }
+
+    public double? RequestHeight { get; set; }
+
+    /// <summary>The same layout with any value that no real window could have dropped, so it falls back to the default.</summary>
+    public PanelLayout Sanitized() => new()
+    {
+        SidebarWidth = SidebarWidth is { } width && double.IsFinite(width) && width is >= 120 and <= 4000 ? width : null,
+        RequestHeight = RequestHeight is { } height && double.IsFinite(height) && height is >= 60 and <= 4000 ? height : null,
+    };
 }
 
 /// <summary>
@@ -216,6 +236,25 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
             var splits = new Dictionary<string, double>(_state.KeyValueSplits ?? [], StringComparer.Ordinal) { [kind] = share };
             SaveState(_state with { KeyValueSplits = splits });
         }
+    }
+
+    /// <summary>
+    /// The sidebar width and request pane height from the last run. A damaged value is dropped, so that one falls back to
+    /// its default while the other is kept.
+    /// </summary>
+    public PanelLayout? Panels
+    {
+        get
+        {
+            lock (_gate)
+                return _state.Panels?.Sanitized();
+        }
+    }
+
+    public void SavePanels(PanelLayout layout)
+    {
+        lock (_gate)
+            SaveState(_state with { Panels = layout.Sanitized() });
     }
 
     /// <summary>The Requests that were open as tabs when the app last ran, in order (ADR 0041).</summary>

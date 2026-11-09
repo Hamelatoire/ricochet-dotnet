@@ -34,6 +34,15 @@ public sealed partial class MainViewModel : ObservableObject
     // The last response and what produced it, kept so it can be saved as an example (ADR 0023).
     private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _lastExchange;
 
+    // The send before the last one, kept in memory only, for Compare (ADR 0070).
+    private (ApiRequest Sent, IReadOnlyList<KeyValue> Variables, IReadOnlyList<KeyValue> Captured, ApiResponse Response)? _previousExchange;
+
+    [ObservableProperty] private bool _canCompare;
+    [ObservableProperty] private bool _isComparing;
+    [ObservableProperty] private string _compareNote = "";
+    public ObservableCollection<CompareLineRow> CompareLines { get; } = [];
+    public ObservableCollection<CompareHeaderRow> CompareHeaders { get; } = [];
+
     public MainViewModel(RequestSender sender, WorkspaceStore store, ISecretVault vault, IDialogs dialogs, IClipboardService clipboard)
     {
         _sender = sender;
@@ -1203,7 +1212,38 @@ public sealed partial class MainViewModel : ObservableObject
         TestResults.Clear();
         _lastExchange = null;
         CanSaveExample = false;
+        _previousExchange = null;
+        CanCompare = false;
+        IsComparing = false;
+        CompareNote = "";
+        CompareLines.Clear();
+        CompareHeaders.Clear();
     }
+
+    /// <summary>Shows the last send beside the send before it. Nothing is sent, and nothing is saved (ADR 0070).</summary>
+    [RelayCommand]
+    private void Compare()
+    {
+        if (_lastExchange is not { } current || _previousExchange is not { } previous)
+            return;
+
+        var secrets = CollectionRunner.SecretsToMask(current.Variables, [], current.Captured, current.Sent)
+            .Concat(CollectionRunner.SecretsToMask(previous.Variables, [], previous.Captured, previous.Sent))
+            .Distinct();
+        var result = ResponseComparer.Compare(previous.Response, current.Response, secrets);
+
+        CompareLines.Clear();
+        foreach (var line in result.Body)
+            CompareLines.Add(CompareLineRow.From(line));
+        CompareHeaders.Clear();
+        foreach (var header in result.Headers)
+            CompareHeaders.Add(CompareHeaderRow.From(header));
+        CompareNote = result.BodyNote ?? "";
+        IsComparing = true;
+    }
+
+    [RelayCommand]
+    private void CloseComparison() => IsComparing = false;
 
     private ApiRequest CurrentRequest() => new()
     {
@@ -1266,6 +1306,7 @@ public sealed partial class MainViewModel : ObservableObject
         using var cts = new CancellationTokenSource();
         _sendCts = cts;
         IsSending = true;
+        var previousExchange = _lastExchange;
         ClearResponse();
 
         // History keeps this copy, with generated values filled in and Variables as written (ADR 0008).
@@ -1289,6 +1330,8 @@ public sealed partial class MainViewModel : ObservableObject
             ShowResponse(response, formatted);
             _lastExchange = (resolved, sendVariables, CapturedFor(collectionId), response);
             CanSaveExample = true;
+            _previousExchange = previousExchange;
+            CanCompare = previousExchange is not null;
             var testResults = await Task.Run(() => AssertionEvaluator.Evaluate(resolved.Assertions, response), cts.Token);
             foreach (var result in testResults)
             {
