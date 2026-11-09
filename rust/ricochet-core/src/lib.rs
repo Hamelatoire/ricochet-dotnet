@@ -27,3 +27,4 @@ pub mod settings_catalog;
 pub mod command_palette;
 pub mod sidebar_menu;
 pub mod export_files;
+pub mod placeholder_chips;
