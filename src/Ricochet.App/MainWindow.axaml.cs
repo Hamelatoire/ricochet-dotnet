@@ -38,6 +38,31 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
     private TreeViewItem? _hintItem;
     private string? _hintClass;
 
+    /// <summary>Where crash logs are written (ADR 0088). Set by the app at startup; the Settings page shows and opens it.</summary>
+    public string CrashLogDirectory
+    {
+        get => _crashLogDirectory;
+        set
+        {
+            _crashLogDirectory = value;
+            CrashLogPathText.Text = value;
+        }
+    }
+
+    private string _crashLogDirectory = "";
+
+    /// <summary>Opens the crash log folder in the file manager. The folder is created first, so it opens even before any crash.</summary>
+    private async void OpenCrashLogFolder_Click(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_crashLogDirectory))
+            return;
+
+        Directory.CreateDirectory(_crashLogDirectory);
+        var launcher = TopLevel.GetTopLevel(this)?.Launcher;
+        if (launcher is not null)
+            await launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(_crashLogDirectory));
+    }
+
     public MainWindow()
     {
         InitializeComponent();
