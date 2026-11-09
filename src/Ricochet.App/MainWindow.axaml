@@ -77,12 +77,7 @@
                        Text="{Binding WorkspaceFolderName}" ToolTip.Tip="{Binding WorkspaceFolderPath}" />
           </Grid>
           <Button DockPanel.Dock="Bottom" HorizontalAlignment="Stretch" Margin="0,8,0,0" Content="Settings" Command="{Binding OpenSettingsPageCommand}"
-                  AutomationProperties.Name="Settings" ToolTip.Tip="Timeouts, redirects, proxy, client certificate, certificate checks, response size and the workspace folder" />
-          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" Margin="4,8,0,0">
-            <TextBlock Grid.Column="0" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" Text="Theme" />
-            <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding ThemeChoice}"
-                      AutomationProperties.Name="Theme" ToolTip.Tip="Follow the system, or always use light or dark" />
-          </Grid>
+                  AutomationProperties.Name="Settings" ToolTip.Tip="Theme, timeouts, redirects, proxy, client certificate, certificate checks, response size and the workspace folder" />
           <TabControl>
             <TabItem Header="Collections">
               <Grid RowDefinitions="Auto,*">
@@ -422,6 +417,17 @@
           </Grid>
           <ScrollViewer>
             <StackPanel Spacing="22" MaxWidth="720" HorizontalAlignment="Left">
+              <StackPanel Spacing="12">
+                <TextBlock Text="Appearance" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Theme" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Follow the system, or always use light or dark." />
+                  </StackPanel>
+                  <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Top" ItemsSource="{Binding ThemeChoices}"
+                            SelectedItem="{Binding ThemeChoice}" AutomationProperties.Name="Theme" />
+                </Grid>
+              </StackPanel>
               <StackPanel Spacing="12">
                 <TextBlock Text="Requests" FontWeight="SemiBold" />
                 <Grid ColumnDefinitions="260,*">

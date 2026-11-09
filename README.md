@@ -59,7 +59,7 @@ Choose **Mock server** in the sidebar to answer requests on this computer from a
 
 ## Themes
 
-Ricochet follows your system's light or dark setting. Choose **System**, **Light** or **Dark** in the Theme box at the bottom of the sidebar. See [ADR 0013](docs/adr/0013-light-and-dark-theme.md).
+Ricochet follows your system's light or dark setting. Choose **System**, **Light** or **Dark** on the Settings page, in the Appearance section. See [ADR 0013](docs/adr/0013-light-and-dark-theme.md).
 
 | Light | Dark |
 | --- | --- |
