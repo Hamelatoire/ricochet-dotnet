@@ -29,6 +29,9 @@
     <KeyBinding Gesture="Meta+E" Command="{Binding FocusEnvironmentCommand}" />
     <KeyBinding Gesture="Ctrl+W" Command="{Binding CloseActiveTabCommand}" />
     <KeyBinding Gesture="Meta+W" Command="{Binding CloseActiveTabCommand}" />
+    <KeyBinding Gesture="F1" Command="{Binding OpenShortcutSheetCommand}" />
+    <KeyBinding Gesture="Ctrl+OemQuestion" Command="{Binding OpenShortcutSheetCommand}" />
+    <KeyBinding Gesture="Meta+OemQuestion" Command="{Binding OpenShortcutSheetCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding CloseTopPanelCommand}" />
   </Window.KeyBindings>
 
@@ -80,11 +83,19 @@
                   AutomationProperties.Name="Settings" ToolTip.Tip="Theme, timeouts, redirects, proxy, client certificate, certificate checks, response size and the workspace folder" />
           <TabControl>
             <TabItem Header="Collections">
-              <Grid RowDefinitions="Auto,*">
+              <Grid RowDefinitions="Auto,Auto,*">
                 <TextBox Grid.Row="0" Text="{Binding TagFilter}" PlaceholderText="Filter by tag" Margin="0,8,0,8"
                          AutomationProperties.Name="Filter by tag"
                          ToolTip.Tip="Show only folders and requests with this tag, including those inside a folder that has it" />
-                <Panel Grid.Row="1">
+                <!-- Narrows the tree in place as you type, keeping the folders above each match (ADR 0050). Escape clears it. -->
+                <TextBox Grid.Row="1" Text="{Binding TreeNameFilter}" PlaceholderText="Filter by name" Margin="0,0,0,8"
+                         AutomationProperties.Name="Filter by name"
+                         ToolTip.Tip="Hide folders and requests whose names don't match, keeping the folders that lead to a match. Escape clears it.">
+                  <TextBox.KeyBindings>
+                    <KeyBinding Gesture="Escape" Command="{Binding ClearTreeNameFilterCommand}" />
+                  </TextBox.KeyBindings>
+                </TextBox>
+                <Panel Grid.Row="2">
                 <TreeView x:Name="CollectionsTree" ItemsSource="{Binding Collections}" SelectedItem="{Binding SelectedNode}"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           AutomationProperties.Name="Collection tree">
@@ -113,6 +124,18 @@
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding VisibleChildren}" x:DataType="vm:TreeNodeViewModel">
                       <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                        <!-- Right-click menu (ADR 0056). Each entry runs the same command as the button beside it. -->
+                        <Grid.ContextMenu>
+                          <ContextMenu AutomationProperties.Name="Item actions">
+                            <MenuItem Header="Rename" InputGesture="F2" Command="{Binding ToggleRenameCommand}" IsVisible="{Binding MenuRenameVisible}" />
+                            <MenuItem Header="Tags…" Command="{Binding ToggleTagsCommand}" IsVisible="{Binding MenuTagsVisible}" />
+                            <MenuItem Header="New folder" Command="{Binding NewFolderCommand}" IsVisible="{Binding MenuNewFolderVisible}" />
+                            <MenuItem Header="{Binding HideMenuLabel}" Command="{Binding HideOrShowCommand}" IsVisible="{Binding MenuHideVisible}" />
+                            <MenuItem Header="Show hidden" Command="{Binding HideOrShowCommand}" IsVisible="{Binding MenuShowHiddenVisible}" />
+                            <Separator />
+                            <MenuItem Header="Delete" Command="{Binding DeleteClickedCommand}" />
+                          </ContextMenu>
+                        </Grid.ContextMenu>
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
@@ -415,9 +438,19 @@
             <Button Grid.Column="1" Classes="primary" Content="Done" Margin="16,0,0,0" VerticalAlignment="Top"
                     Command="{Binding CloseSettingsPageCommand}" AutomationProperties.Name="Done" />
           </Grid>
-          <ScrollViewer>
+          <TextBox DockPanel.Dock="Top" x:Name="SettingsSearchBox" Watermark="Search settings" Margin="0,0,0,16"
+                   TextChanged="SettingsSearch_TextChanged" AutomationProperties.Name="Search settings" />
+          <Grid ColumnDefinitions="150,*">
+            <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,16,0" VerticalAlignment="Top">
+              <Button HorizontalAlignment="Stretch" Content="Requests" Click="SettingsSection_Click" Tag="requests" AutomationProperties.Name="Go to Requests" />
+              <Button HorizontalAlignment="Stretch" Content="Network" Click="SettingsSection_Click" Tag="network" AutomationProperties.Name="Go to Network" />
+              <Button HorizontalAlignment="Stretch" Content="Responses" Click="SettingsSection_Click" Tag="responses" AutomationProperties.Name="Go to Responses" />
+              <Button HorizontalAlignment="Stretch" Content="Privacy" Click="SettingsSection_Click" Tag="privacy" AutomationProperties.Name="Go to Privacy" />
+              <Button HorizontalAlignment="Stretch" Content="Workspace" Click="SettingsSection_Click" Tag="workspace" AutomationProperties.Name="Go to Workspace" />
+            </StackPanel>
+          <ScrollViewer Grid.Column="1">
             <StackPanel Spacing="22" MaxWidth="720" HorizontalAlignment="Left">
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:appearance">
                 <TextBlock Text="Appearance" FontWeight="SemiBold" />
                 <Grid ColumnDefinitions="260,*">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
@@ -428,9 +461,9 @@
                             SelectedItem="{Binding ThemeChoice}" AutomationProperties.Name="Theme" />
                 </Grid>
               </StackPanel>
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:requests">
                 <TextBlock Text="Requests" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:request-timeout">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Request timeout (seconds)" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A request that takes longer is cancelled. Between 1 and 3600." />
@@ -438,7 +471,7 @@
                   <NumericUpDown Grid.Column="1" Value="{Binding RequestTimeoutSeconds}" Minimum="1" Maximum="3600" Increment="5"
                                  VerticalAlignment="Top" AutomationProperties.Name="Request timeout in seconds" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:follow-redirects">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Follow redirects" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Send the request again to the address a server redirects to." />
@@ -446,7 +479,7 @@
                   <CheckBox Grid.Column="1" IsChecked="{Binding FollowRedirects}" Content="On" VerticalAlignment="Top"
                             AutomationProperties.Name="Follow redirects" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:verify-tls">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Verify TLS certificates" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
@@ -457,9 +490,9 @@
                 </Grid>
               </StackPanel>
 
-              <StackPanel Spacing="12">
-                <TextBlock Text="Crash log" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+              <StackPanel Spacing="12" Tag="section:privacy">
+                <TextBlock Text="Privacy" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*" Tag="setting:crash-log-folder">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Crash log folder" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="After a crash, the app writes a log here. It stays on this machine and is never sent anywhere. Attach it to a bug report yourself if you choose. Exception messages and request data are left out; file paths may include your user name." />
@@ -472,9 +505,9 @@
                 </Grid>
               </StackPanel>
 
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:network">
                 <TextBlock Text="Network" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:proxy-address">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Proxy address" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Send requests through this HTTP proxy, such as proxy.example.com:8080. Empty uses the operating system's proxy. Proxy logins are not supported yet." />
@@ -482,7 +515,7 @@
                   <TextBox Grid.Column="1" Text="{Binding ProxyUrl, UpdateSourceTrigger=LostFocus}" Watermark="Operating system's proxy"
                            VerticalAlignment="Top" AutomationProperties.Name="Proxy address" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:client-certificate-file">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Client certificate file" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A .pfx or .p12 file sent to servers that ask for one. The file stays where it is; only its path is saved." />
@@ -494,7 +527,7 @@
                             AutomationProperties.Name="Browse for client certificate" />
                   </Grid>
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:client-certificate-password">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Client certificate password" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Kept in your operating system's secure storage, never in the workspace. Leave empty if the file has no password." />
@@ -506,9 +539,9 @@
                                      FontSize="12" TextWrapping="Wrap" />
               </StackPanel>
 
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:responses">
                 <TextBlock Text="Responses" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:max-response-size">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Largest response to keep (MB)" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A longer response is cut off at this size and marked as truncated." />
@@ -516,7 +549,7 @@
                   <NumericUpDown Grid.Column="1" Value="{Binding MaxResponseMegabytes}" Minimum="1" Maximum="10240" Increment="10"
                                  VerticalAlignment="Top" AutomationProperties.Name="Largest response in megabytes" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:wrap-response">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Wrap long lines" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Wrap long lines in the response body. The Wrap button in the response uses this too." />
@@ -526,9 +559,9 @@
                 </Grid>
               </StackPanel>
 
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:workspace">
                 <TextBlock Text="Workspace" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:workspace-folder">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Workspace folder" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Open a workspace folder, or copy this workspace into a new one, such as a git repository." />
@@ -543,6 +576,7 @@
               </StackPanel>
             </StackPanel>
           </ScrollViewer>
+          </Grid>
         </DockPanel>
       </Border>
 
@@ -1019,6 +1053,41 @@
         </Border>
       </Grid>
     </Grid>
+
+    <!-- Shortcut cheat sheet (ADR 0067). Escape closes it through CloseTopPanel. -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsShortcutSheetOpen}">
+      <Border Classes="dialog" Width="520" MaxHeight="600" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,90,0,0"
+              AutomationProperties.Name="Keyboard shortcuts">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Classes="brand" Text="Keyboard shortcuts" VerticalAlignment="Center" />
+          </StackPanel>
+          <Button DockPanel.Dock="Bottom" Content="Close" HorizontalAlignment="Right" Margin="0,12,0,0"
+                  Command="{Binding CloseShortcutSheetCommand}" AutomationProperties.Name="Close the keyboard shortcuts" />
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding ShortcutGroups}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:ShortcutGroup">
+                  <StackPanel Spacing="6" Margin="0,0,0,14">
+                    <TextBlock Classes="muted" FontSize="12" Text="{Binding Title}" />
+                    <ItemsControl ItemsSource="{Binding Entries}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="core:ShortcutEntry">
+                          <Grid ColumnDefinitions="180,*" Margin="0,2">
+                            <TextBlock Grid.Column="0" Text="{Binding Keys}" FontFamily="{StaticResource MonoFont}" />
+                            <TextBlock Grid.Column="1" Text="{Binding Action}" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Border>
 
     <!-- Command palette (ADR 0040). Escape closes it, Up and Down move through the list, Enter runs the highlighted entry. -->
     <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsPaletteOpen}">

@@ -62,7 +62,7 @@ public sealed partial class MainViewModel : ObservableObject
         Collections = new ObservableCollection<TreeNodeViewModel>(
             workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder)));
         // A collection added later must follow the tag filter too (ADR 0030).
-        Collections.CollectionChanged += (_, _) => ApplyTagFilter();
+        Collections.CollectionChanged += (_, _) => { ApplyTagFilter(); ApplyNameFilter(); };
         History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
         Headers.KeyShare = store.KeyValueSplit("headers") ?? KeyValueColumns.DefaultKeyShare;
@@ -406,6 +406,34 @@ public sealed partial class MainViewModel : ObservableObject
             node.ApplyTagFilter(filter);
     }
 
+    /// <summary>Hides every folder and request whose name doesn't match, and keeps the parents of each match (ADR 0050). Typing is enough; Escape clears it.</summary>
+    [ObservableProperty] private string _treeNameFilter = "";
+
+    // The expansion the tree had before the name filter was turned on, put back when it is cleared (ADR 0050).
+    private HashSet<string>? _expandedBeforeNameFilter;
+
+    partial void OnTreeNameFilterChanged(string value) => ApplyNameFilter();
+
+    [RelayCommand]
+    private void ClearTreeNameFilter() => TreeNameFilter = "";
+
+    private void ApplyNameFilter()
+    {
+        var query = NameFilter.Normalize(TreeNameFilter);
+        if (query.Length > 0)
+            _expandedBeforeNameFilter ??= AllNodes(Collections).Where(n => n.IsExpanded).Select(n => n.Id).ToHashSet();
+
+        foreach (var node in Collections)
+            node.ApplyNameFilter(query);
+
+        if (query.Length == 0 && _expandedBeforeNameFilter is { } saved)
+        {
+            foreach (var node in AllNodes(Collections))
+                node.IsExpanded = saved.Contains(node.Id);
+            _expandedBeforeNameFilter = null;
+        }
+    }
+
     [ObservableProperty] private string _themeChoice = ThemeSettings.SystemChoice;
 
     partial void OnThemeChoiceChanged(string value) => _store.SetTheme(ThemeSettings.StoredValue(value));
@@ -506,6 +534,7 @@ public sealed partial class MainViewModel : ObservableObject
             Collections.Add(TreeNodeViewModel.FromCollection(collection, DeleteNode, RenameNode, AddFolder));
         foreach (var node in AllNodes(Collections))
             node.IsExpanded = expanded.Contains(node.Id);
+        ApplyNameFilter(); // Collections rebuilt while the name filter is on must be filtered too (ADR 0050).
 
         Globals.Load(shared.Globals);
         CurrentCollection = Collections.FirstOrDefault(c => c.Id == collectionId);
@@ -733,7 +762,9 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseTopPanel()
     {
-        if (HasPendingCopy)
+        if (IsShortcutSheetOpen)
+            CloseShortcutSheet();
+        else if (HasPendingCopy)
             CancelCopy();
         else if (HasImportReport)
             CloseImportReport();

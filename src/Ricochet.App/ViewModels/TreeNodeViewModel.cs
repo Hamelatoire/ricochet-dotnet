@@ -63,11 +63,13 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     /// <summary>What the tree shows: Children without the hidden ones. Hidden items stay in Children, so they are saved (ADR 0032).</summary>
     public ObservableCollection<TreeNodeViewModel> VisibleChildren { get; } = [];
 
-    [ObservableProperty] private bool _isHidden;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HideMenuLabel), nameof(MenuHideVisible))]
+    private bool _isHidden;
 
     /// <summary>On a collection: how many folders and requests inside it are hidden.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HideLabel), nameof(ShowHiddenVisible))]
+    [NotifyPropertyChangedFor(nameof(HideLabel), nameof(ShowHiddenVisible), nameof(MenuShowHiddenVisible))]
     private int _hiddenCount;
 
     /// <summary>The hide icon on a folder or request. Hidden by the row style until the row is hovered.</summary>
@@ -79,12 +81,25 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     /// <summary>The label of the button in the row: "Show n hidden" on a collection, a hide icon elsewhere.</summary>
     public string HideLabel => Parent is null ? (HiddenCount > 0 ? $"{HiddenCount} hidden" : "") : "⊘";
 
+    private SidebarItemKind Kind => Parent is null ? SidebarItemKind.Collection : Request is null ? SidebarItemKind.Folder : SidebarItemKind.Request;
+
+    // Context menu entries (ADR 0056). Each one runs the same command as the row's button, and SidebarMenu decides which apply.
+    public bool MenuRenameVisible => SidebarMenu.Offers(SidebarAction.Rename, Kind, IsHidden, HiddenCount);
+    public bool MenuTagsVisible => SidebarMenu.Offers(SidebarAction.Tags, Kind, IsHidden, HiddenCount);
+    public bool MenuNewFolderVisible => SidebarMenu.Offers(SidebarAction.NewFolder, Kind, IsHidden, HiddenCount);
+    public bool MenuHideVisible => SidebarMenu.Offers(SidebarAction.Hide, Kind, IsHidden, HiddenCount);
+    public bool MenuShowHiddenVisible => SidebarMenu.Offers(SidebarAction.ShowHidden, Kind, IsHidden, HiddenCount);
+    public string HideMenuLabel => SidebarMenu.HideLabel(IsHidden);
+
     private void SyncVisible()
     {
         VisibleChildren.Clear();
         var filter = Root._tagFilter;
         var inherited = TaggedWithAncestors(filter);
-        foreach (var child in Children.Where(c => !c.IsHidden && c.MatchesTagFilter(filter, inherited)))
+        // A Folder whose own name matches shows everything inside it, so its contents are one click away.
+        var nameQuery = Root._nameFilter;
+        var folderMatches = NameFilter.Matches(Name, nameQuery);
+        foreach (var child in Children.Where(c => !c.IsHidden && c.MatchesTagFilter(filter, inherited) && (folderMatches || c.MatchesNameFilter(nameQuery))))
             VisibleChildren.Add(child);
     }
 
@@ -97,6 +112,33 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         _tagFilter = filter;
         SyncVisibleTree();
     }
+
+    // The name filter also lives on a collection (ADR 0050). Hidden items stay hidden, as they do under the tag filter.
+    private string _nameFilter = "";
+
+    /// <summary>
+    /// Narrows the tree to the items whose names match, keeping the Folders that lead to them (ADR 0050).
+    /// Expands every Folder that holds a match, so the matches are visible. Empty restores the tree's own layout.
+    /// </summary>
+    public void ApplyNameFilter(string query)
+    {
+        _nameFilter = NameFilter.Normalize(query);
+        ApplyNameFilterTree();
+    }
+
+    private void ApplyNameFilterTree()
+    {
+        foreach (var child in Children)
+            child.ApplyNameFilterTree();
+
+        SyncVisible();
+        if (Root._nameFilter.Length > 0 && VisibleChildren.Count > 0)
+            IsExpanded = true;
+    }
+
+    /// <summary>True when this item or something shown inside it matches the name filter. Hidden children are left out.</summary>
+    private bool MatchesNameFilter(string query) =>
+        NameFilter.Shows(Name, query, Children.Where(c => !c.IsHidden).Select(c => c.MatchesNameFilter(query)));
 
     private bool MatchesTagFilter(string filter, bool inherited)
     {
@@ -195,7 +237,8 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     public string? SpecUrl { get; set; }
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(MethodLabel), nameof(IsRequest), nameof(IsContainer))]
+    [NotifyPropertyChangedFor(nameof(MethodLabel), nameof(IsRequest), nameof(IsContainer),
+        nameof(MenuRenameVisible), nameof(MenuTagsVisible), nameof(MenuNewFolderVisible), nameof(MenuHideVisible), nameof(MenuShowHiddenVisible))]
     private ApiRequest? _request;
 
     public string MethodLabel => Request?.Method ?? "";
