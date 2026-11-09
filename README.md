@@ -25,10 +25,6 @@ A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, 
 
 Download `ricochet-setup-<version>-win-x64.exe` from the [latest release](https://github.com/Hamelatoire/ricochet-dotnet/releases/latest) and run it. The installer puts Ricochet in your own programs folder, so it needs no administrator rights. It can also add a desktop shortcut and put the `ricochet` command on your `PATH`, and both are off until you choose them. Uninstalling removes the program and leaves your workspace and settings alone.
 
-| Install mode | License | Finished |
-| --- | --- | --- |
-| ![The install mode dialog](docs/screenshots/installer-mode.png) | ![The license page](docs/screenshots/installer-license.png) | ![The final page](docs/screenshots/installer-finish.png) |
-
 Release builds aren't signed yet, so Windows may warn before running the installer. The zips for each platform on the same page need no installer.
 
 ## Test your APIs
@@ -49,9 +45,9 @@ Export your collections (v2.0 or v2.1), environments and globals from Postman as
 
 Click **URL** in the sidebar, paste the address of an OpenAPI 3 description in JSON, and press **Fetch**. Ricochet shows what it will add or change before you press **Apply**. Each operation becomes a request, grouped into folders by tag. Running the same address again updates that collection and keeps the headers, bodies, tests and saved values you added. See [ADR 0014](docs/adr/0014-collections-from-openapi-url.md).
 
-| Preview before applying | Stripe's public API, imported (612 requests) |
+| Preview before applying | Orders API, imported and grouped by tag |
 | --- | --- |
-| ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Stripe API imported into Ricochet](docs/screenshots/openapi-stripe-nested-dark.png) |
+| ![Preview of an OpenAPI import](docs/screenshots/openapi-preview-light.png) | ![Orders API imported into Ricochet](docs/screenshots/openapi-nested-dark.png) |
 
 ## Hide folders and requests
 
