@@ -24,3 +24,5 @@ pub mod key_value_columns;
 pub mod folder_tags;
 pub mod shortcut_sheet;
 pub mod settings_catalog;
+pub mod command_palette;
+pub mod sidebar_menu;
