@@ -655,6 +655,39 @@ public class CollectionRunnerTests
     }
 
     [Fact]
+    public async Task Run_with_certificate_checks_off_says_so_in_the_summary_and_xunit_report()
+    {
+        var (runner, _) = Runner(_ => Ok("ok"));
+        var run = await Run(runner, One(Item("Only", "http://x.test/", StatusIs("200"))));
+        var report = run with { CertificatesUnverified = true };
+
+        Assert.EndsWith("Certificate checks off.", RunReports.Summary(report));
+
+        using var stream = new MemoryStream();
+        RunReports.WriteXunit(report, stream, new DateTimeOffset(2026, 11, 9, 9, 0, 0, TimeSpan.Zero));
+        stream.Position = 0;
+        var xml = XDocument.Load(stream);
+        var property = xml.Root!.Element("assembly")!.Element("properties")!.Element("property")!;
+        Assert.Equal("certificate-checks", property.Attribute("name")!.Value);
+        Assert.Equal("off", property.Attribute("value")!.Value);
+    }
+
+    [Fact]
+    public async Task Run_with_certificate_checks_on_leaves_the_summary_and_xunit_report_unchanged()
+    {
+        var (runner, _) = Runner(_ => Ok("ok"));
+        var report = await Run(runner, One(Item("Only", "http://x.test/", StatusIs("200"))));
+
+        Assert.DoesNotContain("Certificate checks", RunReports.Summary(report));
+
+        using var stream = new MemoryStream();
+        RunReports.WriteXunit(report, stream, new DateTimeOffset(2026, 11, 9, 9, 0, 0, TimeSpan.Zero));
+        stream.Position = 0;
+        var xml = XDocument.Load(stream);
+        Assert.Null(xml.Root!.Element("assembly")!.Element("properties"));
+    }
+
+    [Fact]
     public async Task Xunit_report_is_valid_and_records_failures()
     {
         var (runner, _) = Runner(_ => Ok("bad \u0001 char & <tag>"));

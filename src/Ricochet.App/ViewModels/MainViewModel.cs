@@ -62,9 +62,11 @@ public sealed partial class MainViewModel : ObservableObject
         Collections = new ObservableCollection<TreeNodeViewModel>(
             workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder, DuplicateNode)));
         // A collection added later must follow the tag filter too (ADR 0030).
-        Collections.CollectionChanged += (_, _) => ApplyTagFilter();
+        Collections.CollectionChanged += (_, _) => { ApplyTagFilter(); ApplyNameFilter(); };
         History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
+        Headers.KeyShare = store.KeyValueSplit("headers") ?? KeyValueColumns.DefaultKeyShare;
+        Headers.RememberKeyShare = share => store.SaveKeyValueSplit("headers", share);
         InitializeTabs();
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));
@@ -404,6 +406,34 @@ public sealed partial class MainViewModel : ObservableObject
             node.ApplyTagFilter(filter);
     }
 
+    /// <summary>Hides every folder and request whose name doesn't match, and keeps the parents of each match (ADR 0050). Typing is enough; Escape clears it.</summary>
+    [ObservableProperty] private string _treeNameFilter = "";
+
+    // The expansion the tree had before the name filter was turned on, put back when it is cleared (ADR 0050).
+    private HashSet<string>? _expandedBeforeNameFilter;
+
+    partial void OnTreeNameFilterChanged(string value) => ApplyNameFilter();
+
+    [RelayCommand]
+    private void ClearTreeNameFilter() => TreeNameFilter = "";
+
+    private void ApplyNameFilter()
+    {
+        var query = NameFilter.Normalize(TreeNameFilter);
+        if (query.Length > 0)
+            _expandedBeforeNameFilter ??= AllNodes(Collections).Where(n => n.IsExpanded).Select(n => n.Id).ToHashSet();
+
+        foreach (var node in Collections)
+            node.ApplyNameFilter(query);
+
+        if (query.Length == 0 && _expandedBeforeNameFilter is { } saved)
+        {
+            foreach (var node in AllNodes(Collections))
+                node.IsExpanded = saved.Contains(node.Id);
+            _expandedBeforeNameFilter = null;
+        }
+    }
+
     [ObservableProperty] private string _themeChoice = ThemeSettings.SystemChoice;
 
     partial void OnThemeChoiceChanged(string value) => _store.SetTheme(ThemeSettings.StoredValue(value));
@@ -504,6 +534,7 @@ public sealed partial class MainViewModel : ObservableObject
             Collections.Add(TreeNodeViewModel.FromCollection(collection, DeleteNode, RenameNode, AddFolder, DuplicateNode));
         foreach (var node in AllNodes(Collections))
             node.IsExpanded = expanded.Contains(node.Id);
+        ApplyNameFilter(); // Collections rebuilt while the name filter is on must be filtered too (ADR 0050).
 
         Globals.Load(shared.Globals);
         CurrentCollection = Collections.FirstOrDefault(c => c.Id == collectionId);
@@ -731,7 +762,9 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseTopPanel()
     {
-        if (HasPendingCopy)
+        if (IsShortcutSheetOpen)
+            CloseShortcutSheet();
+        else if (HasPendingCopy)
             CancelCopy();
         else if (HasImportReport)
             CloseImportReport();
@@ -918,6 +951,9 @@ public sealed partial class MainViewModel : ObservableObject
     public bool ShowEmptyState => !IsSending && !HasStatus;
 
     [ObservableProperty] private string _timingText = "";
+
+    /// <summary>True when the response on screen came from a send with certificate checks off (ADR 0079).</summary>
+    [ObservableProperty] private bool _responseCertificatesUnverified;
 
     /// <summary>The colour family of the status code, which picks the status badge's colour.</summary>
     [ObservableProperty]
@@ -1306,6 +1342,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsSending = true;
         var previousExchange = _lastExchange;
         ClearResponse();
+        // The response badge says so when this send skipped certificate checks (ADR 0079).
+        ResponseCertificatesUnverified = ShowTlsWarning;
 
         // History keeps this copy, with generated values filled in and Variables as written (ADR 0008).
         var historyRequest = request;
@@ -1391,7 +1429,8 @@ public sealed partial class MainViewModel : ObservableObject
     private void AddHistory(ApiRequest request, int? statusCode, long elapsedMs, string? collectionId)
     {
         // Examples belong to the Request in the Workspace, not to each send of it.
-        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request with { Examples = null }, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
+        // Each send records whether certificate checks were off for it (ADR 0079). Only the off state is stored.
+        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request with { Examples = null }, statusCode, elapsedMs, DateTimeOffset.Now, collectionId, ShowTlsWarning ? true : null)));
         while (History.Count > Workspace.MaxHistory)
             History.RemoveAt(History.Count - 1);
     }

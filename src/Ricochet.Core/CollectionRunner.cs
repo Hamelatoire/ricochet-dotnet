@@ -55,6 +55,9 @@ public sealed record RunReport(IReadOnlyList<RequestRunResult> Results, bool Sto
     /// <summary>Hidden Requests that would otherwise have run. They are named, so a skipped test can't go unnoticed.</summary>
     public IReadOnlyList<SkippedRequest> SkippedHidden { get; init; } = [];
 
+    /// <summary>Set when the run skipped TLS certificate checks (the CLI's --insecure), so no summary calls it a clean pass (ADR 0079).</summary>
+    public bool CertificatesUnverified { get; init; }
+
     public bool Passed => Results.All(r => r.Passed);
     public int FailedRequests => Results.Count(r => !r.Passed);
     public int TotalAssertions => Results.Sum(r => r.Assertions.Count);
@@ -275,6 +278,8 @@ public static class RunReports
         text.Append($"{Count(report.TotalAssertions, "assertion")}: {report.TotalAssertions - report.FailedAssertions} passed, {report.FailedAssertions} failed.");
         if (report.SkippedHidden.Count > 0)
             text.Append($" {Count(report.SkippedHidden.Count, "request")} skipped because hidden.");
+        if (report.CertificatesUnverified)
+            text.Append(" Certificate checks off.");
         return text.ToString();
     }
 
@@ -322,6 +327,17 @@ public static class RunReports
             xml.WriteAttributeString("skipped", "0");
             xml.WriteAttributeString("errors", "0");
             xml.WriteElementString("errors", "");
+
+            // Written only when checks were off, so a report viewer can flag the run. Readers ignore unknown properties.
+            if (report.CertificatesUnverified)
+            {
+                xml.WriteStartElement("properties");
+                xml.WriteStartElement("property");
+                xml.WriteAttributeString("name", "certificate-checks");
+                xml.WriteAttributeString("value", "off");
+                xml.WriteEndElement();
+                xml.WriteEndElement();
+            }
 
             xml.WriteStartElement("collection");
             xml.WriteAttributeString("name", name);

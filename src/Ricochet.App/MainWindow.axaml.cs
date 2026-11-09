@@ -51,6 +51,39 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
 
     private string _crashLogDirectory = "";
 
+    /// <summary>Shows only the settings that match the search text, and hides a section once none of its settings match (ADR 0069).</summary>
+    private void SettingsSearch_TextChanged(object? sender, TextChangedEventArgs e)
+    {
+        var matches = SettingsCatalog.Search(SettingsSearchBox.Text).Select(item => item.Key).ToHashSet();
+        var rows = this.GetVisualDescendants().OfType<Control>()
+            .Where(c => c.Tag is string tag && tag.StartsWith("setting:", StringComparison.Ordinal))
+            .ToList();
+        foreach (var row in rows)
+        {
+            row.IsVisible = matches.Contains(((string)row.Tag!)["setting:".Length..]);
+        }
+
+        foreach (var section in this.GetVisualDescendants().OfType<Control>()
+                     .Where(c => c.Tag is string tag && tag.StartsWith("section:", StringComparison.Ordinal)))
+        {
+            section.IsVisible = section.GetVisualDescendants().OfType<Control>()
+                .Any(c => c.Tag is string tag && tag.StartsWith("setting:", StringComparison.Ordinal) && c.IsVisible);
+        }
+    }
+
+    /// <summary>Scrolls the Settings page to the section whose button was clicked.</summary>
+    private void SettingsSection_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { Tag: string key })
+        {
+            return;
+        }
+
+        this.GetVisualDescendants().OfType<Control>()
+            .FirstOrDefault(c => c.Tag is string tag && tag == "section:" + key)
+            ?.BringIntoView();
+    }
+
     /// <summary>Opens the crash log folder in the file manager. The folder is created first, so it opens even before any crash.</summary>
     private async void OpenCrashLogFolder_Click(object? sender, RoutedEventArgs e)
     {
@@ -186,6 +219,13 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
 
     private void OnTreeKeyDown(object? sender, KeyEventArgs e)
     {
+        // The Menu key and Shift+F10 open the focused item's context menu (ADR 0056).
+        if (e.Key == Key.Apps || (e.Key == Key.F10 && e.KeyModifiers == KeyModifiers.Shift))
+        {
+            e.Handled = OpenItemMenu(e.Source);
+            return;
+        }
+
         // The rename box and the row buttons keep their own keys, and Ctrl/Shift/Alt combinations are left for shortcuts.
         if (_viewModel is null || e.KeyModifiers != KeyModifiers.None || e.Source is TextBox or Button)
             return;
@@ -215,6 +255,19 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
                 e.Handled = false;
                 break;
         }
+    }
+
+    /// <summary>Opens the context menu of the tree row that holds <paramref name="source"/>. Returns false when there is no row.</summary>
+    private static bool OpenItemMenu(object? source)
+    {
+        if (source is not Visual visual || visual.FindAncestorOfType<TreeViewItem>() is not { } item)
+            return false;
+
+        if (item.GetVisualDescendants().OfType<Grid>().FirstOrDefault(g => g.Classes.Contains("treerow")) is not { ContextMenu: { } menu } row)
+            return false;
+
+        menu.Open(row);
+        return true;
     }
 
     private void OnTreePointerPressed(object? sender, PointerPressedEventArgs e)

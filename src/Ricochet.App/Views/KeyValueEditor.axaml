@@ -13,11 +13,14 @@
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:KeyValueRowViewModel">
-            <Grid ColumnDefinitions="Auto,*,10,2*,Auto,Auto,Auto">
+            <Grid Tag="kv-row" ColumnDefinitions="Auto,*,10,2*,Auto,Auto,Auto">
               <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" MinWidth="32" />
               <TextBox Grid.Column="1" Classes="mono" Text="{Binding Key}" PlaceholderText="{Binding KeyPlaceholder}" />
               <TextBox Grid.Column="3" Classes="mono" Text="{Binding Value}" PasswordChar="{Binding ValueMask}"
                        PlaceholderText="{Binding ValuePlaceholder}" />
+              <Border Grid.Column="2" Tag="kv-handle" Background="Transparent" Cursor="SizeWestEast" Focusable="True"
+                      AutomationProperties.Name="Resize key and value columns"
+                      ToolTip.Tip="Drag to resize the key and value columns. Left and right arrow keys also resize them" />
               <ToggleButton Grid.Column="4" Classes="secret" Content="Secret" Margin="8,0,0,0"
                             IsChecked="{Binding IsSecret}" IsVisible="{Binding AllowSecrets}"
                             AutomationProperties.Name="Secret"

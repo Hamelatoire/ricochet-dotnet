@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted (built)
 ---
 
 # Group the settings page into sections with a search box
