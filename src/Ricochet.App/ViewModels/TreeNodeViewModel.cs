@@ -63,11 +63,13 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     /// <summary>What the tree shows: Children without the hidden ones. Hidden items stay in Children, so they are saved (ADR 0032).</summary>
     public ObservableCollection<TreeNodeViewModel> VisibleChildren { get; } = [];
 
-    [ObservableProperty] private bool _isHidden;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HideMenuLabel), nameof(MenuHideVisible))]
+    private bool _isHidden;
 
     /// <summary>On a collection: how many folders and requests inside it are hidden.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HideLabel), nameof(ShowHiddenVisible))]
+    [NotifyPropertyChangedFor(nameof(HideLabel), nameof(ShowHiddenVisible), nameof(MenuShowHiddenVisible))]
     private int _hiddenCount;
 
     /// <summary>The hide icon on a folder or request. Hidden by the row style until the row is hovered.</summary>
@@ -78,6 +80,16 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
 
     /// <summary>The label of the button in the row: "Show n hidden" on a collection, a hide icon elsewhere.</summary>
     public string HideLabel => Parent is null ? (HiddenCount > 0 ? $"{HiddenCount} hidden" : "") : "⊘";
+
+    private SidebarItemKind Kind => Parent is null ? SidebarItemKind.Collection : Request is null ? SidebarItemKind.Folder : SidebarItemKind.Request;
+
+    // Context menu entries (ADR 0056). Each one runs the same command as the row's button, and SidebarMenu decides which apply.
+    public bool MenuRenameVisible => SidebarMenu.Offers(SidebarAction.Rename, Kind, IsHidden, HiddenCount);
+    public bool MenuTagsVisible => SidebarMenu.Offers(SidebarAction.Tags, Kind, IsHidden, HiddenCount);
+    public bool MenuNewFolderVisible => SidebarMenu.Offers(SidebarAction.NewFolder, Kind, IsHidden, HiddenCount);
+    public bool MenuHideVisible => SidebarMenu.Offers(SidebarAction.Hide, Kind, IsHidden, HiddenCount);
+    public bool MenuShowHiddenVisible => SidebarMenu.Offers(SidebarAction.ShowHidden, Kind, IsHidden, HiddenCount);
+    public string HideMenuLabel => SidebarMenu.HideLabel(IsHidden);
 
     private void SyncVisible()
     {
@@ -195,7 +207,8 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     public string? SpecUrl { get; set; }
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(MethodLabel), nameof(IsRequest), nameof(IsContainer))]
+    [NotifyPropertyChangedFor(nameof(MethodLabel), nameof(IsRequest), nameof(IsContainer),
+        nameof(MenuRenameVisible), nameof(MenuTagsVisible), nameof(MenuNewFolderVisible), nameof(MenuHideVisible), nameof(MenuShowHiddenVisible))]
     private ApiRequest? _request;
 
     public string MethodLabel => Request?.Method ?? "";
