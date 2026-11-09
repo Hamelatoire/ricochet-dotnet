@@ -36,3 +36,4 @@ pub mod collection_export;
 pub mod auth_signing;
 pub mod mock_server;
 pub mod workspace_archive;
+pub mod send;
