@@ -6,10 +6,11 @@ publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+serde_json = { version = "1", features = ["raw_value"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
+rand = "0.9"
 
 [dev-dependencies]
 pretty_assertions = "1"

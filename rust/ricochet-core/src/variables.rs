@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+use crate::builtins;
 use crate::models::{ApiRequest, AuthDetails, Collection, CollectionItem, KeyValue, RequestAuth, auth_kinds};
 
 /// The request to send, and the copy History keeps: placeholders filled in for the send, Variables left as written in History.
@@ -288,7 +289,11 @@ impl<'a> Resolver<'a> {
                 let text = self.variable_text(name, value);
                 (text, original.to_string())
             }
-            None => (original.to_string(), original.to_string()),
+            // A built-in function is evaluated for each use, so each use gets its own generated value (ADR 0008).
+            None => match builtins::try_evaluate(name) {
+                Some(value) => (value.clone(), value),
+                None => (original.to_string(), original.to_string()),
+            },
         }
     }
 
