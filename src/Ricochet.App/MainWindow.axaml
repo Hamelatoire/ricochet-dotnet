@@ -420,11 +420,21 @@
             <Button Grid.Column="1" Classes="primary" Content="Done" Margin="16,0,0,0" VerticalAlignment="Top"
                     Command="{Binding CloseSettingsPageCommand}" AutomationProperties.Name="Done" />
           </Grid>
-          <ScrollViewer>
+          <TextBox DockPanel.Dock="Top" x:Name="SettingsSearchBox" Watermark="Search settings" Margin="0,0,0,16"
+                   TextChanged="SettingsSearch_TextChanged" AutomationProperties.Name="Search settings" />
+          <Grid ColumnDefinitions="150,*">
+            <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,16,0" VerticalAlignment="Top">
+              <Button HorizontalAlignment="Stretch" Content="Requests" Click="SettingsSection_Click" Tag="requests" AutomationProperties.Name="Go to Requests" />
+              <Button HorizontalAlignment="Stretch" Content="Network" Click="SettingsSection_Click" Tag="network" AutomationProperties.Name="Go to Network" />
+              <Button HorizontalAlignment="Stretch" Content="Responses" Click="SettingsSection_Click" Tag="responses" AutomationProperties.Name="Go to Responses" />
+              <Button HorizontalAlignment="Stretch" Content="Privacy" Click="SettingsSection_Click" Tag="privacy" AutomationProperties.Name="Go to Privacy" />
+              <Button HorizontalAlignment="Stretch" Content="Workspace" Click="SettingsSection_Click" Tag="workspace" AutomationProperties.Name="Go to Workspace" />
+            </StackPanel>
+          <ScrollViewer Grid.Column="1">
             <StackPanel Spacing="22" MaxWidth="720" HorizontalAlignment="Left">
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:requests">
                 <TextBlock Text="Requests" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:request-timeout">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Request timeout (seconds)" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A request that takes longer is cancelled. Between 1 and 3600." />
@@ -432,7 +442,7 @@
                   <NumericUpDown Grid.Column="1" Value="{Binding RequestTimeoutSeconds}" Minimum="1" Maximum="3600" Increment="5"
                                  VerticalAlignment="Top" AutomationProperties.Name="Request timeout in seconds" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:follow-redirects">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Follow redirects" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Send the request again to the address a server redirects to." />
@@ -440,7 +450,7 @@
                   <CheckBox Grid.Column="1" IsChecked="{Binding FollowRedirects}" Content="On" VerticalAlignment="Top"
                             AutomationProperties.Name="Follow redirects" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:verify-tls">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Verify TLS certificates" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
@@ -451,9 +461,9 @@
                 </Grid>
               </StackPanel>
 
-              <StackPanel Spacing="12">
-                <TextBlock Text="Crash log" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+              <StackPanel Spacing="12" Tag="section:privacy">
+                <TextBlock Text="Privacy" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*" Tag="setting:crash-log-folder">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Crash log folder" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="After a crash, the app writes a log here. It stays on this machine and is never sent anywhere. Attach it to a bug report yourself if you choose. Exception messages and request data are left out; file paths may include your user name." />
@@ -466,9 +476,9 @@
                 </Grid>
               </StackPanel>
 
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:network">
                 <TextBlock Text="Network" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:proxy-address">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Proxy address" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Send requests through this HTTP proxy, such as proxy.example.com:8080. Empty uses the operating system's proxy. Proxy logins are not supported yet." />
@@ -476,7 +486,7 @@
                   <TextBox Grid.Column="1" Text="{Binding ProxyUrl, UpdateSourceTrigger=LostFocus}" Watermark="Operating system's proxy"
                            VerticalAlignment="Top" AutomationProperties.Name="Proxy address" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:client-certificate-file">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Client certificate file" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A .pfx or .p12 file sent to servers that ask for one. The file stays where it is; only its path is saved." />
@@ -488,7 +498,7 @@
                             AutomationProperties.Name="Browse for client certificate" />
                   </Grid>
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:client-certificate-password">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Client certificate password" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Kept in your operating system's secure storage, never in the workspace. Leave empty if the file has no password." />
@@ -500,9 +510,9 @@
                                      FontSize="12" TextWrapping="Wrap" />
               </StackPanel>
 
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:responses">
                 <TextBlock Text="Responses" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:max-response-size">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Largest response to keep (MB)" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="A longer response is cut off at this size and marked as truncated." />
@@ -510,7 +520,7 @@
                   <NumericUpDown Grid.Column="1" Value="{Binding MaxResponseMegabytes}" Minimum="1" Maximum="10240" Increment="10"
                                  VerticalAlignment="Top" AutomationProperties.Name="Largest response in megabytes" />
                 </Grid>
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:wrap-response">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Wrap long lines" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Wrap long lines in the response body. The Wrap button in the response uses this too." />
@@ -520,9 +530,9 @@
                 </Grid>
               </StackPanel>
 
-              <StackPanel Spacing="12">
+              <StackPanel Spacing="12" Tag="section:workspace">
                 <TextBlock Text="Workspace" FontWeight="SemiBold" />
-                <Grid ColumnDefinitions="260,*">
+                <Grid ColumnDefinitions="260,*" Tag="setting:workspace-folder">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
                     <TextBlock Text="Workspace folder" />
                     <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="Open a workspace folder, or copy this workspace into a new one, such as a git repository." />
@@ -537,6 +547,7 @@
               </StackPanel>
             </StackPanel>
           </ScrollViewer>
+          </Grid>
         </DockPanel>
       </Border>
 

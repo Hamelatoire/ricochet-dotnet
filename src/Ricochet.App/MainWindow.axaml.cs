@@ -51,6 +51,39 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
 
     private string _crashLogDirectory = "";
 
+    /// <summary>Shows only the settings that match the search text, and hides a section once none of its settings match (ADR 0069).</summary>
+    private void SettingsSearch_TextChanged(object? sender, TextChangedEventArgs e)
+    {
+        var matches = SettingsCatalog.Search(SettingsSearchBox.Text).Select(item => item.Key).ToHashSet();
+        var rows = this.GetVisualDescendants().OfType<Control>()
+            .Where(c => c.Tag is string tag && tag.StartsWith("setting:", StringComparison.Ordinal))
+            .ToList();
+        foreach (var row in rows)
+        {
+            row.IsVisible = matches.Contains(((string)row.Tag!)["setting:".Length..]);
+        }
+
+        foreach (var section in this.GetVisualDescendants().OfType<Control>()
+                     .Where(c => c.Tag is string tag && tag.StartsWith("section:", StringComparison.Ordinal)))
+        {
+            section.IsVisible = section.GetVisualDescendants().OfType<Control>()
+                .Any(c => c.Tag is string tag && tag.StartsWith("setting:", StringComparison.Ordinal) && c.IsVisible);
+        }
+    }
+
+    /// <summary>Scrolls the Settings page to the section whose button was clicked.</summary>
+    private void SettingsSection_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { Tag: string key })
+        {
+            return;
+        }
+
+        this.GetVisualDescendants().OfType<Control>()
+            .FirstOrDefault(c => c.Tag is string tag && tag == "section:" + key)
+            ?.BringIntoView();
+    }
+
     /// <summary>Opens the crash log folder in the file manager. The folder is created first, so it opens even before any crash.</summary>
     private async void OpenCrashLogFolder_Click(object? sender, RoutedEventArgs e)
     {
