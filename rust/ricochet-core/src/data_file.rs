@@ -2,7 +2,7 @@
 //! KeyValues. A CSV file has a header row of names; a JSON file is an array of objects. Each returned row
 //! is one run's values. Empty rows are skipped.
 //!
-//! Not ported yet: DataRowRunner (one run per row) and the CLI's `--data` option.
+//! One run per row is in `data_rows`, and the CLI's `--data` option is in the ricochet-cli crate.
 
 use std::fmt;
 
