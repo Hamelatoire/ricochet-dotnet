@@ -16,3 +16,4 @@ pub mod openapi_export;
 pub mod duplicate;
 pub mod name_filter;
 pub mod postman;
+pub mod insomnia;
