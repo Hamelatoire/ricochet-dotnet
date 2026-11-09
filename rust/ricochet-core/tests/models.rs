@@ -39,7 +39,7 @@ fn request_reads_a_file_written_by_the_csharp_app() {
         "headers": [{ "key": "X-Trace", "value": "1", "enabled": false }],
         "body": "{}",
         "auth": { "kind": "bearer", "token": "" },
-        "assertions": [{ "kind": "status", "expected": 200 }]
+        "assertions": [{ "source": "status", "op": "equals", "expected": "200" }]
     });
     let request: ApiRequest = serde_json::from_value(file).unwrap();
     assert_eq!(request.method, "POST");
