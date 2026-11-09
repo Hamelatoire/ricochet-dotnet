@@ -251,7 +251,7 @@ public sealed class CollectionRunner(RequestSender sender, ExternalSecretResolve
         }
     }
 
-    internal static List<string> SecretsToMask(IEnumerable<KeyValue> variables, IEnumerable<KeyValue> overrides, IEnumerable<KeyValue> captured, ApiRequest resolved)
+    public static List<string> SecretsToMask(IEnumerable<KeyValue> variables, IEnumerable<KeyValue> overrides, IEnumerable<KeyValue> captured, ApiRequest resolved)
     {
         // Captures are often tokens, and nothing marks which ones, so all of them are masked.
         var values = variables.Where(v => v.IsSecret).Concat(overrides).Concat(captured).Select(v => v.Value).ToList();
