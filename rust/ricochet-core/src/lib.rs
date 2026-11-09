@@ -8,3 +8,4 @@ pub mod dotenv;
 pub mod models;
 pub mod variables;
 pub mod docs_html;
+pub mod data_file;
