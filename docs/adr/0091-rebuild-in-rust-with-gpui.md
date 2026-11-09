@@ -1,12 +1,12 @@
 ---
-status: proposed
+status: accepted (not built)
 ---
 
 # Rebuild the app in Rust with GPUI
 
 Ricochet is a C# app on Avalonia, published with Native AOT ([ADR 0001](0001-csharp-avalonia-native-aot.md)). Discord's new desktop client is reported to be built in Rust with GPUI, the UI framework from the Zed editor. We want to test whether that stack gives a lighter, faster app than Avalonia, and we want to decide that with evidence, not by guessing. This ADR proposes a full rewrite of the app in Rust with GPUI, delivered as a stack of pull requests, and it does not replace ADR 0001 until the rewrite is accepted.
 
-Discord has not released its client, so the claim that it uses GPUI is based on press reports and an interview with its CTO. We have not verified that GPUI is published on crates.io or that it runs well on Windows, macOS and Linux. The first pull request in the stack checks both before anything else is built.
+Discord has not released its client, so the claim that it uses GPUI is based on press reports and an interview with its CTO. GPUI 0.2.2 is published on crates.io under Apache-2.0, with a Windows feature. We have not yet verified that it runs well on Windows, macOS and Linux. The feasibility spike (PR 2 in the stack) checks that before anything else is built.
 
 ## Decisions within this
 
