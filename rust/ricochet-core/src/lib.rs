@@ -32,3 +32,4 @@ pub mod git_status;
 pub mod crash_log;
 pub mod environment_transfer;
 pub mod git_clone;
+pub mod collection_export;
