@@ -29,3 +29,4 @@ pub mod sidebar_menu;
 pub mod export_files;
 pub mod placeholder_chips;
 pub mod git_status;
+pub mod crash_log;
