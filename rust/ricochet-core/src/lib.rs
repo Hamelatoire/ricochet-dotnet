@@ -21,3 +21,4 @@ pub mod store;
 pub mod openapi;
 pub mod response_status;
 pub mod key_value_columns;
+pub mod folder_tags;
