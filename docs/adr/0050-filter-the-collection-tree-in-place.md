@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted (built)
 ---
 
 # Filter the Collection tree in place

@@ -84,7 +84,10 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         VisibleChildren.Clear();
         var filter = Root._tagFilter;
         var inherited = TaggedWithAncestors(filter);
-        foreach (var child in Children.Where(c => !c.IsHidden && c.MatchesTagFilter(filter, inherited)))
+        // A Folder whose own name matches shows everything inside it, so its contents are one click away.
+        var nameQuery = Root._nameFilter;
+        var folderMatches = NameFilter.Matches(Name, nameQuery);
+        foreach (var child in Children.Where(c => !c.IsHidden && c.MatchesTagFilter(filter, inherited) && (folderMatches || c.MatchesNameFilter(nameQuery))))
             VisibleChildren.Add(child);
     }
 
@@ -97,6 +100,33 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         _tagFilter = filter;
         SyncVisibleTree();
     }
+
+    // The name filter also lives on a collection (ADR 0050). Hidden items stay hidden, as they do under the tag filter.
+    private string _nameFilter = "";
+
+    /// <summary>
+    /// Narrows the tree to the items whose names match, keeping the Folders that lead to them (ADR 0050).
+    /// Expands every Folder that holds a match, so the matches are visible. Empty restores the tree's own layout.
+    /// </summary>
+    public void ApplyNameFilter(string query)
+    {
+        _nameFilter = NameFilter.Normalize(query);
+        ApplyNameFilterTree();
+    }
+
+    private void ApplyNameFilterTree()
+    {
+        foreach (var child in Children)
+            child.ApplyNameFilterTree();
+
+        SyncVisible();
+        if (Root._nameFilter.Length > 0 && VisibleChildren.Count > 0)
+            IsExpanded = true;
+    }
+
+    /// <summary>True when this item or something shown inside it matches the name filter. Hidden children are left out.</summary>
+    private bool MatchesNameFilter(string query) =>
+        NameFilter.Shows(Name, query, Children.Where(c => !c.IsHidden).Select(c => c.MatchesNameFilter(query)));
 
     private bool MatchesTagFilter(string filter, bool inherited)
     {
