@@ -29,6 +29,9 @@
     <KeyBinding Gesture="Meta+E" Command="{Binding FocusEnvironmentCommand}" />
     <KeyBinding Gesture="Ctrl+W" Command="{Binding CloseActiveTabCommand}" />
     <KeyBinding Gesture="Meta+W" Command="{Binding CloseActiveTabCommand}" />
+    <KeyBinding Gesture="F1" Command="{Binding OpenShortcutSheetCommand}" />
+    <KeyBinding Gesture="Ctrl+OemQuestion" Command="{Binding OpenShortcutSheetCommand}" />
+    <KeyBinding Gesture="Meta+OemQuestion" Command="{Binding OpenShortcutSheetCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding CloseTopPanelCommand}" />
   </Window.KeyBindings>
 
@@ -1033,6 +1036,41 @@
         </Border>
       </Grid>
     </Grid>
+
+    <!-- Shortcut cheat sheet (ADR 0067). Escape closes it through CloseTopPanel. -->
+    <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsShortcutSheetOpen}">
+      <Border Classes="dialog" Width="520" MaxHeight="600" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,90,0,0"
+              AutomationProperties.Name="Keyboard shortcuts">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Classes="brand" Text="Keyboard shortcuts" VerticalAlignment="Center" />
+          </StackPanel>
+          <Button DockPanel.Dock="Bottom" Content="Close" HorizontalAlignment="Right" Margin="0,12,0,0"
+                  Command="{Binding CloseShortcutSheetCommand}" AutomationProperties.Name="Close the keyboard shortcuts" />
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding ShortcutGroups}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:ShortcutGroup">
+                  <StackPanel Spacing="6" Margin="0,0,0,14">
+                    <TextBlock Classes="muted" FontSize="12" Text="{Binding Title}" />
+                    <ItemsControl ItemsSource="{Binding Entries}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="core:ShortcutEntry">
+                          <Grid ColumnDefinitions="180,*" Margin="0,2">
+                            <TextBlock Grid.Column="0" Text="{Binding Keys}" FontFamily="{StaticResource MonoFont}" />
+                            <TextBlock Grid.Column="1" Text="{Binding Action}" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Border>
 
     <!-- Command palette (ADR 0040). Escape closes it, Up and Down move through the list, Enter runs the highlighted entry. -->
     <Border Background="{DynamicResource Scrim}" IsVisible="{Binding IsPaletteOpen}">
