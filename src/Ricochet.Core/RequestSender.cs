@@ -304,6 +304,8 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
 
     private static HttpRequestMessage BuildMessage(ApiRequest request, string? digestChallenge)
     {
+        // Checked here, on the resolved values, so every value that goes on the wire passes the same check (ADR 0075).
+        RejectControlCharacters("URL", request.Url);
         var message = new HttpRequestMessage(new HttpMethod(request.Method), ApplyQueryAuth(ParseUrl(request.Url), request.Auth));
         var headers = request.Headers.Where(h => h.Enabled && h.Key.Trim().Length > 0).ToList();
 
@@ -318,7 +320,8 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         foreach (var header in headers)
         {
             var key = header.Key.Trim();
-            RejectLineBreaks(key, header.Value);
+            RejectControlCharacters($"header name \"{key}\"", key);
+            RejectControlCharacters($"value of \"{key}\"", header.Value);
             if (message.Headers.TryAddWithoutValidation(key, header.Value))
                 continue;
 
@@ -339,6 +342,8 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         if (auth is not { Kind: AuthKinds.ApiKey, KeyInQuery: true } || auth.KeyName.Length == 0)
             return uri;
 
+        RejectControlCharacters($"query parameter \"{auth.KeyName}\"", auth.KeyName);
+        RejectControlCharacters($"value of query parameter \"{auth.KeyName}\"", auth.KeyValue);
         var pair = $"{Uri.EscapeDataString(auth.KeyName)}={Uri.EscapeDataString(auth.KeyValue)}";
         var builder = new UriBuilder(uri);
         builder.Query = builder.Query.Length > 1 ? $"{builder.Query[1..]}&{pair}" : pair;
@@ -388,16 +393,23 @@ public sealed partial class RequestSender(HttpClient client, TimeSpan? timeout =
         if (name.Length == 0 || message.Headers.Contains(name))
             return;
 
-        RejectLineBreaks(name, value);
+        RejectControlCharacters($"value of \"{name}\"", value);
         if (!message.Headers.TryAddWithoutValidation(name, value))
             throw new RequestFailedException($"Invalid auth header: \"{name}\".");
     }
 
-    /// <summary>A line break in a value would split the header and let the rest add headers of its own, so it is refused.</summary>
-    private static void RejectLineBreaks(string name, string value)
+    /// <summary>
+    /// A control character such as a line break can split a header or change what the server reads, so it is refused, never removed (ADR 0075).
+    /// A tab is allowed, because HTTP allows it in values.
+    /// </summary>
+    /// <exception cref="RequestFailedException">The text contains a control character other than a tab.</exception>
+    internal static void RejectControlCharacters(string what, string text)
     {
-        if (value.AsSpan().IndexOfAny('\r', '\n') >= 0)
-            throw new RequestFailedException($"The value of \"{name}\" contains a line break, which is not allowed in a header.");
+        foreach (var c in text)
+        {
+            if (c != '\t' && char.IsControl(c))
+                throw new RequestFailedException($"The {what} contains a control character (U+{(int)c:X4}), which is not allowed. Remove it.");
+        }
     }
 
     private static string RandomHex() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
