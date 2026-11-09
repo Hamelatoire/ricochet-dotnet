@@ -6,6 +6,7 @@ pub mod assertions;
 pub mod builtins;
 pub mod dotenv;
 pub mod models;
+pub mod response_compare;
 pub mod variables;
 pub mod docs_html;
 pub mod data_file;
