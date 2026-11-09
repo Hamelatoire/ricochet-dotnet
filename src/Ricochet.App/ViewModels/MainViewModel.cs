@@ -60,7 +60,7 @@ public sealed partial class MainViewModel : ObservableObject
         _themeChoice = ThemeSettings.ChoiceName(store.Theme);
         var workspace = WorkspaceSecrets.Merge(loaded.Workspace, WorkspaceSecrets.ForWorkspace(_storedSecrets, store.WorkspaceId));
         Collections = new ObservableCollection<TreeNodeViewModel>(
-            workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder)));
+            workspace.Collections.Select(c => TreeNodeViewModel.FromCollection(c, DeleteNode, RenameNode, AddFolder, DuplicateNode)));
         // A collection added later must follow the tag filter too (ADR 0030).
         Collections.CollectionChanged += (_, _) => ApplyTagFilter();
         History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
@@ -501,7 +501,7 @@ public sealed partial class MainViewModel : ObservableObject
         SelectedNode = null;
         Collections.Clear();
         foreach (var collection in shared.Collections)
-            Collections.Add(TreeNodeViewModel.FromCollection(collection, DeleteNode, RenameNode, AddFolder));
+            Collections.Add(TreeNodeViewModel.FromCollection(collection, DeleteNode, RenameNode, AddFolder, DuplicateNode));
         foreach (var node in AllNodes(Collections))
             node.IsExpanded = expanded.Contains(node.Id);
 
@@ -1478,7 +1478,7 @@ public sealed partial class MainViewModel : ObservableObject
         else
         {
             var target = CurrentCollection ?? DefaultCollection();
-            node = TreeNodeViewModel.ForNewRequest(request, target, DeleteNode, RenameNode, AddFolder);
+            node = TreeNodeViewModel.ForNewRequest(request, target, DeleteNode, RenameNode, AddFolder, DuplicateNode);
             target.Children.Add(node);
             target.IsExpanded = true;
             _currentNode = node;
@@ -1510,7 +1510,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (existing is not null)
             return existing;
 
-        var created = TreeNodeViewModel.FromCollection(new Collection { Name = Workspace.DefaultCollectionName }, DeleteNode, RenameNode, AddFolder);
+        var created = TreeNodeViewModel.FromCollection(new Collection { Name = Workspace.DefaultCollectionName }, DeleteNode, RenameNode, AddFolder, DuplicateNode);
         Collections.Add(created);
         return created;
     }
@@ -1525,11 +1525,23 @@ public sealed partial class MainViewModel : ObservableObject
         await PersistAsync();
     }
 
+    /// <summary>Copies a Request or Folder straight after it, then selects the copy (ADR 0059). The copy is a new file.</summary>
+    private async void DuplicateNode(TreeNodeViewModel node)
+    {
+        var result = ItemDuplicator.Duplicate(node.Root.ToCollection(), node.Id);
+        if (result is null)
+            return;
+
+        SelectedNode = node.AddCopy(result.Copy, result.Collection.HiddenItemIds ?? []);
+        RefreshVariableScopes();
+        await PersistAsync();
+    }
+
     /// <summary>Adds an empty folder inside the node, then opens its name for editing.</summary>
     private async void AddFolder(TreeNodeViewModel parent)
     {
         var name = WorkspaceImport.UniqueName("New folder", parent.Children.Select(c => c.Name));
-        var folder = TreeNodeViewModel.ForNewFolder(name, parent, DeleteNode, RenameNode, AddFolder);
+        var folder = TreeNodeViewModel.ForNewFolder(name, parent, DeleteNode, RenameNode, AddFolder, DuplicateNode);
         parent.Children.Add(folder);
         parent.IsExpanded = true;
         SelectedNode = folder; // Highlights the new folder, which the tree then scrolls to.
@@ -1700,7 +1712,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (unique != collection.Name)
                 notes.Add($"A collection with this name already exists, so it was added as \"{unique}\".");
 
-            var node = TreeNodeViewModel.FromCollection(collection with { Name = unique }, DeleteNode, RenameNode, AddFolder);
+            var node = TreeNodeViewModel.FromCollection(collection with { Name = unique }, DeleteNode, RenameNode, AddFolder, DuplicateNode);
             node.IsExpanded = true;
             Collections.Add(node);
         }
@@ -1817,14 +1829,14 @@ public sealed partial class MainViewModel : ObservableObject
         if (result.Summary.IsNew)
         {
             var unique = WorkspaceImport.UniqueName(result.Collection.Name, Collections.Select(c => c.Name));
-            var node = TreeNodeViewModel.FromCollection(result.Collection with { Name = unique }, DeleteNode, RenameNode, AddFolder);
+            var node = TreeNodeViewModel.FromCollection(result.Collection with { Name = unique }, DeleteNode, RenameNode, AddFolder, DuplicateNode);
             node.IsExpanded = true;
             Collections.Add(node);
         }
         else if (Collections.FirstOrDefault(c => c.SpecUrl == address) is { } old)
         {
             // The old node is detached, so the selection must not keep pointing at it.
-            var node = TreeNodeViewModel.FromCollection(result.Collection, DeleteNode, RenameNode, AddFolder);
+            var node = TreeNodeViewModel.FromCollection(result.Collection, DeleteNode, RenameNode, AddFolder, DuplicateNode);
             node.IsExpanded = true;
             SelectedNode = null;
             Collections[Collections.IndexOf(old)] = node;

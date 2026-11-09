@@ -42,10 +42,11 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
     private readonly Action<TreeNodeViewModel> _delete;
     private readonly Action<TreeNodeViewModel> _rename;
     private readonly Action<TreeNodeViewModel> _addFolder;
+    private readonly Action<TreeNodeViewModel> _duplicate;
     private readonly IReadOnlyList<StoredScript> _scripts;
 
     private TreeNodeViewModel(string id, TreeNodeViewModel? parent, IReadOnlyList<StoredScript> scripts,
-        Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
+        Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder, Action<TreeNodeViewModel> duplicate)
     {
         Id = id;
         Parent = parent;
@@ -53,6 +54,7 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         _delete = delete;
         _rename = rename;
         _addFolder = addFolder;
+        _duplicate = duplicate;
         Children.CollectionChanged += (_, _) => SyncVisible();
     }
 
@@ -320,13 +322,35 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
             _addFolder(this);
     }
 
-    public static TreeNodeViewModel FromCollection(Collection collection, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
+    /// <summary>Makes a copy of this Request or Folder (ADR 0059). A Collection has nothing to copy it into.</summary>
+    [RelayCommand]
+    private void Duplicate()
     {
-        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete, rename, addFolder) { Name = collection.Name, SpecUrl = collection.SpecUrl };
+        if (Parent is not null)
+            _duplicate(this);
+    }
+
+    /// <summary>Puts a copy made by <see cref="Ricochet.Core.ItemDuplicator"/> straight after this node, and returns its node.</summary>
+    public TreeNodeViewModel AddCopy(CollectionItem copy, IReadOnlyCollection<string> hidden)
+    {
+        var parent = Parent!;
+        var node = FromItem(copy, parent, _delete, _rename, _addFolder, _duplicate);
+        foreach (var n in node.Descendants().Prepend(node))
+            n.IsHidden = hidden.Contains(n.Id);
+
+        parent.Children.Insert(parent.Children.IndexOf(this) + 1, node);
+        parent.IsExpanded = true;
+        Root.RecountHidden();
+        return node;
+    }
+
+    public static TreeNodeViewModel FromCollection(Collection collection, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder, Action<TreeNodeViewModel> duplicate)
+    {
+        var node = new TreeNodeViewModel(collection.Id, null, collection.Scripts, delete, rename, addFolder, duplicate) { Name = collection.Name, SpecUrl = collection.SpecUrl };
         node.OnHideChanged = rename;
         node.Variables.Load(collection.Variables);
         foreach (var item in collection.Items)
-            node.Children.Add(FromItem(item, node, delete, rename, addFolder));
+            node.Children.Add(FromItem(item, node, delete, rename, addFolder, duplicate));
 
         var hidden = new HashSet<string>(collection.HiddenItemIds ?? []);
         foreach (var descendant in node.Descendants())
@@ -336,20 +360,20 @@ public sealed partial class TreeNodeViewModel : DeletableViewModel
         return node;
     }
 
-    private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder)
+    private static TreeNodeViewModel FromItem(CollectionItem item, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder, Action<TreeNodeViewModel> duplicate)
     {
-        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename, addFolder) { Name = item.Name, Request = item.Request, Tags = item.Tags ?? [] };
+        var node = new TreeNodeViewModel(item.Id, parent, item.Scripts, delete, rename, addFolder, duplicate) { Name = item.Name, Request = item.Request, Tags = item.Tags ?? [] };
         node.Variables.Load(item.Variables);
         foreach (var child in item.Children)
-            node.Children.Add(FromItem(child, node, delete, rename, addFolder));
+            node.Children.Add(FromItem(child, node, delete, rename, addFolder, duplicate));
         return node;
     }
 
-    public static TreeNodeViewModel ForNewRequest(ApiRequest request, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder) =>
-        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename, addFolder) { Name = request.Name, Request = request };
+    public static TreeNodeViewModel ForNewRequest(ApiRequest request, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder, Action<TreeNodeViewModel> duplicate) =>
+        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename, addFolder, duplicate) { Name = request.Name, Request = request };
 
-    public static TreeNodeViewModel ForNewFolder(string name, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder) =>
-        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename, addFolder) { Name = name };
+    public static TreeNodeViewModel ForNewFolder(string name, TreeNodeViewModel parent, Action<TreeNodeViewModel> delete, Action<TreeNodeViewModel> rename, Action<TreeNodeViewModel> addFolder, Action<TreeNodeViewModel> duplicate) =>
+        new(Guid.NewGuid().ToString("N"), parent, [], delete, rename, addFolder, duplicate) { Name = name };
 
     public Collection ToCollection()
     {

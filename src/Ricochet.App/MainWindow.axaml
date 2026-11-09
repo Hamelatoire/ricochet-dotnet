@@ -117,7 +117,7 @@
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding VisibleChildren}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
@@ -158,7 +158,10 @@
                         <Button Grid.Column="6" Margin="4,0,0,0" Padding="8,2" FontSize="12" Content="{Binding HideLabel}" IsVisible="{Binding ShowHiddenVisible}"
                                 Command="{Binding HideOrShowCommand}" ToolTip.Tip="Show the hidden folders and requests again"
                                 AutomationProperties.Name="Show hidden" />
-                        <Button Grid.Column="7" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                        <Button Grid.Column="7" Classes="mini" Margin="4,0,0,0" Content="⧉" IsVisible="{Binding HideVisible}"
+                                Command="{Binding DuplicateCommand}" ToolTip.Tip="Duplicate. The copy goes straight after this one, with a new name."
+                                AutomationProperties.Name="Duplicate" />
+                        <Button Grid.Column="8" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
                                 Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete (click again within 3 seconds to confirm)"
                                 AutomationProperties.Name="Delete" />
                       </Grid>
