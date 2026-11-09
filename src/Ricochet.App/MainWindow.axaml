@@ -128,13 +128,14 @@
                   </TreeView.Styles>
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding VisibleChildren}" x:DataType="vm:TreeNodeViewModel">
-                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                      <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
                         <!-- Right-click menu (ADR 0056). Each entry runs the same command as the button beside it. -->
                         <Grid.ContextMenu>
                           <ContextMenu AutomationProperties.Name="Item actions">
                             <MenuItem Header="Rename" InputGesture="F2" Command="{Binding ToggleRenameCommand}" IsVisible="{Binding MenuRenameVisible}" />
                             <MenuItem Header="Tags…" Command="{Binding ToggleTagsCommand}" IsVisible="{Binding MenuTagsVisible}" />
                             <MenuItem Header="New folder" Command="{Binding NewFolderCommand}" IsVisible="{Binding MenuNewFolderVisible}" />
+                            <MenuItem Header="Duplicate" Command="{Binding DuplicateCommand}" />
                             <MenuItem Header="{Binding HideMenuLabel}" Command="{Binding HideOrShowCommand}" IsVisible="{Binding MenuHideVisible}" />
                             <MenuItem Header="Show hidden" Command="{Binding HideOrShowCommand}" IsVisible="{Binding MenuShowHiddenVisible}" />
                             <Separator />
@@ -181,7 +182,10 @@
                         <Button Grid.Column="6" Margin="4,0,0,0" Padding="8,2" FontSize="12" Content="{Binding HideLabel}" IsVisible="{Binding ShowHiddenVisible}"
                                 Command="{Binding HideOrShowCommand}" ToolTip.Tip="Show the hidden folders and requests again"
                                 AutomationProperties.Name="Show hidden" />
-                        <Button Grid.Column="7" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
+                        <Button Grid.Column="7" Classes="mini" Margin="4,0,0,0" Content="⧉" IsVisible="{Binding HideVisible}"
+                                Command="{Binding DuplicateCommand}" ToolTip.Tip="Duplicate. The copy goes straight after this one, with a new name."
+                                AutomationProperties.Name="Duplicate" />
+                        <Button Grid.Column="8" Classes="mini" Margin="4,0,4,0" Content="{Binding DeleteLabel}"
                                 Command="{Binding DeleteClickedCommand}" ToolTip.Tip="Delete (click again within 3 seconds to confirm)"
                                 AutomationProperties.Name="Delete" />
                       </Grid>
