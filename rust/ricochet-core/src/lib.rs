@@ -7,3 +7,4 @@ pub mod builtins;
 pub mod dotenv;
 pub mod models;
 pub mod variables;
+pub mod docs_html;
