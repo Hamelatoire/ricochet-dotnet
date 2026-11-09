@@ -919,6 +919,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string _timingText = "";
 
+    /// <summary>True when the response on screen came from a send with certificate checks off (ADR 0079).</summary>
+    [ObservableProperty] private bool _responseCertificatesUnverified;
+
     /// <summary>The colour family of the status code, which picks the status badge's colour.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSuccess), nameof(IsRedirect), nameof(IsClientError), nameof(IsServerError), nameof(IsFailure))]
@@ -1306,6 +1309,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsSending = true;
         var previousExchange = _lastExchange;
         ClearResponse();
+        // The response badge says so when this send skipped certificate checks (ADR 0079).
+        ResponseCertificatesUnverified = ShowTlsWarning;
 
         // History keeps this copy, with generated values filled in and Variables as written (ADR 0008).
         var historyRequest = request;
@@ -1391,7 +1396,8 @@ public sealed partial class MainViewModel : ObservableObject
     private void AddHistory(ApiRequest request, int? statusCode, long elapsedMs, string? collectionId)
     {
         // Examples belong to the Request in the Workspace, not to each send of it.
-        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request with { Examples = null }, statusCode, elapsedMs, DateTimeOffset.Now, collectionId)));
+        // Each send records whether certificate checks were off for it (ADR 0079). Only the off state is stored.
+        History.Insert(0, WorkspaceSecrets.SanitizeHistory(new HistoryEntry(request with { Examples = null }, statusCode, elapsedMs, DateTimeOffset.Now, collectionId, ShowTlsWarning ? true : null)));
         while (History.Count > Workspace.MaxHistory)
             History.RemoveAt(History.Count - 1);
     }

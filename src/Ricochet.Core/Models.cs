@@ -162,7 +162,8 @@ public sealed record ApiEnvironment
     public IReadOnlyList<KeyValue> Variables { get; set; } = [];
 }
 
-public sealed record HistoryEntry(ApiRequest Request, int? StatusCode, long ElapsedMs, DateTimeOffset At, string? CollectionId = null);
+/// <summary>One send. <see cref="CertificatesUnverified"/> is set only when certificate checks were off for it (ADR 0079).</summary>
+public sealed record HistoryEntry(ApiRequest Request, int? StatusCode, long ElapsedMs, DateTimeOffset At, string? CollectionId = null, bool? CertificatesUnverified = null);
 
 public sealed record Workspace
 {

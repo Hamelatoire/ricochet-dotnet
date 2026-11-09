@@ -208,6 +208,7 @@ internal static class Program
             Console.WriteLine($"Data rows: {rowReports.Count} run, {rowReports.Count(r => r.Report.Passed)} passed, {rowReports.Count(r => !r.Report.Passed)} failed.");
         }
 
+        report = report with { CertificatesUnverified = options.Insecure };
         Console.WriteLine();
         Console.WriteLine(RunReports.Summary(report));
         foreach (var caution in RunReports.Cautions(report))
