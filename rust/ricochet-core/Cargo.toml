@@ -1,3 +1,4 @@
+
 [package]
 name = "ricochet-core"
 version = "0.0.0"
@@ -6,7 +7,7 @@ publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
