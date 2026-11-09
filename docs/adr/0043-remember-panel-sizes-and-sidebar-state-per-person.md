@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Remember panel sizes and sidebar state for each person

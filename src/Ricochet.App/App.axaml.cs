@@ -22,6 +22,7 @@ public partial class App : Application
             RequestedThemeVariant = ThemeSettings.Variant(store.Theme);
             window.DataContext = viewModel;
             WindowMemory.Attach(window, store);
+            PanelMemory.Attach(window, store);
             desktop.MainWindow = window;
         }
 

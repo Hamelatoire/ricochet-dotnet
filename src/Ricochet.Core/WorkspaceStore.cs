@@ -44,11 +44,32 @@ public sealed record PersonalState
     /// <summary>Where the main window was when the app last closed. Null means the default size and position.</summary>
     public WindowPlacement? Window { get; set; }
 
+    /// <summary>Where the panels were dragged to (ADR 0043). Null means the defaults.</summary>
+    public PanelLayout? Panels { get; set; }
+
     /// <summary>The Requests open as tabs, by id, in tab order (ADR 0041). Null when none are open.</summary>
     public IReadOnlyList<string>? OpenTabs { get; set; }
 
     /// <summary>The id of the tab that was showing. Null when none was.</summary>
     public string? ActiveTab { get; set; }
+}
+
+/// <summary>
+/// The sidebar's width and the request pane's height, in device-independent units (ADR 0043). Each is optional, so an
+/// older file, or one that only has one of them, opens with the other at its default.
+/// </summary>
+public sealed record PanelLayout
+{
+    public double? SidebarWidth { get; set; }
+
+    public double? RequestHeight { get; set; }
+
+    /// <summary>The same layout with any value that no real window could have dropped, so it falls back to the default.</summary>
+    public PanelLayout Sanitized() => new()
+    {
+        SidebarWidth = SidebarWidth is { } width && double.IsFinite(width) && width is >= 120 and <= 4000 ? width : null,
+        RequestHeight = RequestHeight is { } height && double.IsFinite(height) && height is >= 60 and <= 4000 ? height : null,
+    };
 }
 
 /// <summary>
@@ -188,6 +209,25 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     {
         lock (_gate)
             SaveState(_state with { Window = placement });
+    }
+
+    /// <summary>
+    /// The sidebar width and request pane height from the last run. A damaged value is dropped, so that one falls back to
+    /// its default while the other is kept.
+    /// </summary>
+    public PanelLayout? Panels
+    {
+        get
+        {
+            lock (_gate)
+                return _state.Panels?.Sanitized();
+        }
+    }
+
+    public void SavePanels(PanelLayout layout)
+    {
+        lock (_gate)
+            SaveState(_state with { Panels = layout.Sanitized() });
     }
 
     /// <summary>The Requests that were open as tabs when the app last ran, in order (ADR 0041).</summary>
