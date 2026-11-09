@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted (built; verified on Windows only)
 ---
 
 # Warn loudly and per run when certificate checks are off

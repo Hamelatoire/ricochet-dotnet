@@ -881,6 +881,11 @@
                     <TextBlock Text="{Binding StatusText}" />
                   </Border>
                   <TextBlock Classes="muted" VerticalAlignment="Center" FontSize="12" Text="{Binding TimingText}" />
+                  <Border Classes="badge warning" IsVisible="{Binding ResponseCertificatesUnverified}"
+                          ToolTip.Tip="This response was sent with TLS certificate checks off, so the server was not verified. Turn checks on in Settings."
+                          AutomationProperties.Name="Certificate checks were off for this response">
+                    <TextBlock Text="⚠ Certificates not verified" />
+                  </Border>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding CanSaveExample}">
                   <TextBox Text="{Binding ExampleName}" PlaceholderText="Example name" Width="170" FontSize="12" Padding="6,3"
