@@ -85,11 +85,19 @@
           </Grid>
           <TabControl>
             <TabItem Header="Collections">
-              <Grid RowDefinitions="Auto,*">
+              <Grid RowDefinitions="Auto,Auto,*">
                 <TextBox Grid.Row="0" Text="{Binding TagFilter}" PlaceholderText="Filter by tag" Margin="0,8,0,8"
                          AutomationProperties.Name="Filter by tag"
                          ToolTip.Tip="Show only folders and requests with this tag, including those inside a folder that has it" />
-                <Panel Grid.Row="1">
+                <!-- Narrows the tree in place as you type, keeping the folders above each match (ADR 0050). Escape clears it. -->
+                <TextBox Grid.Row="1" Text="{Binding TreeNameFilter}" PlaceholderText="Filter by name" Margin="0,0,0,8"
+                         AutomationProperties.Name="Filter by name"
+                         ToolTip.Tip="Hide folders and requests whose names don't match, keeping the folders that lead to a match. Escape clears it.">
+                  <TextBox.KeyBindings>
+                    <KeyBinding Gesture="Escape" Command="{Binding ClearTreeNameFilterCommand}" />
+                  </TextBox.KeyBindings>
+                </TextBox>
+                <Panel Grid.Row="2">
                 <TreeView x:Name="CollectionsTree" ItemsSource="{Binding Collections}" SelectedItem="{Binding SelectedNode}"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           AutomationProperties.Name="Collection tree">
