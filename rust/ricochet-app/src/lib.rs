@@ -2,5 +2,6 @@
 //! window. The window itself lives in `main.rs`.
 
 pub mod shell;
+pub mod state;
 pub mod status;
 pub mod tree;

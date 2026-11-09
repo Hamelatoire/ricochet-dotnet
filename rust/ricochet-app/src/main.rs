@@ -7,6 +7,7 @@ use gpui::{
     WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use ricochet_app::shell::{ShellModel, folder_from};
+use ricochet_app::state::AppState;
 use ricochet_app::tree::{RowKind, TreeRow, find_request};
 use ricochet_core::models::ApiRequest;
 
@@ -34,16 +35,94 @@ fn method_color(method: &str) -> u32 {
 
 struct Shell {
     model: ShellModel,
-    selected: Option<String>,
+    state: AppState,
 }
 
 impl Shell {
     fn new(model: ShellModel) -> Self {
-        Self { model, selected: None }
+        let state = AppState::for_workspace(&model.workspace);
+        Self { model, state }
+    }
+
+    fn request_name(&self, id: &str) -> String {
+        find_request(&self.model.workspace, id).map(|request| request.name.clone()).unwrap_or_else(|| id.to_string())
+    }
+
+    fn tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let tabs: Vec<_> = self.state.open_tabs().iter().map(|id| self.tab(id, cx)).collect();
+        let count = self.state.open_tabs().len();
+        let mut strip = div().flex().flex_row().items_center().gap_2().h(px(30.0));
+        if count == 0 {
+            strip = strip.child(div().text_xs().text_color(rgb(MUTED)).child("No requests open"));
+        } else {
+            strip = strip
+                .child(
+                    div()
+                        .id("tab-strip")
+                        .flex_1()
+                        .flex()
+                        .flex_row()
+                        .gap_1()
+                        .overflow_x_scroll()
+                        .children(tabs),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(if count == 1 { "1 open".to_string() } else { format!("{count} open") }),
+                );
+        }
+        strip
+    }
+
+    /// One tab: its Request's name, which shows it, and a close mark. The label and the mark are separate clicks.
+    fn tab(&self, id: &str, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let is_active = self.state.active_tab() == Some(id);
+        let label = self.request_name(id);
+        let show_id = id.to_string();
+        let close_id = id.to_string();
+        div()
+            .id(SharedString::from(format!("tab-{id}")))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .h(px(26.0))
+            .px_2()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(BORDER))
+            .bg(rgb(if is_active { PANEL_BG } else { SIDEBAR_BG }))
+            .child(
+                div()
+                    .id(SharedString::from(format!("tab-label-{id}")))
+                    .cursor_pointer()
+                    .whitespace_nowrap()
+                    .text_color(rgb(if is_active { TEXT } else { MUTED }))
+                    .child(label)
+                    .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.state.activate_tab(&show_id);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("tab-close-{id}")))
+                    .cursor_pointer()
+                    .text_color(rgb(MUTED))
+                    .hover(|style| style.text_color(rgb(TEXT)))
+                    .child("×")
+                    .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.state.close_tab(&close_id);
+                        cx.notify();
+                    })),
+            )
     }
 
     fn tree_row(&self, row: &TreeRow, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let is_selected = self.selected.as_deref() == Some(row.id.as_str());
+        let is_selected = self.state.selected_item() == Some(row.id.as_str());
+        let is_request = row.kind == RowKind::Request;
         let id = row.id.clone();
         let indent = px(10.0 + 14.0 * row.depth as f32);
         let label_weight = match row.kind {
@@ -67,7 +146,11 @@ impl Shell {
             .hover(|style| style.bg(rgb(ROW_HOVER)))
             .when(is_selected, |style| style.bg(rgb(ROW_SELECTED)))
             .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                this.selected = Some(id.clone());
+                if is_request {
+                    this.state.pick_request(&id);
+                } else {
+                    this.state.select_item(&id);
+                }
                 cx.notify();
             }));
 
@@ -152,8 +235,8 @@ impl Shell {
         }
 
         let request: Option<&ApiRequest> = self
-            .selected
-            .as_deref()
+            .state
+            .selected_item()
             .and_then(|id| find_request(&self.model.workspace, id));
 
         match request {
@@ -284,6 +367,7 @@ impl Render for Shell {
                             .gap_3()
                             .p_3()
                             .overflow_hidden()
+                            .child(self.tab_strip(cx))
                             .child(self.request_panel())
                             .child(self.response_panel()),
                     ),
