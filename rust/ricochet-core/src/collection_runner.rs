@@ -2,9 +2,9 @@
 //! more Collections in order, checks their assertions and captures, and reports the results. It reads the
 //! Workspace and never changes it. Captured values live in memory only, and reset for each Collection.
 //!
-//! Not ported yet: cookies kept for a run (ADR 0012, the sender has none), resolving Secret references from
-//! external managers (ADR 0025), the xUnit XML report, and the CLI itself. The exit codes are here so the CLI
-//! can reuse them. The C# app stays the reference for behaviour.
+//! Not ported yet: cookies kept for a run (ADR 0012, the sender has none), and resolving Secret references from
+//! external managers (ADR 0025). The xUnit report is in `xunit`, data-row runs are in `data_rows`, and the CLI
+//! is in the ricochet-cli crate. The C# app stays the reference for behaviour.
 
 use std::cmp::Reverse;
 use std::error::Error;
