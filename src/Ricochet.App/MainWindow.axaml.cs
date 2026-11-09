@@ -186,6 +186,13 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
 
     private void OnTreeKeyDown(object? sender, KeyEventArgs e)
     {
+        // The Menu key and Shift+F10 open the focused item's context menu (ADR 0056).
+        if (e.Key == Key.Apps || (e.Key == Key.F10 && e.KeyModifiers == KeyModifiers.Shift))
+        {
+            e.Handled = OpenItemMenu(e.Source);
+            return;
+        }
+
         // The rename box and the row buttons keep their own keys, and Ctrl/Shift/Alt combinations are left for shortcuts.
         if (_viewModel is null || e.KeyModifiers != KeyModifiers.None || e.Source is TextBox or Button)
             return;
@@ -215,6 +222,19 @@ public partial class MainWindow : Window, IDialogs, IClipboardService
                 e.Handled = false;
                 break;
         }
+    }
+
+    /// <summary>Opens the context menu of the tree row that holds <paramref name="source"/>. Returns false when there is no row.</summary>
+    private static bool OpenItemMenu(object? source)
+    {
+        if (source is not Visual visual || visual.FindAncestorOfType<TreeViewItem>() is not { } item)
+            return false;
+
+        if (item.GetVisualDescendants().OfType<Grid>().FirstOrDefault(g => g.Classes.Contains("treerow")) is not { ContextMenu: { } menu } row)
+            return false;
+
+        menu.Open(row);
+        return true;
     }
 
     private void OnTreePointerPressed(object? sender, PointerPressedEventArgs e)

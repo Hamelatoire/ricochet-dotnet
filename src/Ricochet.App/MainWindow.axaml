@@ -126,6 +126,18 @@
                   <TreeView.ItemTemplate>
                     <TreeDataTemplate ItemsSource="{Binding VisibleChildren}" x:DataType="vm:TreeNodeViewModel">
                       <Grid Classes="treerow" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                        <!-- Right-click menu (ADR 0056). Each entry runs the same command as the button beside it. -->
+                        <Grid.ContextMenu>
+                          <ContextMenu AutomationProperties.Name="Item actions">
+                            <MenuItem Header="Rename" InputGesture="F2" Command="{Binding ToggleRenameCommand}" IsVisible="{Binding MenuRenameVisible}" />
+                            <MenuItem Header="Tags…" Command="{Binding ToggleTagsCommand}" IsVisible="{Binding MenuTagsVisible}" />
+                            <MenuItem Header="New folder" Command="{Binding NewFolderCommand}" IsVisible="{Binding MenuNewFolderVisible}" />
+                            <MenuItem Header="{Binding HideMenuLabel}" Command="{Binding HideOrShowCommand}" IsVisible="{Binding MenuHideVisible}" />
+                            <MenuItem Header="Show hidden" Command="{Binding HideOrShowCommand}" IsVisible="{Binding MenuShowHiddenVisible}" />
+                            <Separator />
+                            <MenuItem Header="Delete" Command="{Binding DeleteClickedCommand}" />
+                          </ContextMenu>
+                        </Grid.ContextMenu>
                         <TextBlock Grid.Column="0" Classes="method" Width="52" IsVisible="{Binding IsRequest}"
                                    Text="{Binding MethodLabel}"
                                    Foreground="{Binding MethodLabel, Converter={x:Static views:MethodBrushConverter.Instance}}" />
