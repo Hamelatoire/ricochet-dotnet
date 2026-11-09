@@ -4,5 +4,6 @@
 
 pub mod assertions;
 pub mod builtins;
+pub mod dotenv;
 pub mod models;
 pub mod variables;
