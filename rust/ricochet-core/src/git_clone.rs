@@ -150,7 +150,7 @@ fn user_info(rest: &str) -> Option<&str> {
 
 /// Git's own lookup, the same one ADR 0011's status reader uses (GitStatusReader.FindGit). It skips PATH entries
 /// inside the workspace so a repository can't supply its own git.
-fn find_git(folder: &Path) -> Option<PathBuf> {
+pub(crate) fn find_git(folder: &Path) -> Option<PathBuf> {
     let names: &[&str] = if cfg!(windows) { &["git.exe"] } else { &["git"] };
     let workspace = with_separator(&absolute(folder));
 
