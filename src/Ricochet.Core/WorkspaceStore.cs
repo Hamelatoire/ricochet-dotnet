@@ -15,6 +15,7 @@ namespace Ricochet.Core;
 [JsonSerializable(typeof(BulkProgress))]
 [JsonSerializable(typeof(PersonalSettings))]
 [JsonSerializable(typeof(WindowPlacement))]
+[JsonSerializable(typeof(Dictionary<string, double>))]
 [JsonSerializable(typeof(WorkspaceMarkerFile))]
 [JsonSerializable(typeof(CollectionFile))]
 [JsonSerializable(typeof(FolderFile))]
@@ -44,6 +45,8 @@ public sealed record PersonalState
     /// <summary>Where the main window was when the app last closed. Null means the default size and position.</summary>
     public WindowPlacement? Window { get; set; }
 
+    /// <summary>The key column's share for each key-value table kind, such as "headers" (ADR 0074). Null when nothing was dragged.</summary>
+    public Dictionary<string, double>? KeyValueSplits { get; set; }
     /// <summary>Where the panels were dragged to (ADR 0043). Null means the defaults.</summary>
     public PanelLayout? Panels { get; set; }
 
@@ -209,6 +212,30 @@ public sealed class WorkspaceStore(string personalDirectory, string? oldAppCopy 
     {
         lock (_gate)
             SaveState(_state with { Window = placement });
+    }
+
+    /// <summary>
+    /// The key column's share for a key-value table kind, as last dragged on this machine (ADR 0074). Null when none was saved,
+    /// or when the saved value is not one a table could have, so the table uses the default split.
+    /// </summary>
+    public double? KeyValueSplit(string kind)
+    {
+        lock (_gate)
+            return _state.KeyValueSplits is { } splits && splits.TryGetValue(kind, out var share) && KeyValueColumns.IsSaveable(share)
+                ? share
+                : null;
+    }
+
+    public void SaveKeyValueSplit(string kind, double share)
+    {
+        if (!KeyValueColumns.IsSaveable(share))
+            return;
+
+        lock (_gate)
+        {
+            var splits = new Dictionary<string, double>(_state.KeyValueSplits ?? [], StringComparer.Ordinal) { [kind] = share };
+            SaveState(_state with { KeyValueSplits = splits });
+        }
     }
 
     /// <summary>

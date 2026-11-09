@@ -65,6 +65,8 @@ public sealed partial class MainViewModel : ObservableObject
         Collections.CollectionChanged += (_, _) => ApplyTagFilter();
         History =new ObservableCollection<HistoryEntry>(workspace.History.Select(WorkspaceSecrets.SanitizeHistory));
         Globals.Load(workspace.Globals);
+        Headers.KeyShare = store.KeyValueSplit("headers") ?? KeyValueColumns.DefaultKeyShare;
+        Headers.RememberKeyShare = share => store.SaveKeyValueSplit("headers", share);
         InitializeTabs();
         Headers.Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeadersTabTitle));
         Assertions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(TestsTabTitle));

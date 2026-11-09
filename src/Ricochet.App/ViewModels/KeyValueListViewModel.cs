@@ -37,6 +37,14 @@ public sealed partial class KeyValueListViewModel(
 {
     public ObservableCollection<KeyValueRowViewModel> Items { get; } = [];
 
+    /// <summary>The key column's share of the key and value columns (ADR 0074). The view applies it to every row.</summary>
+    [ObservableProperty] private double _keyShare = KeyValueColumns.DefaultKeyShare;
+
+    /// <summary>Saves a dragged split when the drag ends, so the width is remembered for this table kind.</summary>
+    public Action<double>? RememberKeyShare { get; set; }
+
+    public void EndResize() => RememberKeyShare?.Invoke(KeyShare);
+
     [RelayCommand]
     private void Add() => Items.Add(NewRow());
 
