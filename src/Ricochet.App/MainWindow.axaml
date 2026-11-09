@@ -452,6 +452,21 @@
               </StackPanel>
 
               <StackPanel Spacing="12">
+                <TextBlock Text="Crash log" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="260,*">
+                  <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Text="Crash log folder" />
+                    <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="After a crash, the app writes a log here. It stays on this machine and is never sent anywhere. Attach it to a bug report yourself if you choose. Exception messages and request data are left out; file paths may include your user name." />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top">
+                    <TextBlock x:Name="CrashLogPathText" FontSize="12" TextWrapping="Wrap" />
+                    <Button HorizontalAlignment="Left" Content="Open crash log folder" Click="OpenCrashLogFolder_Click"
+                            AutomationProperties.Name="Open crash log folder" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+
+              <StackPanel Spacing="12">
                 <TextBlock Text="Network" FontWeight="SemiBold" />
                 <Grid ColumnDefinitions="260,*">
                   <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
