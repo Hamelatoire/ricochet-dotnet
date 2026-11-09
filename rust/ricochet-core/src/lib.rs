@@ -31,3 +31,4 @@ pub mod placeholder_chips;
 pub mod git_status;
 pub mod crash_log;
 pub mod environment_transfer;
+pub mod git_clone;
