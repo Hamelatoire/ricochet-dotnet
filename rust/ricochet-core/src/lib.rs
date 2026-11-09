@@ -17,3 +17,4 @@ pub mod duplicate;
 pub mod name_filter;
 pub mod postman;
 pub mod insomnia;
+pub mod store;
