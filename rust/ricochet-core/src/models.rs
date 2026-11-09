@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::assertions::{RequestAssertion, RequestCapture};
 
 /// Max entries kept in a Workspace's history.
 pub const MAX_HISTORY: usize = 200;
@@ -124,12 +124,12 @@ pub struct ApiRequest {
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<RequestAuth>,
-    /// Assertions are ported with the runner; kept as raw JSON until then.
+    /// Checks on the response (ADR 0006). None when there are none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub assertions: Option<Vec<Value>>,
-    /// Captures are ported with the runner; kept as raw JSON until then.
+    pub assertions: Option<Vec<RequestAssertion>>,
+    /// Values saved from the response for later Requests (ADR 0006). None when there are none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub captures: Option<Vec<Value>>,
+    pub captures: Option<Vec<RequestCapture>>,
     /// Set on Requests made from an OpenAPI description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spec_key: Option<String>,
