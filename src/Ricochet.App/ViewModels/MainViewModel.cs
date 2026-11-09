@@ -731,7 +731,9 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CloseTopPanel()
     {
-        if (HasPendingCopy)
+        if (IsShortcutSheetOpen)
+            CloseShortcutSheet();
+        else if (HasPendingCopy)
             CancelCopy();
         else if (HasImportReport)
             CloseImportReport();
