@@ -19,3 +19,4 @@ pub mod postman;
 pub mod insomnia;
 pub mod store;
 pub mod openapi;
+pub mod response_status;
