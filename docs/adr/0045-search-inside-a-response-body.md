@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Search inside a response body
