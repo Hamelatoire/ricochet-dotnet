@@ -2,6 +2,7 @@
 //! without a window. Secret values are never edited here: a Secret header's value is left alone (ADR 0092 is not
 //! built, so nothing in this app may put a Secret into a Workspace file).
 
+use ricochet_core::assertions::{RequestAssertion, ops, sources};
 use ricochet_core::models::{ApiRequest, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
 
 /// The methods the method button steps through, in order.
@@ -23,7 +24,27 @@ pub enum Field {
     AuthUsername,
     /// The name of the parameter that an API key goes in. Not a Secret.
     AuthKeyName,
+    /// The path a check reads from, such as a header name or a JSON path.
+    CheckPath(usize),
+    /// The text a check compares with.
+    CheckExpected(usize),
 }
+
+/// The sources a check reads from, in the order its button steps through them.
+pub const CHECK_SOURCES: [&str; 5] = [sources::STATUS, sources::TIME, sources::HEADER, sources::BODY, sources::JSON];
+
+/// The comparisons a check makes, in the order its button steps through them.
+pub const CHECK_OPS: [&str; 9] = [
+    ops::EQUAL,
+    ops::NOT_EQUAL,
+    ops::CONTAINS,
+    ops::NOT_CONTAINS,
+    ops::EXISTS,
+    ops::NOT_EXISTS,
+    ops::LESS_THAN,
+    ops::GREATER_THAN,
+    ops::MATCHES,
+];
 
 /// The auth kinds the window offers, in the order the kind button steps through them. The signing kinds are not
 /// offered, because they need Secrets.
@@ -61,6 +82,14 @@ pub fn set_field(request: &mut ApiRequest, field: Field, text: &str) -> bool {
         },
         Field::AuthUsername => &mut request.auth.get_or_insert_with(RequestAuth::default).username,
         Field::AuthKeyName => &mut request.auth.get_or_insert_with(RequestAuth::default).key_name,
+        Field::CheckPath(index) => match request.assertions.as_mut().and_then(|checks| checks.get_mut(index)) {
+            Some(check) => &mut check.path,
+            None => return false,
+        },
+        Field::CheckExpected(index) => match request.assertions.as_mut().and_then(|checks| checks.get_mut(index)) {
+            Some(check) => &mut check.expected,
+            None => return false,
+        },
     };
     if target == text {
         return false;
@@ -113,4 +142,63 @@ pub fn cycle_auth_kind(request: &mut ApiRequest) {
 pub fn toggle_key_in_query(request: &mut ApiRequest) {
     let auth = request.auth.get_or_insert_with(RequestAuth::default);
     auth.key_in_query = !auth.key_in_query;
+}
+
+/// Moves a check's source to the next one in [`CHECK_SOURCES`]. Returns false when there is no check at that index.
+pub fn cycle_check_source(request: &mut ApiRequest, index: usize) -> bool {
+    cycle_in(request, index, &CHECK_SOURCES, |check| &mut check.source)
+}
+
+/// Moves a check's comparison to the next one in [`CHECK_OPS`]. Returns false when there is no check at that index.
+pub fn cycle_check_op(request: &mut ApiRequest, index: usize) -> bool {
+    cycle_in(request, index, &CHECK_OPS, |check| &mut check.op)
+}
+
+fn cycle_in(
+    request: &mut ApiRequest,
+    index: usize,
+    choices: &[&str],
+    field: impl FnOnce(&mut RequestAssertion) -> &mut String,
+) -> bool {
+    let Some(check) = request.assertions.as_mut().and_then(|checks| checks.get_mut(index)) else {
+        return false;
+    };
+    let value = field(check);
+    let position = choices.iter().position(|choice| *choice == value.as_str());
+    *value = choices[position.map_or(0, |position| (position + 1) % choices.len())].to_string();
+    true
+}
+
+/// Turns a check on or off. Returns false when there is no check at that index.
+pub fn toggle_check(request: &mut ApiRequest, index: usize) -> bool {
+    match request.assertions.as_mut().and_then(|checks| checks.get_mut(index)) {
+        Some(check) => {
+            check.enabled = !check.enabled;
+            true
+        }
+        None => false,
+    }
+}
+
+/// Adds a check that compares the status with nothing yet, and returns its index.
+pub fn add_check(request: &mut ApiRequest) -> usize {
+    let checks = request.assertions.get_or_insert_with(Vec::new);
+    checks.push(RequestAssertion::default());
+    checks.len() - 1
+}
+
+/// Removes a check. The list goes back to none when it is empty, so the Request's file adds nothing.
+/// Returns false when there is no check at that index.
+pub fn remove_check(request: &mut ApiRequest, index: usize) -> bool {
+    let Some(checks) = request.assertions.as_mut() else {
+        return false;
+    };
+    if index >= checks.len() {
+        return false;
+    }
+    checks.remove(index);
+    if checks.is_empty() {
+        request.assertions = None;
+    }
+    true
 }

@@ -154,6 +154,8 @@ struct RequestInputs {
     auth_key_name: Entity<TextInput>,
     /// One (name, value) pair per header, in the Request's order.
     headers: Vec<(Entity<TextInput>, Entity<TextInput>)>,
+    /// One (path, expected) pair per check, in the Request's order.
+    checks: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -249,6 +251,19 @@ impl Shell {
             .unwrap_or_default();
         let auth_username = Self::make_input(Field::AuthUsername, auth_username_text, "Username", &mut subscriptions, cx);
         let auth_key_name = Self::make_input(Field::AuthKeyName, auth_key_name_text, "Parameter name", &mut subscriptions, cx);
+        let checks = request
+            .assertions
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .enumerate()
+            .map(|(index, check)| {
+                (
+                    Self::make_input(Field::CheckPath(index), check.path.clone(), "Path", &mut subscriptions, cx),
+                    Self::make_input(Field::CheckExpected(index), check.expected.clone(), "Expected", &mut subscriptions, cx),
+                )
+            })
+            .collect();
         let body = cx.new(|cx| TextArea::new(request.body.clone(), "Request body", cx));
         subscriptions.push(cx.subscribe(&body, |this: &mut Shell, input, _: &Changed, cx| {
             let text = input.read(cx).text().to_string();
@@ -265,6 +280,7 @@ impl Shell {
             auth_username,
             auth_key_name,
             headers,
+            checks,
             _subscriptions: subscriptions,
         });
     }
@@ -906,6 +922,123 @@ impl Shell {
         section
     }
 
+    /// A small button that steps a value or flips a flag, named by its id.
+    fn small_button(id: SharedString, label: String) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(BORDER))
+            .text_xs()
+            .text_color(rgb(MUTED))
+            .cursor_pointer()
+            .hover(|style| style.text_color(rgb(TEXT)).bg(rgb(ROW_HOVER)))
+            .child(label)
+    }
+
+    /// The checks as editable rows: on/off, where the value comes from, the path, the comparison, what it is
+    /// compared with, and a remove mark, then a row to add one.
+    fn checks_editor(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
+        let mut section = div().flex().flex_col().gap_1();
+        let checks = request.assertions.as_deref().unwrap_or(&[]);
+        let inputs = self.inputs.as_ref().map(|inputs| inputs.checks.as_slice()).unwrap_or(&[]);
+        if checks.is_empty() {
+            section = section.child(muted_note("No checks. A check compares part of the response with a value."));
+        }
+        for (index, check) in checks.iter().enumerate() {
+            let inputs = inputs.get(index);
+            let path_cell = match inputs {
+                Some((path, _)) if matches!(check.source.as_str(), "header" | "json") => {
+                    Self::input_cell(path).w(px(180.0)).flex_none()
+                }
+                _ => div().w(px(180.0)).flex_none().text_xs().text_color(rgb(FAINT)).child("No path for this source"),
+            };
+            let expected_cell = match inputs {
+                Some((_, expected)) => Self::input_cell(expected).flex_1(),
+                None => div().flex_1(),
+            };
+            section = section.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("check-toggle-{index}")))
+                            .w(px(18.0))
+                            .h(px(18.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(if check.enabled { ACCENT } else { BORDER }))
+                            .text_xs()
+                            .text_color(rgb(ACCENT))
+                            .cursor_pointer()
+                            .child(if check.enabled { "✓" } else { "" })
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::toggle_check(request, index));
+                            })),
+                    )
+                    .child(
+                        Self::small_button(SharedString::from(format!("check-source-{index}")), check.source.clone())
+                            .flex_none()
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::cycle_check_source(request, index));
+                            })),
+                    )
+                    .child(path_cell)
+                    .child(
+                        Self::small_button(SharedString::from(format!("check-op-{index}")), check.op.clone())
+                            .flex_none()
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::cycle_check_op(request, index));
+                            })),
+                    )
+                    .child(expected_cell)
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("check-remove-{index}")))
+                            .px_2()
+                            .flex_none()
+                            .text_color(rgb(FAINT))
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(rgb(ERROR)))
+                            .child("×")
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::remove_check(request, index));
+                                this.inputs = None;
+                            })),
+                    ),
+            );
+        }
+        section.child(
+            div().flex().flex_row().child(
+                div()
+                    .id("check-add")
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .hover(|style| style.text_color(rgb(TEXT)).bg(rgb(ROW_HOVER)))
+                    .child("+ Add check")
+                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.change_request(cx, |request| {
+                            edit::add_check(request);
+                            true
+                        });
+                        this.inputs = None;
+                    })),
+            ),
+        )
+    }
+
     fn request_section(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
         let section = div().flex().flex_col().gap_1();
         match self.request_tab {
@@ -936,16 +1069,7 @@ impl Shell {
                 ),
                 None => section.child(muted_note("Pick a request in the sidebar to edit its body.")),
             },
-            RequestTab::Checks => {
-                let checks = request.assertions.as_deref().unwrap_or(&[]);
-                if checks.is_empty() {
-                    return section.child(muted_note("No checks."));
-                }
-                section.children(checks.iter().map(|check| {
-                    let subject = if check.path.is_empty() { check.source.clone() } else { format!("{} {}", check.source, check.path) };
-                    pair_row(subject, format!("{} {}", check.op, check.expected), !check.enabled)
-                }))
-            }
+            RequestTab::Checks => self.checks_editor(request, cx),
         }
     }
 

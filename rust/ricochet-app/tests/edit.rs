@@ -3,7 +3,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pretty_assertions::assert_eq;
-use ricochet_app::edit::{Field, add_header, cycle_auth_kind, cycle_method, find_request_mut, next_method, remove_header, set_field, toggle_header, toggle_key_in_query};
+use ricochet_app::edit::{Field, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, find_request_mut, next_method, remove_check, remove_header, set_field, toggle_check, toggle_header, toggle_key_in_query};
 use ricochet_app::shell::ShellModel;
 use ricochet_app::state::AppState;
 use ricochet_core::models::{ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
@@ -193,4 +193,40 @@ fn the_query_placement_of_an_api_key_can_be_toggled() {
     assert!(request.auth.as_ref().unwrap().key_in_query);
     toggle_key_in_query(&mut request);
     assert!(!request.auth.as_ref().unwrap().key_in_query);
+}
+
+#[test]
+fn checks_are_added_with_a_default_and_go_back_to_none_when_the_last_is_removed() {
+    let mut request = request();
+    assert_eq!(add_check(&mut request), 0);
+    assert_eq!(add_check(&mut request), 1);
+    assert!(remove_check(&mut request, 0));
+    assert!(remove_check(&mut request, 0));
+    assert!(request.assertions.is_none(), "an empty list is written as none");
+    assert!(!remove_check(&mut request, 0));
+}
+
+#[test]
+fn a_check_source_and_comparison_step_through_their_lists() {
+    use ricochet_core::assertions::{ops, sources};
+    let mut request = request();
+    add_check(&mut request);
+    assert!(cycle_check_source(&mut request, 0));
+    assert_eq!(request.assertions.as_ref().unwrap()[0].source, sources::TIME);
+    assert!(cycle_check_op(&mut request, 0));
+    assert_eq!(request.assertions.as_ref().unwrap()[0].op, ops::NOT_EQUAL);
+    assert!(!cycle_check_op(&mut request, 4));
+}
+
+#[test]
+fn a_check_path_and_expected_text_are_editable_and_a_check_can_be_turned_off() {
+    let mut request = request();
+    add_check(&mut request);
+    assert!(set_field(&mut request, Field::CheckPath(0), "Content-Type"));
+    assert!(set_field(&mut request, Field::CheckExpected(0), "application/json"));
+    assert!(!set_field(&mut request, Field::CheckExpected(3), "x"));
+    let check = &request.assertions.as_ref().unwrap()[0];
+    assert_eq!((check.path.as_str(), check.expected.as_str()), ("Content-Type", "application/json"));
+    assert!(toggle_check(&mut request, 0));
+    assert!(!request.assertions.as_ref().unwrap()[0].enabled);
 }
