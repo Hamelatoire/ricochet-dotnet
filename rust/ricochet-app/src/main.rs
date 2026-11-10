@@ -1916,6 +1916,9 @@ impl Shell {
         row = row.child(Self::small_button(SharedString::from("tree-import"), "Import".to_string()).on_click(cx.listener(
             |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.import_postman(cx),
         )));
+        row = row.child(Self::small_button(SharedString::from("tree-bulk"), "Bulk run".to_string()).on_click(cx.listener(
+            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.open_bulk(cx),
+        )));
         if let Some((_, input, _)) = self.renaming.as_ref() {
             row = div().flex().flex_col().gap_1().child(row).child(
                 div()
