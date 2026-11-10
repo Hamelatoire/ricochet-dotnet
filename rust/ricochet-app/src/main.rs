@@ -30,6 +30,7 @@ use ricochet_core::models::{ApiRequest, KeyValue, auth_kinds};
 use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
 use ricochet_core::response_compare::{self, DiffKind, ResponseInput};
+use ricochet_core::response_examples;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
@@ -77,6 +78,10 @@ struct SentResponse {
     body: String,
     is_json: bool,
     unresolved: Vec<String>,
+    /// The Request as it was sent, with its Variables and Secrets filled in, and the Variables it was sent with. A saved
+    /// example masks their values.
+    sent: ApiRequest,
+    scope: Vec<KeyValue>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -742,14 +747,15 @@ impl Shell {
             self.previous_responses.insert(id.clone(), snapshot);
         }
         self.responses.insert(id.clone(), ResponseView::Sending);
+        let for_example = (sent.clone(), scope.clone());
         let work = cx.background_executor().spawn(async move {
-            RequestSender::new().send(&sent).map_err(|error| error.message().to_string()).map(|response| {
+            RequestSender::new().send(&sent).map_err(|error| error.message().to_string()).map(move |response| {
                 let formatted = response_format::format(&response);
                 let mut body: String = formatted.text.chars().take(DISPLAY_CHARS).collect();
                 if body.len() < formatted.text.len() {
                     body.push_str("\n… (body cut for display)");
                 }
-                Box::new(SentResponse { response, body, is_json: formatted.is_json, unresolved })
+                Box::new(SentResponse { response, body, is_json: formatted.is_json, unresolved, sent: for_example.0, scope: for_example.1 })
             })
         });
         cx.spawn(async move |this, cx| {
@@ -1090,6 +1096,29 @@ impl Shell {
                 .children(rows)
                 .children(shown.is_empty().then(|| muted_note("Nothing matches."))),
         )
+    }
+
+    /// Saves the latest response of the selected Request as an example in the Request (ADR 0023), with the secrets it
+    /// was sent with masked. The Request is saved with the rest of the Workspace.
+    fn save_example(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.state.selected_item().map(str::to_string) else {
+            return;
+        };
+        let Some(ResponseView::Done(sent)) = self.responses.get(&id) else {
+            return;
+        };
+        let name = find_request(&self.model.workspace, &id).map(|request| request.name.clone()).unwrap_or_default();
+        match response_examples::create(&name, &sent.sent, &sent.scope, &[], &sent.response) {
+            Ok(example) => {
+                if let Some(request) = edit::find_request_mut(&mut self.model.workspace, &id) {
+                    request.examples.get_or_insert_with(Vec::new).push(example);
+                    self.state.mark_unsaved(&id);
+                    self.notice = Some(("Example added to the request. Save to write it to the file.".to_string(), false));
+                }
+            }
+            Err(error) => self.notice = Some((format!("The example was not saved: {error}"), true)),
+        }
+        cx.notify();
     }
 
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
@@ -2424,6 +2453,9 @@ impl Shell {
                 .child(div().text_xs().text_color(rgb(MUTED)).child(format!("{} ms", response.elapsed.as_millis())))
                 .child(div().text_xs().text_color(rgb(MUTED)).child(format!("{} bytes", response.body.len())))
                 .child(div().flex_1())
+                .child(Self::small_button(SharedString::from("save-example"), "Save example".to_string()).on_click(cx.listener(
+                    |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.save_example(cx),
+                )))
                 .child(self.response_tab_button(ResponseTab::Body, "Body".to_string(), cx))
                 .child(self.response_tab_button(ResponseTab::Headers, format!("Headers {}", response.headers.len()), cx))
                 .child(self.response_tab_button(ResponseTab::Compare, "Compare".to_string(), cx))
