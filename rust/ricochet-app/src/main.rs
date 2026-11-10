@@ -33,6 +33,7 @@ use ricochet_core::response_compare::{self, DiffKind, ResponseInput};
 use ricochet_core::response_examples;
 use ricochet_core::curl;
 use ricochet_core::postman;
+use ricochet_core::collection_runner::{self, CollectionRunner, RunOptions};
 use ricochet_core::insomnia;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
@@ -1066,6 +1067,7 @@ impl Shell {
                 self.tree_target = None;
             }
             PaletteAction::CloseOtherTabs => self.state.close_other_tabs(),
+            PaletteAction::RunCollection => self.run_collection(cx),
         }
         cx.notify();
     }
@@ -1325,6 +1327,46 @@ impl Shell {
                     |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.reload_from_disk(cx),
                 ))),
         )
+    }
+
+    /// Runs the Collection of the sidebar's selection with the collection runner, on a background thread. The summary
+    /// and any cautions are shown in the status bar. Per-Request results are not listed yet.
+    fn run_collection(&mut self, cx: &mut Context<Self>) {
+        let Some(collection_id) = self.override_source() else {
+            self.notice = Some(("Select a request or folder in a collection to run it.".to_string(), true));
+            cx.notify();
+            return;
+        };
+        let Some(name) = self.model.workspace.collections.iter().find(|c| c.id == collection_id).map(|c| c.name.clone()) else {
+            return;
+        };
+        let workspace = self.model.workspace.clone();
+        self.notice = Some((format!("Running {name}…"), false));
+        cx.notify();
+        let work = cx.background_executor().spawn(async move {
+            let sender = RequestSender::new();
+            let options = RunOptions { collection_name: Some(name), ..Default::default() };
+            match CollectionRunner::new(&sender).run(&workspace, &options) {
+                Ok(report) => {
+                    let mut text = collection_runner::summary(&report);
+                    for caution in collection_runner::cautions(&report) {
+                        text.push(' ');
+                        text.push_str(&caution);
+                    }
+                    (text, !report.passed())
+                }
+                Err(error) => (error.message().to_string(), true),
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let (text, is_problem) = work.await;
+            this.update(cx, |shell, cx| {
+                shell.notice = Some((text, is_problem));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.

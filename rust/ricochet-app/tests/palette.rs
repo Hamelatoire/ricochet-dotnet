@@ -22,6 +22,7 @@ fn commands_then_environments_then_requests_are_offered() {
             "Save",
             "Close all tabs",
             "Close other tabs",
+            "Run collection",
             "New request",
             "Use no environment",
             "Use environment: Staging",
