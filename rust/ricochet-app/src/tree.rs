@@ -1,5 +1,7 @@
 //! The sidebar tree as plain rows, built from a Workspace. No window is needed, so tests cover it directly.
 
+use std::collections::BTreeSet;
+
 use ricochet_core::models::{ApiRequest, CollectionItem, Workspace};
 
 /// What a sidebar row stands for.
@@ -27,6 +29,12 @@ pub struct TreeRow {
 ///
 /// Hidden items and everything inside them are left out unless `show_hidden` is set (ADR 0032).
 pub fn build_tree(workspace: &Workspace, show_hidden: bool) -> Vec<TreeRow> {
+    build_tree_folded(workspace, show_hidden, &BTreeSet::new())
+}
+
+/// As [`build_tree`], but leaves out everything inside a Collection or Folder whose id is in `collapsed`.
+/// The folded item itself keeps its row.
+pub fn build_tree_folded(workspace: &Workspace, show_hidden: bool, collapsed: &BTreeSet<String>) -> Vec<TreeRow> {
     let mut rows = Vec::new();
     for collection in &workspace.collections {
         rows.push(TreeRow {
@@ -38,7 +46,9 @@ pub fn build_tree(workspace: &Workspace, show_hidden: bool) -> Vec<TreeRow> {
             hidden: false,
         });
         let hidden_ids = collection.hidden_item_ids.as_deref().unwrap_or(&[]);
-        push_items(&collection.items, 1, hidden_ids, show_hidden, false, &mut rows);
+        if !collapsed.contains(&collection.id) {
+            push_items(&collection.items, 1, hidden_ids, show_hidden, false, collapsed, &mut rows);
+        }
     }
     rows
 }
@@ -49,6 +59,7 @@ fn push_items(
     hidden_ids: &[String],
     show_hidden: bool,
     parent_hidden: bool,
+    collapsed: &BTreeSet<String>,
     rows: &mut Vec<TreeRow>,
 ) {
     for item in items {
@@ -61,7 +72,9 @@ fn push_items(
             None => (RowKind::Folder, None),
         };
         rows.push(TreeRow { id: item.id.clone(), depth, kind, label: item.name.clone(), method, hidden });
-        push_items(&item.children, depth + 1, hidden_ids, show_hidden, hidden, rows);
+        if !collapsed.contains(&item.id) {
+            push_items(&item.children, depth + 1, hidden_ids, show_hidden, hidden, collapsed, rows);
+        }
     }
 }
 

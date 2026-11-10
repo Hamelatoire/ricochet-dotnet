@@ -19,7 +19,7 @@ fn main() -> std::io::Result<()> {
         name: "Orders".into(),
         variables: vec![KeyValue::new("resource", "orders")],
         children: vec![
-            request("List orders", "GET", "{{baseUrl}}/{{resource}}.json", vec![KeyValue::new("Accept", "application/json")], ""),
+            request("List orders", "GET", "{{baseUrl}}/{{resource}}.json?limit=10&sort=newest", vec![KeyValue::new("Accept", "application/json")], ""),
             request(
                 "Create order",
                 "POST",

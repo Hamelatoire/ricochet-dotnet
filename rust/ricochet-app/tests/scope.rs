@@ -74,3 +74,21 @@ fn the_active_environment_overrides_folders_and_dot_env_overrides_all() {
 fn an_unknown_environment_adds_nothing() {
     assert_eq!(sent_url(&workspace(), "outside", Some("gone"), &[]), "https://collection.test/from-global");
 }
+
+#[test]
+fn a_folded_folder_keeps_its_row_and_hides_what_is_inside() {
+    use ricochet_app::tree::{build_tree, build_tree_folded};
+    use std::collections::BTreeSet;
+
+    let workspace = workspace();
+    let all: Vec<String> = build_tree(&workspace, false).into_iter().map(|row| row.id).collect();
+    assert_eq!(all, vec!["shop", "folder", "inside", "outside"]);
+
+    let folded = BTreeSet::from(["folder".to_string()]);
+    let rows: Vec<String> = build_tree_folded(&workspace, false, &folded).into_iter().map(|row| row.id).collect();
+    assert_eq!(rows, vec!["shop", "folder", "outside"]);
+
+    let folded = BTreeSet::from(["shop".to_string()]);
+    let rows: Vec<String> = build_tree_folded(&workspace, false, &folded).into_iter().map(|row| row.id).collect();
+    assert_eq!(rows, vec!["shop"]);
+}

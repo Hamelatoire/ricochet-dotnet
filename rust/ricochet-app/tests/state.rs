@@ -129,3 +129,43 @@ fn picking_a_request_selects_it_and_opens_or_activates_its_tab() {
     assert_eq!(state.active_tab(), Some("ping"));
     assert_eq!(state.open_tabs().len(), 2);
 }
+
+#[test]
+fn folding_an_item_is_a_toggle() {
+    let mut state = AppState::default();
+    assert!(!state.is_collapsed("orders"));
+    state.toggle_collapsed("orders");
+    assert!(state.is_collapsed("orders"));
+    state.toggle_collapsed("orders");
+    assert!(!state.is_collapsed("orders"));
+}
+
+#[test]
+fn cycling_goes_through_each_environment_and_back_to_none() {
+    let workspace = Workspace {
+        environments: vec![
+            ApiEnvironment { id: "staging".into(), name: "Staging".into(), ..Default::default() },
+            ApiEnvironment { id: "prod".into(), name: "Production".into(), ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    let mut state = AppState::for_workspace(&workspace);
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        state.cycle_environment(&workspace);
+        seen.push(state.active_environment_id().map(str::to_string));
+    }
+    assert_eq!(seen, vec![Some("staging".to_string()), Some("prod".to_string()), None, Some("staging".to_string())]);
+}
+
+#[test]
+fn cycling_from_an_environment_that_is_gone_starts_over() {
+    let workspace = Workspace {
+        environments: vec![ApiEnvironment { id: "staging".into(), name: "Staging".into(), ..Default::default() }],
+        active_environment_id: Some("deleted".into()),
+        ..Default::default()
+    };
+    let mut state = AppState::for_workspace(&workspace);
+    state.cycle_environment(&workspace);
+    assert_eq!(state.active_environment_id(), Some("staging"));
+}

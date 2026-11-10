@@ -4,6 +4,8 @@
 //! A tab is only a pointer to a Request in the Collections. It holds an id, never a copy of the Request, so the Workspace
 //! stays the one place Requests live. A Request can be open in one tab at most.
 
+use std::collections::BTreeSet;
+
 use ricochet_core::models::Workspace;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -16,6 +18,8 @@ pub struct AppState {
     selected_item: Option<String>,
     /// The Environment in use, if any. Set from the Workspace when the state is made.
     active_environment_id: Option<String>,
+    /// Ids of the Collections and Folders folded shut in the sidebar. Everything else is open.
+    collapsed: BTreeSet<String>,
 }
 
 impl AppState {
@@ -39,6 +43,33 @@ impl AppState {
 
     pub fn active_environment_id(&self) -> Option<&str> {
         self.active_environment_id.as_deref()
+    }
+
+    pub fn is_collapsed(&self, item_id: &str) -> bool {
+        self.collapsed.contains(item_id)
+    }
+
+    pub fn collapsed(&self) -> &BTreeSet<String> {
+        &self.collapsed
+    }
+
+    /// Folds a Collection or Folder shut in the sidebar, or opens it again.
+    pub fn toggle_collapsed(&mut self, item_id: &str) {
+        if !self.collapsed.remove(item_id) {
+            self.collapsed.insert(item_id.to_string());
+        }
+    }
+
+    /// Moves to the next Environment in the Workspace's order: none, then each in turn, then none again.
+    /// An active Environment that no longer exists counts as none. This changes the window only, not any file.
+    pub fn cycle_environment(&mut self, workspace: &Workspace) {
+        let ids: Vec<&str> = workspace.environments.iter().map(|environment| environment.id.as_str()).collect();
+        let current = self.active_environment_id.as_deref().and_then(|id| ids.iter().position(|other| *other == id));
+        let next = match current {
+            None => ids.first(),
+            Some(index) => ids.get(index + 1),
+        };
+        self.active_environment_id = next.map(|id| id.to_string());
     }
 
     pub fn is_open(&self, request_id: &str) -> bool {
