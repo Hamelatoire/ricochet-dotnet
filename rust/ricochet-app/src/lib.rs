@@ -1,6 +1,7 @@
 //! The GPUI shell for Ricochet (ADR 0091). This library holds the view-model logic, which tests reach without a
 //! window. The window itself lives in `main.rs`.
 
+pub mod bulk_page;
 pub mod edit;
 pub mod exports;
 pub mod runner_results;
