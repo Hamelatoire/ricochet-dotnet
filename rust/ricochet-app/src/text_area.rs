@@ -9,7 +9,7 @@ use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style, TextRun,
-    UTF16Selection, Window, actions, div, fill, point, prelude::*, px, relative, rgb, rgba, size,
+    ScrollHandle, UTF16Selection, Window, actions, div, fill, point, prelude::*, px, relative, rgb, rgba, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -59,6 +59,8 @@ pub struct TextArea {
     last_bounds: Option<Bounds<Pixels>>,
     last_line_height: f32,
     is_selecting: bool,
+    /// The box that scrolls this field, when there is one. The caret is kept inside it.
+    scroll: Option<ScrollHandle>,
 }
 
 impl EventEmitter<Changed> for TextArea {}
@@ -76,7 +78,14 @@ impl TextArea {
             last_bounds: None,
             last_line_height: 1.0,
             is_selecting: false,
+            scroll: None,
         }
+    }
+
+    /// Keeps the caret inside the box with this scroll handle, scrolling it when the caret moves out of view.
+    pub fn with_scroll(mut self, scroll: ScrollHandle) -> Self {
+        self.scroll = Some(scroll);
+        self
     }
 
     pub fn text(&self) -> &str {
@@ -313,6 +322,8 @@ struct PrepaintState {
     lines: Vec<ShapedLine>,
     selections: Vec<PaintQuad>,
     caret: Option<PaintQuad>,
+    /// Where the caret is drawn, in window coordinates, when it is drawn.
+    caret_bounds: Option<Bounds<Pixels>>,
     line_height: Pixels,
 }
 
@@ -426,7 +437,8 @@ impl Element for TextAreaElement {
             }
         }
 
-        PrepaintState { lines: shaped, selections, caret, line_height }
+        let caret_bounds = caret.as_ref().map(|quad| quad.bounds);
+        PrepaintState { lines: shaped, selections, caret, caret_bounds, line_height }
     }
 
     fn paint(
@@ -454,6 +466,9 @@ impl Element for TextAreaElement {
         }
         if is_focused && let Some(caret) = prepaint.caret.take() {
             window.paint_quad(caret);
+        }
+        if let (Some(scroll), Some(caret)) = (self.area.read(cx).scroll.clone(), prepaint.caret_bounds) {
+            keep_visible(&scroll, caret, window);
         }
         let line_height = f32::from(prepaint.line_height);
         self.area.update(cx, |area, _cx| {
@@ -499,4 +514,22 @@ impl Focusable for TextArea {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
+}
+
+/// Scrolls the box so the caret is fully inside it. Does nothing before the box has been laid out.
+fn keep_visible(scroll: &ScrollHandle, caret: Bounds<Pixels>, window: &mut Window) {
+    let view = scroll.bounds();
+    if view.size.height <= px(0.) {
+        return;
+    }
+    let shift = if caret.bottom() > view.bottom() {
+        view.bottom() - caret.bottom()
+    } else if caret.top() < view.top() {
+        view.top() - caret.top()
+    } else {
+        return;
+    };
+    let offset = scroll.offset();
+    scroll.set_offset(point(offset.x, offset.y + shift));
+    window.refresh();
 }

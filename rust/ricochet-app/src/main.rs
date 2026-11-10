@@ -189,6 +189,8 @@ struct Shell {
     _search_subscription: Subscription,
     /// Whether the Environment menu under the top bar is open.
     environment_menu_open: bool,
+    /// Scrolls the body editor, which keeps its caret in view.
+    body_scroll: gpui::ScrollHandle,
     focus_handle: FocusHandle,
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
@@ -237,6 +239,7 @@ impl Shell {
             search_text: String::new(),
             _search_subscription: search_subscription,
             environment_menu_open: false,
+            body_scroll: gpui::ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
@@ -332,7 +335,8 @@ impl Shell {
         let auth_token = self.make_secret_input(auth_key(&request.id, "token"), "Token", &mut subscriptions, cx);
         let auth_password = self.make_secret_input(auth_key(&request.id, "password"), "Password", &mut subscriptions, cx);
         let auth_key_value = self.make_secret_input(auth_key(&request.id, "keyValue"), "Value", &mut subscriptions, cx);
-        let body = cx.new(|cx| TextArea::new(request.body.clone(), "Request body", cx));
+        let scroll = self.body_scroll.clone();
+        let body = cx.new(|cx| TextArea::new(request.body.clone(), "Request body", cx).with_scroll(scroll));
         subscriptions.push(cx.subscribe(&body, |this: &mut Shell, input, _: &Changed, cx| {
             let text = input.read(cx).text().to_string();
             this.change_request(cx, |request| {
@@ -1261,6 +1265,7 @@ impl Shell {
                 Some(inputs) => section.child(
                     div()
                         .id("body-editor")
+                        .track_scroll(&self.body_scroll)
                         .w_full()
                         .min_h(px(120.0))
                         .max_h(px(260.0))
