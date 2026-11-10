@@ -85,6 +85,14 @@ jobs:
       - name: Check the CLI starts
         run: out/cli/ricochet --help
 
+      # The Rust beta ships beside the C# app for now. It is built only on Windows, where the installer picks it up.
+      - name: Build the Rust beta
+        if: runner.os == 'Windows'
+        run: |
+          cargo build --release --manifest-path rust/ricochet-app/Cargo.toml
+          mkdir -p out/rust
+          cp rust/ricochet-app/target/release/ricochet-app.exe out/rust/Ricochet-Rust-Beta.exe
+
       # The app and the CLI are packaged apart: their names differ only by case,
       # so they would collide in one folder on Windows and macOS.
       - name: Package
@@ -103,6 +111,14 @@ jobs:
             fi
             cd "$GITHUB_WORKSPACE"
           done
+
+      - name: Package the Rust beta
+        if: runner.os == 'Windows'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cd out/rust
+          7z a "$GITHUB_WORKSPACE/dist/ricochet-rust-beta-$VERSION-win-x64.zip" ./*
 
       # Built from the same published files as the zips, so the installer and the zips match.
       - name: Build the Windows installer
