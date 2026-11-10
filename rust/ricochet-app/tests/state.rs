@@ -169,3 +169,16 @@ fn cycling_from_an_environment_that_is_gone_starts_over() {
     state.cycle_environment(&workspace);
     assert_eq!(state.active_environment_id(), Some("staging"));
 }
+
+#[test]
+fn the_environment_can_be_chosen_directly_and_cleared() {
+    let workspace = Workspace {
+        environments: vec![ApiEnvironment { id: "staging".into(), name: "Staging".into(), ..Default::default() }],
+        ..Default::default()
+    };
+    let mut state = AppState::for_workspace(&workspace);
+    state.set_active_environment(Some("staging"));
+    assert_eq!(state.active_environment_id(), Some("staging"));
+    state.set_active_environment(None);
+    assert_eq!(state.active_environment_id(), None);
+}

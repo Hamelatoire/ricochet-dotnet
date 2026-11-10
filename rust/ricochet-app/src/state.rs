@@ -84,6 +84,11 @@ impl AppState {
         }
     }
 
+    /// Makes the Environment with this id the active one, or none. Changes the window only, not any file.
+    pub fn set_active_environment(&mut self, environment_id: Option<&str>) {
+        self.active_environment_id = environment_id.map(str::to_string);
+    }
+
     /// Moves to the next Environment in the Workspace's order: none, then each in turn, then none again.
     /// An active Environment that no longer exists counts as none. This changes the window only, not any file.
     pub fn cycle_environment(&mut self, workspace: &Workspace) {

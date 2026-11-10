@@ -181,6 +181,8 @@ struct Shell {
     search: Entity<TextInput>,
     search_text: String,
     _search_subscription: Subscription,
+    /// Whether the Environment menu under the top bar is open.
+    environment_menu_open: bool,
     focus_handle: FocusHandle,
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
@@ -210,6 +212,7 @@ impl Shell {
             search,
             search_text: String::new(),
             _search_subscription: search_subscription,
+            environment_menu_open: false,
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
@@ -552,8 +555,9 @@ impl Shell {
                     .when(has_environments, |style| style.cursor_pointer().hover(|style| style.bg(rgb(ROW_HOVER))))
                     .child(self.environment_name())
                     .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                        let workspace = &this.model.workspace;
-                        this.state.cycle_environment(workspace);
+                        if !this.model.workspace.environments.is_empty() {
+                            this.environment_menu_open = !this.environment_menu_open;
+                        }
                         cx.notify();
                     })),
             )
@@ -1368,6 +1372,58 @@ impl Shell {
         })
     }
 
+    /// The menu under the top bar: no environment, then each Environment, with the active one marked.
+    fn environment_menu(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
+        if !self.environment_menu_open {
+            return None;
+        }
+        let active = self.state.active_environment_id().map(str::to_string);
+        let mut options = vec![(None, "No environment".to_string())];
+        for environment in &self.model.workspace.environments {
+            options.push((Some(environment.id.clone()), environment.name.trim().to_string()));
+        }
+        let rows = options.into_iter().enumerate().map(|(index, (id, label))| {
+            let is_active = id == active;
+            let chosen = id.clone();
+            div()
+                .id(SharedString::from(format!("env-option-{index}")))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_color(rgb(if is_active { SUCCESS } else { TEXT }))
+                .hover(|style| style.bg(rgb(ROW_HOVER)))
+                .child(div().w(px(12.0)).text_color(rgb(SUCCESS)).child(if is_active { "✓" } else { "" }))
+                .child(label)
+                .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    this.state.set_active_environment(chosen.as_deref());
+                    this.environment_menu_open = false;
+                    cx.notify();
+                }))
+        });
+        Some(
+            div()
+                .id("environment-menu")
+                .absolute()
+                .top(px(44.0))
+                .right(px(12.0))
+                .w(px(240.0))
+                .flex()
+                .flex_col()
+                .p_1()
+                .gap_px()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .bg(rgb(CHROME_BG))
+                .children(rows),
+        )
+    }
+
     fn status_bar(&self) -> impl IntoElement + use<> {
         let status = &self.model.status;
         let branch = status.branch.clone().unwrap_or_else(|| "no git branch".to_string());
@@ -1454,6 +1510,7 @@ impl Render for Shell {
                 ),
             )
             .child(self.status_bar())
+            .children(self.environment_menu(cx))
     }
 }
 
