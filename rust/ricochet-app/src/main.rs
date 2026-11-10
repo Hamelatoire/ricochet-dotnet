@@ -1123,6 +1123,35 @@ impl Shell {
         cx.notify();
     }
 
+    /// Writes the selected response's body to a file the user picks, as the bytes arrived. The save dialog is the
+    /// platform's own, so the file goes wherever the user chooses.
+    fn save_response_file(&mut self, cx: &mut Context<Self>) {
+        let (bytes, suggested) = match self.selected_response() {
+            Some(ResponseView::Done(sent)) => {
+                let json = sent.response.media_type.as_deref().is_some_and(|media| media.contains("json"));
+                (sent.response.body.clone(), if json { "response.json" } else { "response.txt" })
+            }
+            _ => return,
+        };
+        let directory = std::env::current_dir().unwrap_or_default();
+        let chosen = cx.prompt_for_new_path(&directory, Some(suggested));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else {
+                return;
+            };
+            let outcome = std::fs::write(&path, &bytes);
+            this.update(cx, |shell, cx| {
+                shell.notice = Some(match outcome {
+                    Ok(()) => (format!("Saved the response to {}", path.display()), false),
+                    Err(error) => (format!("The response could not be saved: {error}"), true),
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
     fn open_prompt(&mut self, cx: &mut Context<Self>, id: &str, prompts: &[variables::PromptVariable]) {
         let rows = prompts
@@ -2458,6 +2487,9 @@ impl Shell {
                 .child(div().flex_1())
                 .child(Self::small_button(SharedString::from("save-example"), "Save example".to_string()).on_click(cx.listener(
                     |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.save_example(cx),
+                )))
+                .child(Self::small_button(SharedString::from("save-file"), "Save file".to_string()).on_click(cx.listener(
+                    |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.save_response_file(cx),
                 )))
                 .child(self.response_tab_button(ResponseTab::Body, "Body".to_string(), cx))
                 .child(self.response_tab_button(ResponseTab::Headers, format!("Headers {}", response.headers.len()), cx))
