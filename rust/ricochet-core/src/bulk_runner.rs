@@ -3,8 +3,9 @@
 //! results arrive in completion order, one at a time. Nothing here stores progress: the caller records each
 //! result, and uses `resume_index` to continue a run.
 //!
-//! Not ported yet: resolving Secret references from external managers (ADR 0025), and the progress numbers
-//! (`BulkRunProgress.cs`). Stopping is a shared flag, not a cancellation token. The C# app stays the reference.
+//! The progress numbers (`BulkRunProgress.cs`) are in `bulk_run_progress`. Not ported yet: resolving Secret
+//! references from external managers (ADR 0025). Stopping is a shared flag, not a cancellation token. The C# app
+//! stays the reference.
 
 use std::error::Error;
 use std::fmt;

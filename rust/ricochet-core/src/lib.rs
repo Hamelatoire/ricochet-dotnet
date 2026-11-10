@@ -44,5 +44,6 @@ pub mod response_format;
 pub mod response_examples;
 pub mod collection_runner;
 pub mod bulk_runner;
+pub mod bulk_run_progress;
 pub mod personal_state;
 pub mod git_branch;
