@@ -18,7 +18,7 @@ use ricochet_app::scope::variables_in_scope;
 use ricochet_app::shell::{ShellModel, folder_from};
 use ricochet_app::state::AppState;
 use ricochet_app::status::NO_ENVIRONMENT;
-use ricochet_app::tree::{RowKind, TreeRow, build_tree_folded, find_request};
+use ricochet_app::tree::{RowKind, TreeRow, build_tree_folded, filter_rows, find_request};
 use ricochet_core::models::{ApiRequest, KeyValue, auth_kinds};
 use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
@@ -177,6 +177,10 @@ struct Shell {
     notice: Option<(String, bool)>,
     /// The Secrets vault for this system, the Secrets read from it, and why it could not be used, if it could not.
     vault: VaultState,
+    /// The sidebar's search field, and the text it holds. The tree shows only matches while the text is not empty.
+    search: Entity<TextInput>,
+    search_text: String,
+    _search_subscription: Subscription,
     focus_handle: FocusHandle,
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
@@ -192,12 +196,20 @@ impl Shell {
     fn new(model: ShellModel, store: Option<WorkspaceFolder>, vault: VaultState, cx: &mut Context<Self>) -> Self {
         let state = AppState::for_workspace(&model.workspace);
         let dot_env = read_dot_env(&model);
+        let search = cx.new(|cx| TextInput::new("", "Search requests", cx));
+        let search_subscription = cx.subscribe(&search, |this: &mut Shell, input, _: &Changed, cx| {
+            this.search_text = input.read(cx).text().to_string();
+            cx.notify();
+        });
         Self {
             model,
             store,
             inputs: None,
             notice: None,
             vault,
+            search,
+            search_text: String::new(),
+            _search_subscription: search_subscription,
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
@@ -646,7 +658,8 @@ impl Shell {
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let model = &self.model;
         let tree = build_tree_folded(&model.workspace, false, self.state.collapsed());
-        let rows: Vec<_> = tree.iter().map(|row| self.tree_row(row, cx)).collect();
+        let shown = filter_rows(&tree, &self.search_text);
+        let rows: Vec<_> = shown.iter().map(|row| self.tree_row(row, cx)).collect();
 
         let mut column = div()
             .w(px(SIDEBAR_WIDTH))
@@ -660,10 +673,13 @@ impl Shell {
             .border_r_1()
             .border_color(rgb(BORDER))
             .child(Self::section_label("Collections").pt_1())
+            .child(Self::input_cell(&self.search).flex_none())
             .child(div().id("collection-tree").flex_1().flex().flex_col().overflow_y_scroll().children(rows));
 
         if tree.is_empty() && model.error.is_none() {
             column = column.child(muted_note("This workspace has no requests yet.").px_2());
+        } else if shown.is_empty() {
+            column = column.child(muted_note("No request matches the search.").px_2());
         }
         if !model.issues.is_empty() {
             let text = format!("{} file(s) could not be read and were left alone.", model.issues.len());

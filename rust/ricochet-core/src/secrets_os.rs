@@ -2,6 +2,8 @@
 //! the same item: service `Ricochet`, account `secrets` on macOS, and attributes `service=ricochet account=secrets`
 //! on Linux. Tests name their own item (see `named`), so they never touch a real user's Secrets.
 
+#![cfg(any(target_os = "macos", target_os = "linux"))]
+
 use std::collections::BTreeMap;
 
 use crate::secrets::{SecretValue, SecretVault, VaultError, from_json, to_json};

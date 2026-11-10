@@ -93,3 +93,30 @@ fn find_in<'a>(items: &'a [CollectionItem], id: &str) -> Option<&'a ApiRequest> 
         find_in(&item.children, id)
     })
 }
+
+/// The rows whose name contains the query, without regard to case, with the Folders and Collections around them so
+/// each match stays in its place. An empty query keeps every row.
+pub fn filter_rows(rows: &[TreeRow], query: &str) -> Vec<TreeRow> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return rows.to_vec();
+    }
+    let mut keep = vec![false; rows.len()];
+    for (index, row) in rows.iter().enumerate() {
+        if !row.label.to_lowercase().contains(&query) {
+            continue;
+        }
+        keep[index] = true;
+        let mut depth = row.depth;
+        for above in (0..index).rev() {
+            if depth == 0 {
+                break;
+            }
+            if rows[above].depth < depth {
+                keep[above] = true;
+                depth = rows[above].depth;
+            }
+        }
+    }
+    rows.iter().zip(keep).filter(|(_, kept)| *kept).map(|(row, _)| row.clone()).collect()
+}
