@@ -46,6 +46,8 @@ const DISPLAY_CHARS: usize = 20_000;
 const DISPLAY_LINES: usize = 1_500;
 /// How many History entries the sidebar lists. The file keeps up to MAX_HISTORY.
 const HISTORY_SHOWN: usize = 40;
+/// The confirm marker for clearing the History, kept apart from item ids.
+const HISTORY_CONFIRM: &str = "__clear_history__";
 /// Width of one space of JSON indent.
 const INDENT_STEP: f32 = 7.5;
 
@@ -1343,6 +1345,27 @@ impl Shell {
         )
     }
 
+    /// Clears every entry from the History, on the second click: the first only asks. history.json is written after.
+    fn clear_history(&mut self, cx: &mut Context<Self>) {
+        if self.confirm_delete.as_deref() != Some(HISTORY_CONFIRM) {
+            self.confirm_delete = Some(HISTORY_CONFIRM.to_string());
+            cx.notify();
+            return;
+        }
+        self.confirm_delete = None;
+        self.history.clear();
+        self.save_history();
+        self.notice = Some(("History cleared.".to_string(), false));
+        cx.notify();
+    }
+
+    fn clear_history_button(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let armed = self.confirm_delete.as_deref() == Some(HISTORY_CONFIRM);
+        Self::small_button(SharedString::from("history-clear"), if armed { "Clear history?" } else { "Clear" }.to_string())
+            .when(armed, |button| button.text_color(rgb(ERROR)).border_color(rgb(ERROR)))
+            .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.clear_history(cx)))
+    }
+
     /// Writes history.json. Nothing is written when the file could not be read at start, or there is no folder.
     fn save_history(&mut self) {
         if !self.history_readable {
@@ -1626,7 +1649,15 @@ impl Shell {
             let rows: Vec<_> = shown.iter().enumerate().map(|(index, entry)| self.history_row(index, entry, cx)).collect();
             column = column
                 .child(div().h(px(1.0)).flex_none().bg(rgb(BORDER)))
-                .child(Self::section_label("History").pt_1())
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(Self::section_label("History").pt_1())
+                        .child(self.clear_history_button(cx)),
+                )
                 .child(div().id("history").max_h(px(200.0)).flex().flex_col().overflow_y_scroll().children(rows));
         }
         column
