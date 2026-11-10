@@ -1,0 +1,17 @@
+[package]
+name = "ricochet-cli"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "ricochet"
+path = "src/main.rs"
+
+[dependencies]
+ricochet-core = { path = "../ricochet-core" }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
+uuid = { version = "1", features = ["v4"] }

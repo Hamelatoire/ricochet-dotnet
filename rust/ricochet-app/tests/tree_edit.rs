@@ -1,0 +1,197 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use pretty_assertions::assert_eq;
+use ricochet_app::tree::{RowKind, build_tree, find_request};
+use ricochet_app::tree_edit::{delete_item, duplicate_item, new_folder, new_request, unique_name};
+use ricochet_core::models::{ApiRequest, Collection, CollectionItem, Workspace};
+use ricochet_core::store::WorkspaceFolder;
+
+fn request(id: &str, name: &str) -> CollectionItem {
+    CollectionItem { id: id.into(), name: name.into(), request: Some(ApiRequest { name: name.into(), ..Default::default() }), ..Default::default() }
+}
+
+fn workspace() -> Workspace {
+    let folder = CollectionItem { id: "folder".into(), name: "Folder".into(), children: vec![request("inner", "Inner")], ..Default::default() };
+    let collection = Collection { id: "c".into(), name: "C".into(), items: vec![request("top", "Top"), folder], ..Default::default() };
+    Workspace { collections: vec![collection], ..Default::default() }
+}
+
+fn labels(workspace: &Workspace) -> Vec<(usize, String)> {
+    build_tree(workspace, true).into_iter().map(|row| (row.depth, row.label)).collect()
+}
+
+#[test]
+fn names_get_a_number_when_a_sibling_already_has_them() {
+    assert_eq!(unique_name("New request", ["Other"].into_iter()), "New request");
+    assert_eq!(unique_name("New request", ["new REQUEST", "New request 2"].into_iter()), "New request 3");
+}
+
+#[test]
+fn a_new_request_goes_after_a_request_inside_a_folder_and_into_a_collection() {
+    let mut workspace = workspace();
+    let after_top = new_request(&mut workspace, Some("top"));
+    let in_folder = new_request(&mut workspace, Some("folder"));
+    let in_collection = new_request(&mut workspace, Some("c"));
+
+    assert_eq!(
+        labels(&workspace),
+        vec![
+            (0, "C".to_string()),
+            (1, "Top".to_string()),
+            (1, "New request".to_string()),
+            (1, "Folder".to_string()),
+            (2, "Inner".to_string()),
+            (2, "New request".to_string()),
+            (1, "New request 2".to_string()),
+        ]
+    );
+    for id in [after_top, in_folder, in_collection] {
+        let found = find_request(&workspace, &id).expect("the new item is a Request");
+        assert_eq!(found.method, "GET");
+    }
+}
+
+#[test]
+fn a_new_request_with_nowhere_to_go_makes_the_default_collection() {
+    let mut workspace = Workspace::default();
+    let id = new_request(&mut workspace, None);
+    assert_eq!(workspace.collections.len(), 1);
+    assert_eq!(workspace.collections[0].name, "My Requests");
+    assert!(find_request(&workspace, &id).is_some());
+}
+
+#[test]
+fn a_new_folder_goes_inside_a_collection_or_folder_but_not_a_request() {
+    let mut workspace = workspace();
+    assert_eq!(new_folder(&mut workspace, "top"), None);
+    let id = new_folder(&mut workspace, "folder").unwrap();
+    new_folder(&mut workspace, "c").unwrap();
+    let rows = build_tree(&workspace, true);
+    let row = rows.iter().find(|row| row.id == id).unwrap();
+    assert_eq!((row.depth, row.kind, row.label.as_str()), (2, RowKind::Folder, "New folder"));
+    assert_eq!(rows.last().unwrap().label, "New folder");
+}
+
+#[test]
+fn a_copy_sits_after_the_original_with_new_ids() {
+    let mut workspace = workspace();
+    let copy = duplicate_item(&mut workspace, "folder").unwrap();
+    assert_ne!(copy, "folder");
+    assert_eq!(
+        labels(&workspace),
+        vec![
+            (0, "C".to_string()),
+            (1, "Top".to_string()),
+            (1, "Folder".to_string()),
+            (2, "Inner".to_string()),
+            (1, "Folder (copy)".to_string()),
+            (2, "Inner".to_string()),
+        ]
+    );
+    assert_eq!(duplicate_item(&mut workspace, "c"), None, "a Collection is not copied");
+}
+
+#[test]
+fn a_delete_removes_everything_inside_and_reports_the_ids() {
+    let mut workspace = workspace();
+    workspace.collections[0].hidden_item_ids = Some(vec!["inner".into()]);
+    assert_eq!(delete_item(&mut workspace, "folder"), vec!["folder".to_string(), "inner".to_string()]);
+    assert_eq!(workspace.collections[0].hidden_item_ids, None);
+    assert_eq!(labels(&workspace), vec![(0, "C".to_string()), (1, "Top".to_string())]);
+    assert_eq!(delete_item(&mut workspace, "missing"), Vec::<String>::new());
+    assert_eq!(delete_item(&mut workspace, "c"), vec!["c".to_string(), "top".to_string()]);
+    assert!(workspace.collections.is_empty());
+}
+
+#[test]
+fn added_and_deleted_requests_reach_the_folder_on_save() {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let folder = std::env::temp_dir().join(format!("ricochet-tree-edit-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut store = WorkspaceFolder::new(&folder);
+    store.load().unwrap();
+    store.save(&workspace()).unwrap();
+
+    let (mut loaded, _) = store.load().unwrap();
+    let added = new_request(&mut loaded, Some("top"));
+    delete_item(&mut loaded, "folder");
+    store.save(&loaded).unwrap();
+
+    let (reloaded, issues) = WorkspaceFolder::new(&folder).load().unwrap();
+    assert!(issues.is_empty());
+    assert!(find_request(&reloaded, &added).is_some());
+    assert!(find_request(&reloaded, "inner").is_none(), "the deleted Request's file is gone");
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+#[test]
+fn collections_and_folders_are_renamed_but_requests_are_left_to_the_request_rename() {
+    use ricochet_app::tree_edit::rename_container;
+    let mut workspace = workspace();
+    assert!(rename_container(&mut workspace, "c", "Shop"));
+    assert!(rename_container(&mut workspace, "folder", "Orders"));
+    assert!(!rename_container(&mut workspace, "folder", "Orders"));
+    assert!(!rename_container(&mut workspace, "top", "Nope"));
+    assert!(!rename_container(&mut workspace, "missing", "Nope"));
+    assert_eq!(labels(&workspace)[0].1, "Shop");
+    assert_eq!(labels(&workspace)[2].1, "Orders");
+    assert_eq!(labels(&workspace)[1].1, "Top");
+}
+
+#[test]
+fn hiding_leaves_the_tree_and_showing_brings_it_back() {
+    use ricochet_app::tree_edit::{hidden_count, is_hidden, set_hidden};
+    let mut workspace = workspace();
+    assert!(set_hidden(&mut workspace, "folder", true));
+    assert!(!set_hidden(&mut workspace, "folder", true));
+    assert!(!set_hidden(&mut workspace, "c", true), "a Collection is not an item that can be hidden");
+    assert!(is_hidden(&workspace, "folder"));
+    assert_eq!(hidden_count(&workspace), 1);
+    let visible: Vec<_> = build_tree(&workspace, false).into_iter().map(|row| row.id).collect();
+    assert_eq!(visible, vec!["c", "top"]);
+    let all = build_tree(&workspace, true);
+    assert!(all.iter().find(|row| row.id == "inner").unwrap().hidden, "inside a hidden Folder counts as hidden");
+
+    assert!(set_hidden(&mut workspace, "folder", false));
+    assert_eq!(workspace.collections[0].hidden_item_ids, None);
+    assert_eq!(hidden_count(&workspace), 0);
+}
+
+#[test]
+fn an_item_moves_before_after_or_into_a_folder_and_a_refused_drop_changes_nothing() {
+    use ricochet_app::tree_edit::{Drop, move_item};
+    let mut workspace = workspace();
+    // Move Top after Folder: the Collection now lists Folder, then Top.
+    assert!(move_item(&mut workspace, "top", "folder", Drop::After));
+    assert_eq!(labels(&workspace), vec![(0, "C".to_string()), (1, "Folder".to_string()), (2, "Inner".to_string()), (1, "Top".to_string())]);
+    // Move Top into Folder, at its end.
+    assert!(move_item(&mut workspace, "top", "folder", Drop::Into));
+    assert_eq!(labels(&workspace), vec![(0, "C".to_string()), (1, "Folder".to_string()), (2, "Inner".to_string()), (2, "Top".to_string())]);
+    // Move Inner before Folder, at the top level.
+    assert!(move_item(&mut workspace, "inner", "folder", Drop::Before));
+    assert_eq!(labels(&workspace), vec![(0, "C".to_string()), (1, "Inner".to_string()), (1, "Folder".to_string()), (2, "Top".to_string())]);
+}
+
+#[test]
+fn a_drop_into_a_request_or_into_its_own_folder_is_refused_and_nothing_moves() {
+    use ricochet_app::tree_edit::{Drop, move_item};
+    let mut workspace = workspace();
+    let before = labels(&workspace);
+    assert!(!move_item(&mut workspace, "folder", "inner", Drop::Into), "a Folder cannot go inside its own child");
+    assert!(!move_item(&mut workspace, "folder", "folder", Drop::Before), "an item cannot be dropped on itself");
+    assert!(!move_item(&mut workspace, "top", "inner", Drop::Into), "a Request cannot take children");
+    assert!(!move_item(&mut workspace, "top", "missing", Drop::Before));
+    assert_eq!(labels(&workspace), before);
+}
+
+#[test]
+fn a_collection_only_moves_beside_another_collection() {
+    use ricochet_app::tree_edit::{Drop, move_item};
+    let mut workspace = workspace();
+    workspace.collections.push(Collection { id: "d".into(), name: "D".into(), ..Default::default() });
+    assert!(!move_item(&mut workspace, "c", "top", Drop::Before));
+    assert!(!move_item(&mut workspace, "c", "d", Drop::Into));
+    assert!(move_item(&mut workspace, "c", "d", Drop::After));
+    let order: Vec<&str> = workspace.collections.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(order, vec!["d", "c"]);
+}

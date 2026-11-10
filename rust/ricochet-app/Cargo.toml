@@ -1,0 +1,17 @@
+[package]
+name = "ricochet-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui = "0.2.2"
+ricochet-core = { path = "../ricochet-core" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+unicode-segmentation = "1"
+
+[build-dependencies]
+winresource = "0.1.34"
+
+[dev-dependencies]
+pretty_assertions = "1"

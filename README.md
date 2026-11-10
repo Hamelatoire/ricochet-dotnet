@@ -2,10 +2,18 @@
 
 <img src="src/Ricochet.App/Assets/ricochet-256.png" alt="The Ricochet logo" width="96" align="right">
 
-A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, Avalonia and Native AOT.
+A fast, native desktop HTTP client for Windows, macOS and Linux, with a `ricochet` command for CI. Your work is a folder of small JSON files you can keep in git, and nothing is sent anywhere you didn't ask for.
+
+Ricochet comes in two builds for now:
+
+| Build | Made with | Status |
+| --- | --- | --- |
+| **Ricochet** | C#, Avalonia and Native AOT | The released app. Use this one. |
+| **Ricochet (Rust beta)** | Rust and GPUI, in [`rust/`](rust) | A rebuild that is catching up. See [The Rust beta](#the-rust-beta). |
 
 - Decisions: [docs/adr](docs/adr)
 - Vocabulary: [GLOSSARY.md](GLOSSARY.md)
+- What Ricochet stores and sends: [docs/PRIVACY.md](docs/PRIVACY.md)
 
 ## Features
 
@@ -26,6 +34,8 @@ A fast, native desktop HTTP client for Windows, macOS and Linux, built with C#, 
 Download `ricochet-setup-<version>-win-x64.exe` from the [latest release](https://github.com/Hamelatoire/ricochet-dotnet/releases/latest) and run it. The installer puts Ricochet in your own programs folder, so it needs no administrator rights. It can also add a desktop shortcut and put the `ricochet` command on your `PATH`, and both are off until you choose them. Uninstalling removes the program and leaves your workspace and settings alone.
 
 Release builds aren't signed yet, so Windows may warn before running the installer. The zips for each platform on the same page need no installer.
+
+The installer also carries the Rust beta. It adds a second Start menu entry, **Ricochet (Rust beta)**, next to the main one. The two builds use the same workspace folder, so don't edit one workspace in both at the same moment.
 
 ## Test your APIs
 
@@ -55,7 +65,11 @@ Hover over a folder or request in the sidebar and click its hide icon. It stays 
 
 ## Mock server
 
-Choose **Mock server** in the sidebar to answer requests on this computer from an OpenAPI description. It listens on `127.0.0.1` only. See [ADR 0027](docs/adr/0027-mock-servers-built-from-examples-or-an-openapi-description.md).
+Choose **Mock server** in the sidebar to answer requests on this computer from your saved response examples or an OpenAPI description. It listens on `127.0.0.1` only. See [ADR 0027](docs/adr/0027-mock-servers-built-from-examples-or-an-openapi-description.md).
+
+## Bulk run
+
+Choose **Bulk run** in the sidebar to send the selected request once for each id you paste, one per line, with `{{id}}` replaced in it. You can stop a run and resume it after the last id that finished. See [ADR 0015](docs/adr/0015-bulk-runs-with-resume.md).
 
 ## Themes
 
@@ -120,9 +134,35 @@ Values you mark as **Secret**, and values typed into auth fields, are kept out o
 
 **Everything else in the workspace folder is plain text, and is shared if you commit it.** That includes other variables and any credentials typed directly into a header or URL, though Ricochet warns you when it spots one. Use a `{{variable}}` marked Secret for these. History hides common credential headers.
 
+## The Rust beta
+
+Ricochet is being rebuilt in Rust with [GPUI](https://www.gpui.rs), so one small native binary can replace the C# one. [ADR 0091](docs/adr/0091-rebuild-in-rust-with-gpui.md) records why. The work is in three crates under [`rust/`](rust):
+
+- `ricochet-core` holds the behaviour: the data model, variables, sending, checks, the runner, import and export, the mock server and the secret vaults ([ADR 0092](docs/adr/0092-secrets-in-the-rust-port.md)). It reads and writes the same workspace files as the C# app.
+- `ricochet-app` is the window.
+- `ricochet-cli` is the command line.
+
+The window already has the sidebar and tabs, requests with headers, body, auth and checks, environments and variables, the response views, the command palette, Postman and Insomnia import, collection runs, and the Bulk run and Mock server pages. Still missing or unchecked in a real window: the Settings values, signing auth kinds, external secret references, drag and drop in the sidebar, and a list of per-request results for a collection run. Some pieces were only checked by tests, so expect rough edges and keep a backup of a workspace you care about.
+
+The Rust crates are not a Cargo workspace, so run Cargo inside each one:
+
+```bash
+cargo run --manifest-path rust/ricochet-app/Cargo.toml
+```
+
+```bash
+cargo test --manifest-path rust/ricochet-core/Cargo.toml
+```
+
+```bash
+cargo test --manifest-path rust/ricochet-app/Cargo.toml
+```
+
+Set `RICOCHET_DATA` to a temporary folder first, so you don't try it on your real data.
+
 ## Build from source
 
-Requires the .NET 10 SDK.
+The C# app requires the .NET 10 SDK.
 
 ```bash
 dotnet run --project src/Ricochet.App
@@ -144,7 +184,7 @@ On Windows, if linking fails with `'vswhere.exe' is not recognized`, add `C:\Pro
 
 ## Release
 
-Merging a pull request into `main` runs the tests and builds the app and the CLI on Windows, Linux and macOS, then attaches them to a GitHub release with the next patch version, such as `v0.1.1`. The Windows build also gets an installer, made from `installer/ricochet.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php). The pull request check builds it too, so a change that breaks it is found before it merges.
+Merging a pull request into `main` runs the tests and builds the app and the CLI on Windows, Linux and macOS, then attaches them to a GitHub release with the next patch version, such as `v0.1.1`. The Windows build also gets an installer, made from `installer/ricochet.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php). It carries the Rust beta too, and the release has a `ricochet-rust-beta-<version>-win-x64.zip` beside the installer. The pull request check builds it too, so a change that breaks it is found before it merges.
 
 To choose the version yourself, such as a new minor version, push a tag instead:
 
