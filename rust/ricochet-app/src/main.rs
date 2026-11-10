@@ -327,6 +327,8 @@ struct Shell {
     palette: Option<PaletteState>,
     /// Whether the keyboard shortcut sheet is open (F1 or Ctrl+/).
     shortcut_sheet_open: bool,
+    /// Set by the first Reload click when there are unsaved changes, so the second click reloads.
+    reload_armed: bool,
     /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
     renaming: Option<(String, Entity<TextInput>, Subscription)>,
     /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
@@ -389,6 +391,7 @@ impl Shell {
             prompt: None,
             palette: None,
             shortcut_sheet_open: false,
+            reload_armed: false,
             renaming: None,
             show_hidden: false,
             focus_handle: cx.focus_handle(),
@@ -1260,6 +1263,63 @@ impl Shell {
             }
         }
         cx.notify();
+    }
+
+    /// Rereads the folder from disk, for when it changed outside the app. Unsaved edits would be lost, so with unsaved
+    /// changes the first click only warns, and the second reloads.
+    fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
+        let unsaved = self.state.unsaved_count();
+        if unsaved > 0 && !self.reload_armed {
+            self.reload_armed = true;
+            self.notice = Some((format!("Reloading discards {unsaved} unsaved change(s). Click Reload again to continue."), true));
+            cx.notify();
+            return;
+        }
+        self.reload_armed = false;
+        match self.store.as_mut().map(WorkspaceFolder::load) {
+            Some(Ok((workspace, issues))) => {
+                let folder = self.model.folder.clone();
+                let branch = self.model.status.branch.clone();
+                self.model = ShellModel::from_parts(folder, workspace, issues, branch);
+                self.state = AppState::for_workspace(&self.model.workspace);
+                self.inputs = None;
+                self.container_inputs = None;
+                self.editing_environment = None;
+                self.tree_target = None;
+                self.notice = Some(("Reloaded from the folder.".to_string(), false));
+            }
+            Some(Err(error)) => self.notice = Some((format!("The folder could not be reloaded: {error}"), true)),
+            None => self.notice = Some(("No workspace folder is open, so there is nothing to reload.".to_string(), true)),
+        }
+        cx.notify();
+    }
+
+    /// A banner, shown while the folder has changed on disk since it was opened, with a Reload button. None otherwise.
+    fn outside_change_banner(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
+        if !self.store.as_ref().is_some_and(WorkspaceFolder::has_outside_changes) {
+            return None;
+        }
+        Some(
+            div()
+                .id("outside-change")
+                .absolute()
+                .top(px(48.0))
+                .right(px(12.0))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(WARNING))
+                .bg(rgb(CHROME_BG))
+                .child(div().text_sm().text_color(rgb(WARNING)).child("The folder changed on disk."))
+                .child(Self::small_button(SharedString::from("reload-folder"), "Reload".to_string()).on_click(cx.listener(
+                    |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.reload_from_disk(cx),
+                ))),
+        )
     }
 
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
@@ -2922,6 +2982,7 @@ impl Render for Shell {
             .children(self.prompt_dialog(cx))
             .children(self.palette_overlay(cx))
             .children(self.shortcut_sheet_overlay())
+            .children(self.outside_change_banner(cx))
     }
 }
 
