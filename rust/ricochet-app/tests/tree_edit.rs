@@ -123,3 +123,36 @@ fn added_and_deleted_requests_reach_the_folder_on_save() {
     assert!(find_request(&reloaded, "inner").is_none(), "the deleted Request's file is gone");
     std::fs::remove_dir_all(&folder).ok();
 }
+
+#[test]
+fn collections_and_folders_are_renamed_but_requests_are_left_to_the_request_rename() {
+    use ricochet_app::tree_edit::rename_container;
+    let mut workspace = workspace();
+    assert!(rename_container(&mut workspace, "c", "Shop"));
+    assert!(rename_container(&mut workspace, "folder", "Orders"));
+    assert!(!rename_container(&mut workspace, "folder", "Orders"));
+    assert!(!rename_container(&mut workspace, "top", "Nope"));
+    assert!(!rename_container(&mut workspace, "missing", "Nope"));
+    assert_eq!(labels(&workspace)[0].1, "Shop");
+    assert_eq!(labels(&workspace)[2].1, "Orders");
+    assert_eq!(labels(&workspace)[1].1, "Top");
+}
+
+#[test]
+fn hiding_leaves_the_tree_and_showing_brings_it_back() {
+    use ricochet_app::tree_edit::{hidden_count, is_hidden, set_hidden};
+    let mut workspace = workspace();
+    assert!(set_hidden(&mut workspace, "folder", true));
+    assert!(!set_hidden(&mut workspace, "folder", true));
+    assert!(!set_hidden(&mut workspace, "c", true), "a Collection is not an item that can be hidden");
+    assert!(is_hidden(&workspace, "folder"));
+    assert_eq!(hidden_count(&workspace), 1);
+    let visible: Vec<_> = build_tree(&workspace, false).into_iter().map(|row| row.id).collect();
+    assert_eq!(visible, vec!["c", "top"]);
+    let all = build_tree(&workspace, true);
+    assert!(all.iter().find(|row| row.id == "inner").unwrap().hidden, "inside a hidden Folder counts as hidden");
+
+    assert!(set_hidden(&mut workspace, "folder", false));
+    assert_eq!(workspace.collections[0].hidden_item_ids, None);
+    assert_eq!(hidden_count(&workspace), 0);
+}

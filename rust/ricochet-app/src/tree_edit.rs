@@ -160,3 +160,57 @@ fn collect_ids(item: &CollectionItem, ids: &mut Vec<String>) {
     ids.push(item.id.clone());
     item.children.iter().for_each(|child| collect_ids(child, ids));
 }
+
+/// Renames a Collection or Folder. A Request is renamed with [`crate::edit::rename_request`], which also sets the
+/// name the Request holds. Returns false, and changes nothing, when nothing has that id, it is a Request, or the name
+/// is the same.
+pub fn rename_container(workspace: &mut Workspace, item_id: &str, name: &str) -> bool {
+    if let Some(collection) = workspace.collections.iter_mut().find(|collection| collection.id == item_id) {
+        if collection.name == name {
+            return false;
+        }
+        collection.name = name.to_string();
+        return true;
+    }
+    let target = workspace.collections.iter_mut().find_map(|collection| find_item_mut(&mut collection.items, item_id));
+    match target {
+        Some(item) if item.request.is_none() && item.name != name => {
+            item.name = name.to_string();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Whether the item itself is hidden (ADR 0032). False for a Collection, which is never hidden.
+pub fn is_hidden(workspace: &Workspace, item_id: &str) -> bool {
+    workspace
+        .collections
+        .iter()
+        .any(|collection| collection.hidden_item_ids.as_deref().is_some_and(|ids| ids.iter().any(|id| id == item_id)))
+}
+
+/// Hides or shows a Folder or Request. Returns false, and changes nothing, for a Collection, an unknown id, or an
+/// item already in that state. The list stays None when empty, so a Collection's file gains nothing.
+pub fn set_hidden(workspace: &mut Workspace, item_id: &str, hidden: bool) -> bool {
+    let Some(collection) = workspace.collections.iter_mut().find(|collection| contains(&collection.items, item_id)) else {
+        return false;
+    };
+    let mut ids = collection.hidden_item_ids.take().unwrap_or_default();
+    let was = ids.iter().any(|id| id == item_id);
+    if hidden && !was {
+        ids.push(item_id.to_string());
+    } else if !hidden && was {
+        ids.retain(|id| id != item_id);
+    } else {
+        collection.hidden_item_ids = if ids.is_empty() { None } else { Some(ids) };
+        return false;
+    }
+    collection.hidden_item_ids = if ids.is_empty() { None } else { Some(ids) };
+    true
+}
+
+/// How many items in the Workspace are hidden.
+pub fn hidden_count(workspace: &Workspace) -> usize {
+    workspace.collections.iter().map(|collection| collection.hidden_item_ids.as_deref().map_or(0, <[String]>::len)).sum()
+}

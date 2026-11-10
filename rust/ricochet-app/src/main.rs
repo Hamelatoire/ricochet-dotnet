@@ -198,6 +198,10 @@ struct Shell {
     /// The sidebar row clicked last, which the sidebar buttons act on. It can be a Folder or Collection, which never
     /// becomes the selected Request, so the Request on show stays put.
     tree_target: Option<String>,
+    /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
+    renaming: Option<(String, Entity<TextInput>, Subscription)>,
+    /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
+    show_hidden: bool,
     focus_handle: FocusHandle,
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
@@ -249,6 +253,8 @@ impl Shell {
             body_scroll: gpui::ScrollHandle::new(),
             confirm_delete: None,
             tree_target: None,
+            renaming: None,
+            show_hidden: false,
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
@@ -714,6 +720,7 @@ impl Shell {
                     this.state.toggle_collapsed(&id);
                 }
                 this.tree_target = Some(id.clone());
+                this.renaming = None;
                 this.confirm_delete = None;
                 cx.notify();
             }))
@@ -843,6 +850,40 @@ impl Shell {
         cx.notify();
     }
 
+    /// Opens a name field for the Collection or Folder, holding its current name. Each change renames it.
+    fn start_rename(&mut self, item_id: &str, cx: &mut Context<Self>) {
+        let name = build_tree(&self.model.workspace, true).into_iter().find(|row| row.id == item_id).map(|row| row.label);
+        let Some(name) = name else {
+            return;
+        };
+        let input = cx.new(|cx| TextInput::new(name, "Name", cx));
+        let id = item_id.to_string();
+        let subscription = cx.subscribe(&input, move |this: &mut Shell, input, _: &Changed, cx| {
+            let text = input.read(cx).text().to_string();
+            if tree_edit::rename_container(&mut this.model.workspace, &id, &text) {
+                this.state.mark_unsaved(&id);
+                this.notice = None;
+                cx.notify();
+            }
+        });
+        self.renaming = Some((item_id.to_string(), input, subscription));
+        cx.notify();
+    }
+
+    /// Hides the item, or shows it again when it is hidden. A hidden item that is not shown in the sidebar loses
+    /// the selection, so the buttons never act on something out of sight.
+    fn toggle_hidden(&mut self, item_id: &str, cx: &mut Context<Self>) {
+        let hide = !tree_edit::is_hidden(&self.model.workspace, item_id);
+        if tree_edit::set_hidden(&mut self.model.workspace, item_id, hide) {
+            self.state.mark_unsaved(item_id);
+            if hide && !self.show_hidden {
+                self.tree_target = None;
+            }
+            self.notice = None;
+        }
+        cx.notify();
+    }
+
     /// Deletes the item on the second click: the first only asks. Tabs and responses of everything inside go too.
     fn delete(&mut self, item_id: &str, cx: &mut Context<Self>) {
         cx.notify();
@@ -913,13 +954,73 @@ impl Shell {
             )
     }
 
+    /// Rename and Hide for the selected item, the name field while renaming, and the show-hidden switch.
+    fn tree_more_actions(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let selected = self.selected_kind();
+        let kind = selected.as_ref().map(|(_, kind)| *kind);
+        let can_rename = matches!(kind, Some(RowKind::Collection | RowKind::Folder));
+        let can_hide = matches!(kind, Some(RowKind::Folder | RowKind::Request));
+        let is_hidden = selected.as_ref().is_some_and(|(id, _)| tree_edit::is_hidden(&self.model.workspace, id));
+        let hidden_count = tree_edit::hidden_count(&self.model.workspace);
+        let button = |id: &'static str, label: String, enabled: bool| {
+            Self::small_button(SharedString::from(id), label).when(!enabled, |button| button.opacity(0.4).cursor_default())
+        };
+        let rename_target = selected.clone();
+        let hide_target = selected.clone();
+        let hide_label = ricochet_core::sidebar_menu::hide_label(is_hidden).to_string();
+        let show_label = if self.show_hidden { "Hide hidden".to_string() } else { format!("Show hidden ({hidden_count})") };
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .gap_1()
+            .px_1()
+            .child(button("tree-rename", "Rename".to_string(), can_rename).on_click(cx.listener(
+                move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    if let Some((id, RowKind::Collection | RowKind::Folder)) = rename_target.clone() {
+                        this.start_rename(&id, cx);
+                    }
+                },
+            )))
+            .child(button("tree-hide", hide_label, can_hide).on_click(cx.listener(
+                move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    if let Some((id, RowKind::Folder | RowKind::Request)) = hide_target.clone() {
+                        this.toggle_hidden(&id, cx);
+                    }
+                },
+            )))
+            .child(button("tree-show-hidden", show_label, hidden_count > 0 || self.show_hidden).on_click(cx.listener(
+                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    this.show_hidden = !this.show_hidden;
+                    cx.notify();
+                },
+            )));
+        if let Some((_, input, _)) = self.renaming.as_ref() {
+            row = div().flex().flex_col().gap_1().child(row).child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .px_1()
+                    .child(Self::input_cell(input).flex_1())
+                    .child(Self::small_button(SharedString::from("tree-rename-done"), "Done".to_string()).on_click(cx.listener(
+                        |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                            this.renaming = None;
+                            cx.notify();
+                        },
+                    ))),
+            );
+        }
+        row
+    }
+
     fn section_label(text: &'static str) -> gpui::Div {
         div().px_2().text_xs().text_color(rgb(FAINT)).child(text)
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let model = &self.model;
-        let tree = build_tree_folded(&model.workspace, false, self.state.collapsed());
+        let tree = build_tree_folded(&model.workspace, self.show_hidden, self.state.collapsed());
         let shown = filter_rows(&tree, &self.search_text);
         let rows: Vec<_> = shown.iter().map(|row| self.tree_row(row, cx)).collect();
 
@@ -937,6 +1038,7 @@ impl Shell {
             .child(Self::section_label("Collections").pt_1())
             .child(Self::input_cell(&self.search).flex_none())
             .child(self.tree_actions(cx))
+            .child(self.tree_more_actions(cx))
             .child(div().id("collection-tree").flex_1().flex().flex_col().overflow_y_scroll().children(rows));
 
         if tree.is_empty() && model.error.is_none() {
