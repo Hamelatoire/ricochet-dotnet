@@ -167,8 +167,9 @@ struct RequestInputs {
     auth_token: Option<Entity<TextInput>>,
     auth_password: Option<Entity<TextInput>>,
     auth_key_value: Option<Entity<TextInput>>,
-    /// One (name, value) pair per header, in the Request's order.
-    headers: Vec<(Entity<TextInput>, Entity<TextInput>)>,
+    /// One (name, value) pair per header, in the Request's order. A Secret header's value is a masked field, or None
+    /// when there is no vault to hold it.
+    headers: Vec<(Entity<TextInput>, Option<Entity<TextInput>>)>,
     /// One (path, expected) pair per check, in the Request's order.
     checks: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
@@ -300,18 +301,20 @@ impl Shell {
                 cx.notify();
             }
         }));
-        let headers = request
-            .headers
-            .iter()
-            .enumerate()
-            .map(|(index, header)| {
-                let value = if header.is_secret { String::new() } else { header.value.clone() };
-                (
-                    Self::make_input(Field::HeaderKey(index), header.key.clone(), "Name", &mut subscriptions, cx),
-                    Self::make_input(Field::HeaderValue(index), value, "Value", &mut subscriptions, cx),
-                )
-            })
-            .collect();
+        let mut headers = Vec::new();
+        for (index, header) in request.headers.iter().enumerate() {
+            let key_input = cx.new(|cx| TextInput::new(header.key.clone(), "Name", cx));
+            subscriptions.push(cx.subscribe(&key_input, move |this: &mut Shell, input, _: &Changed, cx| {
+                let text = input.read(cx).text().to_string();
+                this.rename_header(cx, index, &text);
+            }));
+            let value_input = if header.is_secret {
+                self.make_secret_header_input(&request.id, index, &header.key, &mut subscriptions, cx)
+            } else {
+                Some(Self::make_input(Field::HeaderValue(index), header.value.clone(), "Value", &mut subscriptions, cx))
+            };
+            headers.push((key_input, value_input));
+        }
         let (auth_username_text, auth_key_name_text) = request
             .auth
             .as_ref()
@@ -378,17 +381,59 @@ impl Shell {
 
     /// Applies a change to the Request on show. When it changed anything, the Request is marked unsaved.
     fn change_request(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut ApiRequest) -> bool) {
+        self.edit_request(cx, |request, _| change(request));
+    }
+
+    /// Like [`Self::change_request`], and the change may also touch the Secrets vault. Both are unsaved until the
+    /// next save.
+    fn edit_request(
+        &mut self,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut ApiRequest, &mut BTreeMap<String, SecretValue>) -> bool,
+    ) {
         let Some(item_id) = self.state.selected_item().map(str::to_string) else {
             return;
         };
         let Some(request) = edit::find_request_mut(&mut self.model.workspace, &item_id) else {
             return;
         };
-        if change(request) {
+        if change(request, &mut self.vault.secrets) {
             self.state.mark_unsaved(&item_id);
             self.notice = None;
             cx.notify();
         }
+    }
+
+    /// Renames a header on show. A Secret header's value moves with it.
+    fn rename_header(&mut self, cx: &mut Context<Self>, index: usize, name: &str) {
+        self.edit_request(cx, |request, secrets| edit::set_header_name(request, secrets, index, name));
+    }
+
+    /// A masked field for a Secret header's value, holding the value stored under the header's name. None when no
+    /// vault can hold it.
+    fn make_secret_header_input(
+        &self,
+        request_id: &str,
+        index: usize,
+        name: &str,
+        subscriptions: &mut Vec<Subscription>,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<TextInput>> {
+        if self.vault.vault.is_none() || self.vault.problem.is_some() {
+            return None;
+        }
+        let current = self
+            .vault
+            .secrets
+            .get(&secrets::header_key(request_id, name))
+            .map(|value| value.expose().to_string())
+            .unwrap_or_default();
+        let input = cx.new(|cx| TextInput::new_masked(current, "Value", cx));
+        subscriptions.push(cx.subscribe(&input, move |this: &mut Shell, input, _: &Changed, cx| {
+            let text = input.read(cx).text().to_string();
+            this.edit_request(cx, |request, secrets| edit::set_secret_header(request, secrets, index, &text));
+        }));
+        Some(input)
     }
 
     /// Writes the Workspace through the store that read it. Nothing is written when the folder changed on disk since
@@ -466,22 +511,25 @@ impl Shell {
         }
     }
 
-    /// A copy of the Request with its auth Secrets filled in, for sending. Returns whether a Secret the auth kind
-    /// needs is not stored. The stored Request is never changed.
-    fn with_secrets(&self, mut request: ApiRequest) -> (ApiRequest, bool) {
+    /// A copy of the Request with its Secrets filled in, for sending: the Secret headers and the auth Secrets. Returns
+    /// whether a Secret the Request needs is not stored. `stored` is the Request as the window holds it, before
+    /// Variables were applied to `request`. The stored Request is never changed.
+    fn with_secrets(&self, mut request: ApiRequest, stored: &ApiRequest) -> (ApiRequest, bool) {
         let id = request.id.clone();
-        let lookup = |field: &str| self.vault.secrets.get(&auth_key(&id, field)).map(|value| value.expose().to_string());
-        let mut missing = false;
+        let lookup = |key: &str| self.vault.secrets.get(key).map(|value| value.expose().to_string());
+        let mut missing = edit::fill_secret_headers(&mut request, stored, lookup);
         if let Some(auth) = request.auth.as_mut() {
-            let (field, target) = match auth.kind.as_str() {
-                ricochet_core::models::auth_kinds::BEARER => ("token", &mut auth.token),
-                ricochet_core::models::auth_kinds::BASIC => ("password", &mut auth.password),
-                ricochet_core::models::auth_kinds::API_KEY => ("keyValue", &mut auth.key_value),
-                _ => return (request, false),
+            let field_and_target = match auth.kind.as_str() {
+                ricochet_core::models::auth_kinds::BEARER => Some(("token", &mut auth.token)),
+                ricochet_core::models::auth_kinds::BASIC => Some(("password", &mut auth.password)),
+                ricochet_core::models::auth_kinds::API_KEY => Some(("keyValue", &mut auth.key_value)),
+                _ => None,
             };
-            match lookup(field) {
-                Some(value) => *target = value,
-                None => missing = true,
+            if let Some((field, target)) = field_and_target {
+                match lookup(&auth_key(&id, field)) {
+                    Some(value) => *target = value,
+                    None => missing = true,
+                }
             }
         }
         (request, missing)
@@ -502,7 +550,7 @@ impl Shell {
         };
         let history_copy = history::redacted(request);
         let collection_id = scope::collection_of(&self.model.workspace, &id).map(|collection| collection.id.clone());
-        let (sent, missing_secret) = self.with_secrets(variables::apply(request, &self.scope_for(&id)));
+        let (sent, missing_secret) = self.with_secrets(variables::apply(request, &self.scope_for(&id)), request);
         if self.vault.problem.is_some() || missing_secret {
             self.notice = Some((
                 "A secret this request needs is not stored, so it was sent without it.".to_string(),
@@ -927,15 +975,14 @@ impl Shell {
     }
 
     /// The headers as editable rows: an on/off box, the name, the value and a remove mark, then a row to add one.
-    /// A Secret header's value is masked and cannot be typed, because Secrets are not ported yet (ADR 0092).
+    /// A Secret header's value is a masked field kept in the secrets vault. With no vault it is read-only.
     fn headers_editor(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
         let mut section = div().flex().flex_col().gap_1();
         let inputs = self.inputs.as_ref().map(|inputs| inputs.headers.as_slice()).unwrap_or(&[]);
         for (index, (header, (key_input, value_input))) in request.headers.iter().zip(inputs).enumerate() {
-            let value_cell = if header.is_secret {
-                div().px_2().py_1().font_family(MONO).text_color(rgb(FAINT)).child("•••••• (a Secret, not editable here)")
-            } else {
-                Self::input_cell(value_input)
+            let value_cell = match value_input.as_ref() {
+                Some(value_input) => Self::input_cell(value_input),
+                None => div().px_2().py_1().font_family(MONO).text_color(rgb(FAINT)).child("•••••• (a Secret, not editable here)"),
             };
             section = section.child(
                 div()
@@ -975,7 +1022,7 @@ impl Shell {
                             .hover(|style| style.text_color(rgb(ERROR)))
                             .child("×")
                             .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                                this.change_request(cx, |request| edit::remove_header(request, index));
+                                this.edit_request(cx, |request, secrets| edit::remove_header_and_secret(request, secrets, index));
                                 this.inputs = None;
                             })),
                     ),

@@ -53,6 +53,13 @@ pub fn auth_key(request_id: &str, field: &str) -> String {
     format!("auth/{request_id}/{field}")
 }
 
+/// The key of a Request's header Secret: `header/{requestId}/{name}`. The C# app keeps no header Secrets, so this key is
+/// the port's own, in the same shape as the auth keys. Header names are not case-sensitive, so the name is trimmed and
+/// lower-cased. A value is only ever sent under the name it was saved with.
+pub fn header_key(request_id: &str, name: &str) -> String {
+    format!("header/{request_id}/{}", name.trim().to_ascii_lowercase())
+}
+
 /// Why the vault could not be read or written. The message is safe to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultError {

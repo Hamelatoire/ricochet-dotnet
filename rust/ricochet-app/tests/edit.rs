@@ -3,7 +3,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pretty_assertions::assert_eq;
-use ricochet_app::edit::{Field, set_secret, rename_request, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, find_request_mut, next_method, remove_check, remove_header, set_field, toggle_check, toggle_header, toggle_key_in_query};
+use ricochet_app::edit::{Field, set_secret, rename_request, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, fill_secret_headers, find_request_mut, next_method, remove_check, remove_header, remove_header_and_secret, set_field, set_header_name, set_secret_header, toggle_check, toggle_header, toggle_key_in_query};
 use ricochet_app::shell::ShellModel;
 use ricochet_app::state::AppState;
 use ricochet_core::models::{ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
@@ -254,4 +254,165 @@ fn a_typed_secret_is_stored_and_an_empty_one_removes_it() {
     assert!(set_secret(&mut secrets, &key, ""));
     assert!(secrets.is_empty());
     assert!(!set_secret(&mut secrets, &key, ""));
+}
+
+fn secret_header_request() -> ApiRequest {
+    ApiRequest {
+        id: "r1".into(),
+        headers: vec![KeyValue::new("Accept", "text/plain"), KeyValue { key: "X-Api-Key".into(), value: String::new(), is_secret: true, ..Default::default() }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_typed_secret_header_value_goes_to_the_vault_and_the_request_keeps_none() {
+    use ricochet_core::secrets::{SecretValue, header_key};
+    let mut request = secret_header_request();
+    let mut secrets = std::collections::BTreeMap::new();
+    assert!(set_secret_header(&mut request, &mut secrets, 1, "k-123"));
+    assert_eq!(secrets.get(&header_key("r1", "X-Api-Key")), Some(&SecretValue::new("k-123")));
+    assert_eq!(request.headers[1].value, "", "the Workspace keeps no value");
+    assert!(!set_secret_header(&mut request, &mut secrets, 1, "k-123"), "the same value changes nothing");
+    assert!(set_secret_header(&mut request, &mut secrets, 1, ""));
+    assert!(secrets.is_empty());
+}
+
+#[test]
+fn a_secret_header_value_typed_over_a_value_left_in_the_file_clears_the_file_copy() {
+    let mut request = secret_header_request();
+    request.headers[1].value = "old-in-file".into();
+    let mut secrets = std::collections::BTreeMap::new();
+    assert!(set_secret_header(&mut request, &mut secrets, 1, "new"));
+    assert_eq!(request.headers[1].value, "");
+}
+
+#[test]
+fn set_secret_header_leaves_plain_headers_and_missing_indexes_alone() {
+    let mut request = secret_header_request();
+    let mut secrets = std::collections::BTreeMap::new();
+    assert!(!set_secret_header(&mut request, &mut secrets, 0, "x"));
+    assert!(!set_secret_header(&mut request, &mut secrets, 9, "x"));
+    assert_eq!(request.headers[0].value, "text/plain");
+    assert!(secrets.is_empty());
+}
+
+#[test]
+fn a_secret_headers_key_ignores_case_and_surrounding_space_but_not_the_request() {
+    use ricochet_core::secrets::header_key;
+    assert_eq!(header_key("r1", " X-API-Key "), "header/r1/x-api-key");
+    assert_ne!(header_key("r1", "X-Api-Key"), header_key("r2", "X-Api-Key"));
+    assert_ne!(header_key("r1", "X-Api-Key"), ricochet_core::secrets::auth_key("r1", "keyValue"));
+}
+
+#[test]
+fn renaming_a_secret_header_moves_its_value_with_it() {
+    use ricochet_core::secrets::{SecretValue, header_key};
+    let mut request = secret_header_request();
+    let mut secrets = std::collections::BTreeMap::new();
+    set_secret_header(&mut request, &mut secrets, 1, "k-123");
+    assert!(set_header_name(&mut request, &mut secrets, 1, "X-Token"));
+    assert_eq!(secrets.get(&header_key("r1", "X-Token")), Some(&SecretValue::new("k-123")));
+    assert!(!secrets.contains_key(&header_key("r1", "X-Api-Key")));
+    assert!(!set_header_name(&mut request, &mut secrets, 1, "X-Token"), "the same name changes nothing");
+}
+
+#[test]
+fn renaming_a_plain_header_leaves_the_vault_alone() {
+    let mut request = secret_header_request();
+    let mut secrets = std::collections::BTreeMap::new();
+    set_secret_header(&mut request, &mut secrets, 1, "k-123");
+    let before = secrets.clone();
+    assert!(set_header_name(&mut request, &mut secrets, 0, "Accept-Language"));
+    assert_eq!(secrets, before);
+    assert_eq!(request.headers[0].key, "Accept-Language");
+}
+
+#[test]
+fn removing_a_secret_header_forgets_its_value_and_a_plain_one_does_not_touch_the_vault() {
+    use ricochet_core::secrets::header_key;
+    let mut request = secret_header_request();
+    let mut secrets = std::collections::BTreeMap::new();
+    set_secret_header(&mut request, &mut secrets, 1, "k-123");
+    assert!(remove_header_and_secret(&mut request, &mut secrets, 0));
+    assert!(secrets.contains_key(&header_key("r1", "X-Api-Key")));
+    assert!(remove_header_and_secret(&mut request, &mut secrets, 0));
+    assert!(secrets.is_empty());
+    assert!(!remove_header_and_secret(&mut request, &mut secrets, 0));
+}
+
+#[test]
+fn sending_fills_each_secret_header_from_the_vault_under_its_stored_name() {
+    use ricochet_core::secrets::header_key;
+    let stored = secret_header_request();
+    let mut sent = stored.clone();
+    sent.headers[1].key = "X-Api-Key".into();
+    let mut vault = std::collections::BTreeMap::new();
+    vault.insert(header_key("r1", "X-Api-Key"), "k-123".to_string());
+    let missing = fill_secret_headers(&mut sent, &stored, |key| vault.get(key).cloned());
+    assert!(!missing);
+    assert_eq!(sent.headers[1].value, "k-123");
+    assert_eq!(sent.headers[0].value, "text/plain", "plain headers are not touched");
+}
+
+#[test]
+fn sending_reports_an_enabled_secret_header_with_nothing_stored_but_not_a_disabled_one() {
+    let mut stored = secret_header_request();
+    let mut sent = stored.clone();
+    assert!(fill_secret_headers(&mut sent, &stored, |_| None));
+    assert_eq!(sent.headers[1].value, "");
+    stored.headers[1].enabled = false;
+    assert!(!fill_secret_headers(&mut sent, &stored, |_| None));
+}
+
+#[test]
+fn a_secret_header_value_is_never_written_by_set_field() {
+    let mut request = secret_header_request();
+    assert!(!set_field(&mut request, Field::HeaderValue(1), "hunter2"));
+    assert_eq!(request.headers[1].value, "");
+}
+
+/// A typed header Secret is kept in the vault file, which holds no plain text, and never reaches the Workspace folder.
+#[cfg(windows)]
+#[test]
+fn a_typed_secret_header_reaches_the_vault_encrypted_and_never_the_workspace_files() {
+    use ricochet_core::secrets::{DpapiVault, SECRETS_FILE_NAME, SecretVault, header_key};
+
+    const VALUE: &str = "hunter2-header-secret";
+    let folder = temp_folder("secret-header-save");
+    let personal = temp_folder("secret-header-personal");
+    write_fixture(&folder);
+
+    let (mut model, store) = ShellModel::open(Some(folder.clone()));
+    let mut store = store.expect("the folder opened");
+    let mut secrets = std::collections::BTreeMap::new();
+    let request = find_request_mut(&mut model.workspace, "inner").unwrap();
+    let request_id = request.id.clone();
+    assert!(set_secret_header(request, &mut secrets, 1, VALUE));
+    assert_eq!(store.save(&model.workspace).unwrap(), vec![]);
+
+    // The Workspace files hold no copy of the value.
+    fn read_all(dir: &std::path::Path, out: &mut Vec<u8>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                read_all(&path, out);
+            } else {
+                out.extend(std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    let mut workspace_bytes = Vec::new();
+    read_all(&folder, &mut workspace_bytes);
+    assert!(!workspace_bytes.windows(VALUE.len()).any(|window| window == VALUE.as_bytes()));
+
+    // The vault file holds the value only encrypted, and reads back to the same Secret.
+    let vault = DpapiVault::new(personal.join(SECRETS_FILE_NAME));
+    vault.save(&secrets).unwrap();
+    let on_disk = std::fs::read(vault.path()).unwrap();
+    assert!(!on_disk.windows(VALUE.len()).any(|window| window == VALUE.as_bytes()));
+    let loaded = vault.load().unwrap();
+    assert_eq!(loaded.get(&header_key(&request_id, "X-Key")).map(|value| value.expose()), Some(VALUE));
+
+    std::fs::remove_dir_all(&folder).ok();
+    std::fs::remove_dir_all(&personal).ok();
 }
