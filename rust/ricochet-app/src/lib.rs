@@ -12,3 +12,4 @@ pub mod text_area;
 pub mod text_input;
 pub mod text_edit;
 pub mod tree;
+pub mod tree_edit;

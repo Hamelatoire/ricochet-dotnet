@@ -22,7 +22,8 @@ use ricochet_app::scope::{self, variables_in_scope};
 use ricochet_app::shell::{ShellModel, folder_from};
 use ricochet_app::state::AppState;
 use ricochet_app::status::NO_ENVIRONMENT;
-use ricochet_app::tree::{RowKind, TreeRow, build_tree_folded, filter_rows, find_request};
+use ricochet_app::tree::{RowKind, TreeRow, build_tree, build_tree_folded, filter_rows, find_request};
+use ricochet_app::tree_edit;
 use ricochet_core::models::{ApiRequest, KeyValue, auth_kinds};
 use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
@@ -31,7 +32,7 @@ use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
-actions!(ricochet, [Save, SendRequest]);
+actions!(ricochet, [Save, SendRequest, NewRequest]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -192,6 +193,11 @@ struct Shell {
     environment_menu_open: bool,
     /// Scrolls the body editor, which keeps its caret in view.
     body_scroll: gpui::ScrollHandle,
+    /// The sidebar item whose Delete button was clicked once. A second click deletes it.
+    confirm_delete: Option<String>,
+    /// The sidebar row clicked last, which the sidebar buttons act on. It can be a Folder or Collection, which never
+    /// becomes the selected Request, so the Request on show stays put.
+    tree_target: Option<String>,
     focus_handle: FocusHandle,
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
@@ -241,6 +247,8 @@ impl Shell {
             _search_subscription: search_subscription,
             environment_menu_open: false,
             body_scroll: gpui::ScrollHandle::new(),
+            confirm_delete: None,
+            tree_target: None,
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
@@ -657,7 +665,7 @@ impl Shell {
     }
 
     fn tree_row(&self, row: &TreeRow, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let is_selected = self.state.selected_item() == Some(row.id.as_str());
+        let is_selected = self.tree_target.as_deref().or(self.state.selected_item()) == Some(row.id.as_str());
         let is_request = row.kind == RowKind::Request;
         let id = row.id.clone();
         let indent = px(6.0 + 14.0 * row.depth as f32);
@@ -705,6 +713,8 @@ impl Shell {
                 } else {
                     this.state.toggle_collapsed(&id);
                 }
+                this.tree_target = Some(id.clone());
+                this.confirm_delete = None;
                 cx.notify();
             }))
             .child(lead)
@@ -741,6 +751,7 @@ impl Shell {
             .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
                 if find_request(&this.model.workspace, &id).is_some() {
                     this.state.pick_request(&id);
+                    this.tree_target = None;
                     cx.notify();
                 }
             }))
@@ -773,6 +784,135 @@ impl Shell {
         }
     }
 
+    /// What the selected sidebar item is, when one is selected and still exists.
+    fn selected_kind(&self) -> Option<(String, RowKind)> {
+        let id = self.tree_target.as_deref().or(self.state.selected_item())?;
+        build_tree(&self.model.workspace, true).into_iter().find(|row| row.id == id).map(|row| (row.id, row.kind))
+    }
+
+    /// Opens a Collection or Folder in the sidebar, so a new item inside it shows.
+    fn expand(&mut self, item_id: &str) {
+        if self.state.is_collapsed(item_id) {
+            self.state.toggle_collapsed(item_id);
+        }
+    }
+
+    /// Adds an empty Request next to or inside the selected item, then opens it. The change is saved with the rest.
+    fn add_request(&mut self, cx: &mut Context<Self>) {
+        let near = self.selected_kind().map(|(id, _)| id);
+        if let Some(near) = near.as_deref() {
+            self.expand(near);
+        }
+        let id = tree_edit::new_request(&mut self.model.workspace, near.as_deref());
+        if let Some(collection) = self.model.workspace.collections.first().map(|collection| collection.id.clone()) {
+            if near.is_none() {
+                self.expand(&collection);
+            }
+        }
+        self.state.mark_unsaved(&id);
+        self.state.pick_request(&id);
+        self.tree_target = Some(id);
+        self.confirm_delete = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    /// Adds an empty Folder inside the selected Collection or Folder.
+    fn add_folder(&mut self, parent: &str, cx: &mut Context<Self>) {
+        if let Some(id) = tree_edit::new_folder(&mut self.model.workspace, parent) {
+            self.expand(parent);
+            self.state.mark_unsaved(&id);
+            self.tree_target = Some(id);
+            self.confirm_delete = None;
+            self.notice = None;
+        }
+        cx.notify();
+    }
+
+    /// Copies the selected Request or Folder straight after it (ADR 0059), and selects the copy.
+    fn duplicate(&mut self, item_id: &str, kind: RowKind, cx: &mut Context<Self>) {
+        if let Some(copy) = tree_edit::duplicate_item(&mut self.model.workspace, item_id) {
+            self.state.mark_unsaved(&copy);
+            if kind == RowKind::Request {
+                self.state.pick_request(&copy);
+            }
+            self.tree_target = Some(copy);
+            self.confirm_delete = None;
+            self.notice = None;
+        }
+        cx.notify();
+    }
+
+    /// Deletes the item on the second click: the first only asks. Tabs and responses of everything inside go too.
+    fn delete(&mut self, item_id: &str, cx: &mut Context<Self>) {
+        cx.notify();
+        if self.confirm_delete.as_deref() != Some(item_id) {
+            self.confirm_delete = Some(item_id.to_string());
+            return;
+        }
+        self.confirm_delete = None;
+        let removed = tree_edit::delete_item(&mut self.model.workspace, item_id);
+        self.tree_target = None;
+        for id in &removed {
+            self.state.close_tab(id);
+            self.responses.remove(id);
+        }
+        if let Some(first) = removed.first() {
+            self.state.mark_unsaved(first);
+            self.notice = Some((format!("Deleted {} item(s). Save to remove them from the folder.", removed.len()), false));
+        }
+    }
+
+    /// Buttons for the selected sidebar item: add a Request or Folder, copy it, delete it. A button that does not
+    /// apply to what is selected is shown dimmed and does nothing.
+    fn tree_actions(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let selected = self.selected_kind();
+        let kind = selected.as_ref().map(|(_, kind)| *kind);
+        let is_container = matches!(kind, Some(RowKind::Collection | RowKind::Folder));
+        let can_copy = matches!(kind, Some(RowKind::Folder | RowKind::Request));
+        let confirming = selected.as_ref().is_some_and(|(id, _)| self.confirm_delete.as_deref() == Some(id.as_str()));
+
+        let button = |id: &'static str, label: &'static str, enabled: bool| {
+            Self::small_button(SharedString::from(id), label.to_string())
+                .when(!enabled, |button| button.opacity(0.4).cursor_default())
+        };
+        let folder_target = selected.clone();
+        let copy_target = selected.clone();
+        let delete_target = selected.clone();
+        div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .gap_1()
+            .px_1()
+            .child(button("tree-new-request", "+ Request", true).on_click(cx.listener(
+                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.add_request(cx),
+            )))
+            .child(button("tree-new-folder", "+ Folder", is_container).on_click(cx.listener(
+                move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    if let Some((id, RowKind::Collection | RowKind::Folder)) = folder_target.clone() {
+                        this.add_folder(&id, cx);
+                    }
+                },
+            )))
+            .child(button("tree-copy", "Copy", can_copy).on_click(cx.listener(
+                move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    if let Some((id, kind @ (RowKind::Folder | RowKind::Request))) = copy_target.clone() {
+                        this.duplicate(&id, kind, cx);
+                    }
+                },
+            )))
+            .child(
+                button("tree-delete", if confirming { "Delete?" } else { "Delete" }, selected.is_some())
+                    .when(confirming, |button| button.text_color(rgb(ERROR)).border_color(rgb(ERROR)))
+                    .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        if let Some((id, _)) = delete_target.clone() {
+                            this.delete(&id, cx);
+                        }
+                    })),
+            )
+    }
+
     fn section_label(text: &'static str) -> gpui::Div {
         div().px_2().text_xs().text_color(rgb(FAINT)).child(text)
     }
@@ -796,6 +936,7 @@ impl Shell {
             .border_color(rgb(BORDER))
             .child(Self::section_label("Collections").pt_1())
             .child(Self::input_cell(&self.search).flex_none())
+            .child(self.tree_actions(cx))
             .child(div().id("collection-tree").flex_1().flex().flex_col().overflow_y_scroll().children(rows));
 
         if tree.is_empty() && model.error.is_none() {
@@ -850,6 +991,7 @@ impl Shell {
                     .child(if self.state.is_unsaved(id) { format!("{label} •") } else { label })
                     .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
                         this.state.activate_tab(&show_id);
+                        this.tree_target = None;
                         cx.notify();
                     })),
             )
@@ -1605,6 +1747,7 @@ impl Render for Shell {
         div()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this: &mut Shell, _: &Save, _: &mut Window, cx: &mut Context<Shell>| this.save_workspace(cx)))
+            .on_action(cx.listener(|this: &mut Shell, _: &NewRequest, _: &mut Window, cx: &mut Context<Shell>| this.add_request(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &SendRequest, _: &mut Window, cx: &mut Context<Shell>| {
                 this.send_selected(cx);
                 cx.notify();
@@ -1643,6 +1786,7 @@ fn main() {
         text_area::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new("secondary-s", Save, None),
+            KeyBinding::new("secondary-n", NewRequest, None),
             KeyBinding::new("secondary-enter", SendRequest, None),
             KeyBinding::new("enter", SendRequest, Some("TextInput")),
         ]);
