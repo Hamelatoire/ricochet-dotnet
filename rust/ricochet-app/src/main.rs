@@ -1,6 +1,6 @@
 // The Ricochet window shell (ADR 0091): a sidebar tree of Collections and Requests, a request area, a response
-// area and a status bar. Reads a Workspace folder from the first argument or RICOCHET_DATA. Nothing is sent or
-// edited yet; later slices fill in the panes.
+// area and a status bar. Reads a Workspace folder from the first argument or RICOCHET_DATA. The Send button sends
+// the selected Request; editing and variable resolution come in later slices.
 
 use gpui::{
     App, Application, Bounds, ClickEvent, Context, FontWeight, Render, SharedString, TitlebarOptions, Window,
@@ -10,6 +10,18 @@ use ricochet_app::shell::{ShellModel, folder_from};
 use ricochet_app::state::AppState;
 use ricochet_app::tree::{RowKind, TreeRow, find_request};
 use ricochet_core::models::{ApiRequest, auth_kinds};
+use ricochet_core::send::{ApiResponse, RequestSender};
+
+/// How much of a response body the panel draws. The rest is cut, so a large body cannot stall the window.
+const DISPLAY_CHARS: usize = 20_000;
+
+/// What the response panel shows: nothing yet, a send in flight, the answer, or the reason it failed.
+enum ResponseView {
+    Idle,
+    Sending,
+    Done(ApiResponse),
+    Failed(String),
+}
 
 const WINDOW_BG: u32 = 0x1b1d22;
 const SIDEBAR_BG: u32 = 0x202328;
@@ -36,12 +48,45 @@ fn method_color(method: &str) -> u32 {
 struct Shell {
     model: ShellModel,
     state: AppState,
+    response: ResponseView,
 }
 
 impl Shell {
     fn new(model: ShellModel) -> Self {
         let state = AppState::for_workspace(&model.workspace);
-        Self { model, state }
+        Self { model, state, response: ResponseView::Idle }
+    }
+
+    /// Sends the selected Request off the UI thread. The answer lands in the response panel when it arrives.
+    /// Variables are not resolved yet, so the Request is sent as it is written.
+    fn send_selected(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.response, ResponseView::Sending) {
+            return;
+        }
+        let Some(request) = self
+            .state
+            .selected_item()
+            .and_then(|id| find_request(&self.model.workspace, id))
+            .cloned()
+        else {
+            return;
+        };
+        self.response = ResponseView::Sending;
+        let work = cx.background_executor().spawn(async move {
+            RequestSender::new().send(&request).map_err(|error| error.message().to_string())
+        });
+        cx.spawn(async move |this, cx| {
+            let outcome = work.await;
+            this.update(cx, |shell, cx| {
+                shell.response = match outcome {
+                    Ok(response) => ResponseView::Done(response),
+                    Err(message) => ResponseView::Failed(message),
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn request_name(&self, id: &str) -> String {
@@ -219,7 +264,8 @@ impl Shell {
         column
     }
 
-    fn request_panel(&self) -> impl IntoElement + use<> {
+    fn request_panel(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let sending = matches!(self.response, ResponseView::Sending);
         let mut panel = div()
             .flex()
             .flex_col()
@@ -270,6 +316,23 @@ impl Shell {
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .child(request.url.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id("send-request")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .bg(rgb(ROW_SELECTED))
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(rgb(ROW_HOVER)))
+                                    .child(if sending { "Sending…" } else { "Send" })
+                                    .on_click(cx.listener(
+                                        |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                            this.send_selected(cx);
+                                            cx.notify();
+                                        },
+                                    )),
                             ),
                     )
                     .child(header_rows(request))
@@ -308,6 +371,25 @@ impl Shell {
     }
 
     fn response_panel(&self) -> impl IntoElement + use<> {
+        let (summary, body) = match &self.response {
+            ResponseView::Idle => ("No response yet.".to_string(), String::new()),
+            ResponseView::Sending => ("Sending…".to_string(), String::new()),
+            ResponseView::Failed(message) => (format!("Failed: {message}"), String::new()),
+            ResponseView::Done(response) => {
+                let mut text: String = response.body_text().chars().take(DISPLAY_CHARS).collect();
+                if response.body_text().chars().count() > DISPLAY_CHARS {
+                    text.push_str("\n… (body cut for display)");
+                }
+                let cut = if response.truncated { " · body cut at the size limit" } else { "" };
+                let summary = format!(
+                    "{} {} · {} ms{cut}",
+                    response.status_code,
+                    response.reason_phrase,
+                    response.elapsed.as_millis()
+                );
+                (summary, text)
+            }
+        };
         div()
             .flex_1()
             .flex()
@@ -318,8 +400,18 @@ impl Shell {
             .bg(rgb(PANEL_BG))
             .border_1()
             .border_color(rgb(BORDER))
+            .overflow_hidden()
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Response"))
-            .child(div().text_color(rgb(MUTED)).child("No response yet."))
+            .child(div().text_color(rgb(MUTED)).child(summary))
+            .child(
+                div()
+                    .id("response-body")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .font_family("Consolas")
+                    .text_sm()
+                    .child(body),
+            )
     }
 
     fn status_bar(&self) -> impl IntoElement + use<> {
@@ -369,7 +461,7 @@ impl Render for Shell {
                             .p_3()
                             .overflow_hidden()
                             .child(self.tab_strip(cx))
-                            .child(self.request_panel())
+                            .child(self.request_panel(cx))
                             .child(self.response_panel()),
                     ),
             )
