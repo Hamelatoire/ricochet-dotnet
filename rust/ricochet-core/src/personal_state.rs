@@ -212,3 +212,34 @@ fn app_data_directory() -> Option<PathBuf> {
         None => home.map(|home| home.join(".config")),
     }
 }
+
+/// Saves the active Environment in `state.json`. Only that key changes: every other key already in the file is kept,
+/// including ones this port does not model yet, so the C# app's settings survive. A missing file starts as an empty
+/// object. A file that is not a JSON object is an error, so it is not written over.
+pub fn save_active_environment(personal_directory: &Path, environment_id: Option<&str>) -> std::io::Result<()> {
+    let path = personal_directory.join(STATE_FILE_NAME);
+    let mut object = match fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Object(map)) => map,
+            Ok(serde_json::Value::Null) => serde_json::Map::new(),
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "state.json is not a settings object, so it was left as it is",
+                ));
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(error) => return Err(error),
+    };
+    object.insert(
+        "activeEnvironmentId".to_string(),
+        environment_id.map_or(serde_json::Value::Null, |id| serde_json::Value::String(id.to_string())),
+    );
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(object))
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    fs::create_dir_all(personal_directory)?;
+    let temp = personal_directory.join(format!("{STATE_FILE_NAME}.tmp"));
+    fs::write(&temp, text)?;
+    fs::rename(&temp, &path)
+}

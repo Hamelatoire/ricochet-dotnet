@@ -15,7 +15,7 @@ use ricochet_app::json_color::{SpanKind, color_line};
 use ricochet_app::request_view::{UrlSegment, query_params, url_segments};
 use ricochet_core::history;
 use ricochet_core::models::HistoryEntry;
-use ricochet_core::personal_state::default_personal_directory;
+use ricochet_core::personal_state::{self, default_personal_directory};
 use chrono::Local;
 use std::path::PathBuf;
 use ricochet_app::scope::variables_in_scope;
@@ -207,9 +207,15 @@ struct Shell {
 
 impl Shell {
     fn new(model: ShellModel, store: Option<WorkspaceFolder>, vault: VaultState, cx: &mut Context<Self>) -> Self {
-        let state = AppState::for_workspace(&model.workspace);
+        let mut state = AppState::for_workspace(&model.workspace);
         let dot_env = read_dot_env(&model);
         let personal_dir = default_personal_directory();
+        // The Environment chosen last time, if it still exists in the Workspace.
+        if let Some(id) = personal_dir.as_deref().and_then(|dir| personal_state::load(dir).state.active_environment_id) {
+            if model.workspace.environments.iter().any(|environment| environment.id == id) {
+                state.set_active_environment(Some(&id));
+            }
+        }
         let (history, history_readable) = match personal_dir.as_deref().map(history::load) {
             Some(Ok(entries)) => (entries, true),
             Some(Err(_)) => (Vec::new(), false),
@@ -689,6 +695,16 @@ impl Shell {
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(rgb(MUTED)).child(entry.request.name.clone()))
             .child(div().flex_none().text_color(rgb(FAINT)).child(when))
             .child(div().flex_none().text_color(rgb(FAINT)).child(format!("{} ms", entry.elapsed_ms)))
+    }
+
+    /// Saves the active Environment in state.json, keeping the file's other settings.
+    fn save_environment(&mut self) {
+        let Some(dir) = self.personal_dir.clone() else {
+            return;
+        };
+        if let Err(error) = personal_state::save_active_environment(&dir, self.state.active_environment_id()) {
+            self.notice = Some((format!("The environment could not be saved: {error}"), true));
+        }
     }
 
     /// Writes history.json. Nothing is written when the file could not be read at start, or there is no folder.
@@ -1450,6 +1466,7 @@ impl Shell {
                 .child(label)
                 .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
                     this.state.set_active_environment(chosen.as_deref());
+                    this.save_environment();
                     this.environment_menu_open = false;
                     cx.notify();
                 }))
