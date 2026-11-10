@@ -40,14 +40,16 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y gnome-keyring libsecret-1-0 libsecret-tools dbus-x11
 
-      # The Secret Service only exists inside a session bus, so run the tests in one. The keyring is unlocked with an
-      # empty password, so the default collection exists for the tests to use.
+      # The Secret Service only exists inside a session bus, so run the tests in one. The keyring is unlocked with a
+      # throwaway password, so the default collection exists for the tests to use. An empty password makes
+      # gnome-keyring ask a prompter, which cannot show without a display, and the `login` collection is never created
+      # ("Object does not exist at path /org/freedesktop/secrets/collection/login").
       - name: Test the vault with an unlocked keyring (Linux)
         if: runner.os == 'Linux'
         run: |
           dbus-run-session -- bash -c '
             set -e
-            printf "" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            printf "ci-throwaway" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
             # Storing one item creates the default collection, which the vault uses. Remove it again afterwards.
             printf "warm-up" | secret-tool store --label="ricochet ci warm-up" service ci account warm-up
             secret-tool clear service ci account warm-up
