@@ -72,3 +72,27 @@ fn a_literal_credential_is_hidden_and_a_placeholder_is_kept() {
     assert_eq!(shown.headers[2].value, "application/json");
     assert_eq!(request.headers[0].value, "Bearer abc123", "the original is not changed");
 }
+
+#[test]
+fn a_literal_query_credential_is_hidden_and_the_rest_of_the_url_is_kept() {
+    let request = ApiRequest {
+        url: "https://a.test/items?page=2&api_key=abc123&Token=xyz#top".into(),
+        ..Default::default()
+    };
+    let shown = history::redacted(&request);
+    assert_eq!(shown.url, "https://a.test/items?page=2&api_key=[hidden]&Token=[hidden]#top");
+    assert_eq!(request.url, "https://a.test/items?page=2&api_key=abc123&Token=xyz#top", "the original is not changed");
+}
+
+#[test]
+fn a_placeholder_in_a_query_credential_is_kept() {
+    let request = ApiRequest { url: "https://a.test/items?password={{pw}}&secret=s3cr3t".into(), ..Default::default() };
+    let shown = history::redacted(&request);
+    assert_eq!(shown.url, "https://a.test/items?password={{pw}}&secret=[hidden]");
+}
+
+#[test]
+fn an_ordinary_query_parameter_is_not_touched() {
+    let request = ApiRequest { url: "https://a.test/search?q=tokens&sort=name".into(), ..Default::default() };
+    assert_eq!(history::redacted(&request).url, "https://a.test/search?q=tokens&sort=name");
+}

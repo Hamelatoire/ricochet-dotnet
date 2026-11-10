@@ -5,6 +5,9 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::sync::OnceLock;
+
+use regex::Regex;
 
 use crate::collection_export::{is_literal, is_sensitive_header};
 use crate::models::{ApiRequest, HistoryEntry, MAX_HISTORY};
@@ -43,7 +46,8 @@ pub fn record(entries: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
 }
 
 /// The Request as History keeps it: a header whose name is sensitive and whose value is a literal credential shows
-/// [`HIDDEN_VALUE`]. Placeholders are kept, because they are safe to show.
+/// [`HIDDEN_VALUE`], and so does a sensitive query parameter in the URL. Placeholders are kept, because they are safe
+/// to show.
 pub fn redacted(request: &ApiRequest) -> ApiRequest {
     let mut copy = request.clone();
     for header in &mut copy.headers {
@@ -51,5 +55,26 @@ pub fn redacted(request: &ApiRequest) -> ApiRequest {
             header.value = HIDDEN_VALUE.to_string();
         }
     }
+    copy.url = redact_url(&copy.url);
     copy
+}
+
+/// Hides the value of each sensitive query parameter that holds a literal, keeping the `?`/`&`, the name and the rest
+/// of the URL. Copied from `SecretRules.SensitiveQueryParameter` and `IsLiteral` in `WorkspaceSecrets.cs`.
+fn redact_url(url: &str) -> String {
+    static SENSITIVE_QUERY_PARAMETER: OnceLock<Regex> = OnceLock::new();
+    let pattern = SENSITIVE_QUERY_PARAMETER.get_or_init(|| {
+        Regex::new(r"(?i)[?&](api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret)=([^&#]+)")
+            .expect("valid pattern")
+    });
+    pattern
+        .replace_all(url, |caps: &regex::Captures| {
+            let whole = &caps[0];
+            if is_literal(&caps[2]) {
+                format!("{}{}={HIDDEN_VALUE}", &whole[..1], &caps[1])
+            } else {
+                whole.to_string()
+            }
+        })
+        .into_owned()
 }
