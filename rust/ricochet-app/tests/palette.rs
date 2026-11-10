@@ -23,6 +23,8 @@ fn commands_then_environments_then_requests_are_offered() {
             "Close all tabs",
             "Close other tabs",
             "Run collection",
+            "Export collection as Postman",
+            "Export collection as OpenAPI",
             "New request",
             "Use no environment",
             "Use environment: Staging",

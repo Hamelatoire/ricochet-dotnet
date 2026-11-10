@@ -34,6 +34,7 @@ use ricochet_core::response_examples;
 use ricochet_core::curl;
 use ricochet_core::postman;
 use ricochet_core::collection_runner::{self, CollectionRunner, RunOptions};
+use ricochet_app::exports::{self, ExportFormat};
 use ricochet_core::insomnia;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
@@ -1068,6 +1069,8 @@ impl Shell {
             }
             PaletteAction::CloseOtherTabs => self.state.close_other_tabs(),
             PaletteAction::RunCollection => self.run_collection(cx),
+            PaletteAction::ExportPostman => self.export_collection(ExportFormat::Postman, cx),
+            PaletteAction::ExportOpenApi => self.export_collection(ExportFormat::OpenApi, cx),
         }
         cx.notify();
     }
@@ -1362,6 +1365,40 @@ impl Shell {
             let (text, is_problem) = work.await;
             this.update(cx, |shell, cx| {
                 shell.notice = Some((text, is_problem));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Exports the Collection of the sidebar's selection through a save dialog. The notes the exporter gives about what
+    /// did not carry over are shown in the status bar.
+    fn export_collection(&mut self, format: ExportFormat, cx: &mut Context<Self>) {
+        let Some(collection_id) = self.override_source() else {
+            self.notice = Some(("Select a request or folder in a collection to export it.".to_string(), true));
+            cx.notify();
+            return;
+        };
+        let Some(collection) = self.model.workspace.collections.iter().find(|c| c.id == collection_id).cloned() else {
+            return;
+        };
+        let suggested = format.suggested_file_name(&collection);
+        let exported = exports::export(&collection, format);
+        let has_notes = !exported.notes.is_empty();
+        let directory = std::env::current_dir().unwrap_or_default();
+        let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else {
+                return;
+            };
+            let outcome = std::fs::write(&path, exported.json.as_bytes());
+            this.update(cx, |shell, cx| {
+                shell.notice = Some(match outcome {
+                    Ok(()) if has_notes => (format!("Exported to {}. Some items did not carry over.", path.display()), true),
+                    Ok(()) => (format!("Exported to {}.", path.display()), false),
+                    Err(error) => (format!("The export could not be saved: {error}"), true),
+                });
                 cx.notify();
             })
             .ok();

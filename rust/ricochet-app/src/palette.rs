@@ -19,6 +19,9 @@ pub enum PaletteAction {
     CloseOtherTabs,
     /// Runs the Collection of the sidebar's selection, with the collection runner.
     RunCollection,
+    /// Exports the Collection of the sidebar's selection as Postman JSON, or as OpenAPI JSON.
+    ExportPostman,
+    ExportOpenApi,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +38,8 @@ pub fn entries(workspace: &Workspace) -> Vec<PaletteEntry> {
         PaletteEntry { label: "Close all tabs".to_string(), action: PaletteAction::CloseAllTabs },
         PaletteEntry { label: "Close other tabs".to_string(), action: PaletteAction::CloseOtherTabs },
         PaletteEntry { label: "Run collection".to_string(), action: PaletteAction::RunCollection },
+        PaletteEntry { label: "Export collection as Postman".to_string(), action: PaletteAction::ExportPostman },
+        PaletteEntry { label: "Export collection as OpenAPI".to_string(), action: PaletteAction::ExportOpenApi },
         PaletteEntry { label: "New request".to_string(), action: PaletteAction::NewRequest },
         PaletteEntry { label: "Use no environment".to_string(), action: PaletteAction::UseEnvironment(None) },
     ];
