@@ -24,6 +24,7 @@ use ricochet_app::state::AppState;
 use ricochet_app::status::NO_ENVIRONMENT;
 use ricochet_app::tree::{RowKind, TreeRow, build_tree, build_tree_folded, filter_rows, find_request};
 use ricochet_app::tree_edit;
+use ricochet_app::palette::{self, PaletteAction};
 use ricochet_core::models::{ApiRequest, KeyValue, auth_kinds};
 use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
@@ -32,7 +33,7 @@ use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
-actions!(ricochet, [Save, SendRequest, NewRequest]);
+actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, ClosePalette]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -198,6 +199,13 @@ struct PromptDialog {
     rows: Vec<(String, Entity<TextInput>)>,
 }
 
+/// The command palette while it is open: its filter field and the text in it.
+struct PaletteState {
+    input: Entity<TextInput>,
+    query: String,
+    _subscription: Subscription,
+}
+
 struct Shell {
     model: ShellModel,
     /// The store that read the folder. A save goes through it, so only files it understood are changed.
@@ -226,6 +234,8 @@ struct Shell {
     editing_environment: Option<String>,
     /// The prompt Variables waiting for values before a send, or None.
     prompt: Option<PromptDialog>,
+    /// The command palette, or None while it is closed.
+    palette: Option<PaletteState>,
     /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
     renaming: Option<(String, Entity<TextInput>, Subscription)>,
     /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
@@ -284,6 +294,7 @@ impl Shell {
             container_inputs: None,
             editing_environment: None,
             prompt: None,
+            palette: None,
             renaming: None,
             show_hidden: false,
             focus_handle: cx.focus_handle(),
@@ -597,6 +608,11 @@ impl Shell {
     /// Sends the selected Request off the UI thread, with its Variables resolved the way the C# app layers them.
     /// A placeholder with no value is sent as written, and the response pane names it.
     fn send_selected(&mut self, cx: &mut Context<Self>) {
+        // While the palette is open, sending runs its first entry.
+        if self.palette.is_some() {
+            self.run_palette(0, cx);
+            return;
+        }
         // While the prompt dialog is open, sending means confirming it.
         if self.prompt.is_some() {
             self.confirm_prompt(cx);
@@ -844,6 +860,98 @@ impl Shell {
         if let Err(error) = personal_state::save_active_environment(&dir, self.state.active_environment_id()) {
             self.notice = Some((format!("The environment could not be saved: {error}"), true));
         }
+    }
+
+    /// Opens the command palette with its filter field focused.
+    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| TextInput::new("", "Type a command or a request name", cx));
+        let subscription = cx.subscribe(&input, |this: &mut Shell, input, _: &Changed, cx| {
+            let text = input.read(cx).text().to_string();
+            if let Some(palette) = this.palette.as_mut() {
+                palette.query = text;
+            }
+            cx.notify();
+        });
+        input.focus_handle(cx).focus(window);
+        self.palette = Some(PaletteState { input, query: String::new(), _subscription: subscription });
+        cx.notify();
+    }
+
+    fn close_palette(&mut self, cx: &mut Context<Self>) {
+        self.palette = None;
+        cx.notify();
+    }
+
+    /// Closes the palette and runs the entry at this index of the filtered list. An index with no entry only closes it.
+    fn run_palette(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(query) = self.palette.as_ref().map(|palette| palette.query.clone()) else {
+            return;
+        };
+        let shown = palette::filter(&palette::entries(&self.model.workspace), &query);
+        self.palette = None;
+        let Some(entry) = shown.into_iter().nth(index) else {
+            cx.notify();
+            return;
+        };
+        match entry.action {
+            PaletteAction::Send => self.send_selected(cx),
+            PaletteAction::Save => self.save_workspace(cx),
+            PaletteAction::NewRequest => self.add_request(cx),
+            PaletteAction::OpenRequest(id) => {
+                self.state.pick_request(&id);
+                self.editing_environment = None;
+                self.tree_target = None;
+            }
+            PaletteAction::UseEnvironment(id) => {
+                self.state.set_active_environment(id.as_deref());
+                self.save_environment();
+            }
+        }
+        cx.notify();
+    }
+
+    /// The palette: its filter field over the first ten entries it matches. None while it is closed.
+    fn palette_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
+        let palette = self.palette.as_ref()?;
+        let shown = palette::filter(&palette::entries(&self.model.workspace), &palette.query);
+        let rows: Vec<_> = shown
+            .iter()
+            .take(10)
+            .enumerate()
+            .map(|(index, entry)| {
+                div()
+                    .id(SharedString::from(format!("palette-{index}")))
+                    .px_3()
+                    .py_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(rgb(TEXT))
+                    .hover(|style| style.bg(rgb(ROW_HOVER)))
+                    .child(entry.label.clone())
+                    .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.run_palette(index, cx)
+                    }))
+            })
+            .collect();
+        Some(
+            div()
+                .id("palette")
+                .absolute()
+                .top(px(90.0))
+                .left(px(360.0))
+                .w(px(520.0))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .bg(rgb(CHROME_BG))
+                .child(Self::input_cell(&palette.input))
+                .children(rows)
+                .children(shown.is_empty().then(|| muted_note("Nothing matches."))),
+        )
     }
 
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
@@ -2372,6 +2480,10 @@ impl Render for Shell {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this: &mut Shell, _: &Save, _: &mut Window, cx: &mut Context<Shell>| this.save_workspace(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &NewRequest, _: &mut Window, cx: &mut Context<Shell>| this.add_request(cx)))
+            .on_action(cx.listener(|this: &mut Shell, _: &OpenPalette, window: &mut Window, cx: &mut Context<Shell>| {
+                this.open_palette(window, cx)
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &ClosePalette, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &SendRequest, _: &mut Window, cx: &mut Context<Shell>| {
                 this.send_selected(cx);
                 cx.notify();
@@ -2398,6 +2510,7 @@ impl Render for Shell {
             .child(self.status_bar())
             .children(self.environment_menu(cx))
             .children(self.prompt_dialog(cx))
+            .children(self.palette_overlay(cx))
     }
 }
 
@@ -2412,6 +2525,8 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("secondary-s", Save, None),
             KeyBinding::new("secondary-n", NewRequest, None),
+            KeyBinding::new("secondary-k", OpenPalette, None),
+            KeyBinding::new("escape", ClosePalette, None),
             KeyBinding::new("secondary-enter", SendRequest, None),
             KeyBinding::new("enter", SendRequest, Some("TextInput")),
         ]);

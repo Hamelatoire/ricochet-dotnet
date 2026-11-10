@@ -2,6 +2,7 @@
 //! window. The window itself lives in `main.rs`.
 
 pub mod edit;
+pub mod palette;
 pub mod json_color;
 pub mod request_view;
 pub mod scope;
