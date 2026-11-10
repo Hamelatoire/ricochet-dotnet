@@ -88,13 +88,13 @@ pub fn secrets_path(personal_directory: &Path) -> PathBuf {
 }
 
 /// Serialises the Secrets to the JSON object the C# app writes.
-fn to_json(secrets: &BTreeMap<String, SecretValue>) -> Result<Vec<u8>, VaultError> {
+pub(crate) fn to_json(secrets: &BTreeMap<String, SecretValue>) -> Result<Vec<u8>, VaultError> {
     let plain: BTreeMap<&str, &str> = secrets.iter().map(|(key, value)| (key.as_str(), value.expose())).collect();
     serde_json::to_vec(&plain).map_err(|error| VaultError::new(format!("The secrets could not be written: {error}")))
 }
 
 /// Reads the Secrets from the JSON object the C# app writes.
-fn from_json(bytes: &[u8]) -> Result<BTreeMap<String, SecretValue>, serde_json::Error> {
+pub(crate) fn from_json(bytes: &[u8]) -> Result<BTreeMap<String, SecretValue>, serde_json::Error> {
     let map: BTreeMap<String, String> = serde_json::from_slice(bytes)?;
     Ok(map.into_iter().map(|(key, value)| (key, SecretValue::new(value))).collect())
 }
@@ -191,13 +191,24 @@ mod windows_vault {
     }
 }
 
-/// The vault for this OS, when one is available. On systems without one, no Secret can be stored.
+/// The vault for this OS, when one is available. Windows keeps a file in the personal folder. macOS and Linux use
+/// the system's store, and do not need the folder.
 pub fn default_vault(personal_directory: &Path) -> Option<Box<dyn SecretVault>> {
     #[cfg(windows)]
     {
-        Some(Box::new(DpapiVault::new(secrets_path(personal_directory))))
+        return Some(Box::new(DpapiVault::new(secrets_path(personal_directory))));
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = personal_directory;
+        return Some(Box::new(crate::secrets_os::KeychainVault));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = personal_directory;
+        return Some(Box::new(crate::secrets_os::SecretServiceVault));
+    }
+    #[allow(unreachable_code)]
     {
         let _ = personal_directory;
         None

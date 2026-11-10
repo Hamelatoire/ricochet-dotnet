@@ -37,6 +37,7 @@ pub mod auth_signing;
 pub mod mock_server;
 pub mod workspace_archive;
 pub mod secrets;
+pub mod secrets_os;
 pub mod send;
 pub mod response_format;
 pub mod response_examples;

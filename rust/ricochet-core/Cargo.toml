@@ -26,3 +26,10 @@ pretty_assertions = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.57", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5", default-features = false, features = ["rt-async-io-crypto-rust"] }
+async-io = "2"

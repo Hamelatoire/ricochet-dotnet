@@ -358,14 +358,14 @@ impl Shell {
             self.notice = Some(("Nothing to save.".to_string(), false));
             return;
         }
+        // A vault that could not be read is never written over. The Workspace still saves, and the unsaved marks stay,
+        // so the secrets are not lost from view and can be saved again.
+        let mut secrets_note = None;
         if let Some(problem) = self.vault.problem.clone() {
-            self.notice = Some((format!("Nothing was saved. {problem}"), true));
-            return;
-        }
-        if let Some(vault) = self.vault.vault.as_ref() {
+            secrets_note = Some(format!("The secrets were not saved. {problem}"));
+        } else if let Some(vault) = self.vault.vault.as_ref() {
             if let Err(error) = vault.save(&self.vault.secrets) {
-                self.notice = Some((format!("Nothing was saved. {}", error.message()), true));
-                return;
+                secrets_note = Some(format!("The secrets were not saved. {}", error.message()));
             }
         }
         if store.has_outside_changes() {
@@ -374,13 +374,17 @@ impl Shell {
             return;
         }
         self.notice = Some(match store.save(&self.model.workspace) {
-            Ok(left_alone) if left_alone.is_empty() => {
-                self.state.clear_unsaved();
-                ("Saved.".to_string(), false)
-            }
             Ok(left_alone) => {
-                self.state.clear_unsaved();
-                (format!("Saved. {} file(s) could not be read and were left alone.", left_alone.len()), true)
+                if secrets_note.is_none() {
+                    self.state.clear_unsaved();
+                }
+                match (secrets_note, left_alone.is_empty()) {
+                    (Some(note), _) => (format!("The workspace was saved. {note}"), true),
+                    (None, true) => ("Saved.".to_string(), false),
+                    (None, false) => {
+                        (format!("Saved. {} file(s) could not be read and were left alone.", left_alone.len()), true)
+                    }
+                }
             }
             Err(error) => (format!("The save failed: {error}"), true),
         });
