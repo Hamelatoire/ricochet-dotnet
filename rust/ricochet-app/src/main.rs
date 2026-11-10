@@ -192,6 +192,12 @@ struct ContainerInputs {
     _subscriptions: Vec<Subscription>,
 }
 
+/// The prompt Variables a send needs, each with the field its value is typed in. Open until the send or cancel.
+struct PromptDialog {
+    request_id: String,
+    rows: Vec<(String, Entity<TextInput>)>,
+}
+
 struct Shell {
     model: ShellModel,
     /// The store that read the folder. A save goes through it, so only files it understood are changed.
@@ -218,6 +224,8 @@ struct Shell {
     container_inputs: Option<ContainerInputs>,
     /// The Environment open in the editor, or None. Set from the Environment menu, and cleared when a Request is picked.
     editing_environment: Option<String>,
+    /// The prompt Variables waiting for values before a send, or None.
+    prompt: Option<PromptDialog>,
     /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
     renaming: Option<(String, Entity<TextInput>, Subscription)>,
     /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
@@ -275,6 +283,7 @@ impl Shell {
             tree_target: None,
             container_inputs: None,
             editing_environment: None,
+            prompt: None,
             renaming: None,
             show_hidden: false,
             focus_handle: cx.focus_handle(),
@@ -588,6 +597,11 @@ impl Shell {
     /// Sends the selected Request off the UI thread, with its Variables resolved the way the C# app layers them.
     /// A placeholder with no value is sent as written, and the response pane names it.
     fn send_selected(&mut self, cx: &mut Context<Self>) {
+        // While the prompt dialog is open, sending means confirming it.
+        if self.prompt.is_some() {
+            self.confirm_prompt(cx);
+            return;
+        }
         let Some(id) = self.state.selected_item().map(str::to_string) else {
             return;
         };
@@ -598,9 +612,25 @@ impl Shell {
         let Some(request) = find_request(&self.model.workspace, &id) else {
             return;
         };
+        let prompts = variables::find_prompt_variables(request, &self.scope_for(&id));
+        if !prompts.is_empty() {
+            self.open_prompt(cx, &id, &prompts);
+            return;
+        }
+        self.send_with(cx, &id, &[]);
+    }
+
+    /// Sends the Request with the answers to its prompt Variables. The answers come after the scope, so they win.
+    fn send_with(&mut self, cx: &mut Context<Self>, id: &str, answers: &[KeyValue]) {
+        let id = id.to_string();
+        let Some(request) = find_request(&self.model.workspace, &id) else {
+            return;
+        };
+        let mut scope = self.scope_for(&id);
+        scope.extend(answers.iter().cloned());
         let history_copy = history::redacted(request);
         let collection_id = scope::collection_of(&self.model.workspace, &id).map(|collection| collection.id.clone());
-        let (sent, missing_secret) = self.with_secrets(variables::apply(request, &self.scope_for(&id)), request);
+        let (sent, missing_secret) = self.with_secrets(variables::apply(request, &scope), request);
         if self.vault.problem.is_some() || missing_secret {
             self.notice = Some((
                 "A secret this request needs is not stored, so it was sent without it.".to_string(),
@@ -814,6 +844,89 @@ impl Shell {
         if let Err(error) = personal_state::save_active_environment(&dir, self.state.active_environment_id()) {
             self.notice = Some((format!("The environment could not be saved: {error}"), true));
         }
+    }
+
+    /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
+    fn open_prompt(&mut self, cx: &mut Context<Self>, id: &str, prompts: &[variables::PromptVariable]) {
+        let rows = prompts
+            .iter()
+            .map(|prompt| {
+                let input = cx.new(|cx| TextInput::new(prompt.default.clone(), "Value", cx));
+                (prompt.name.clone(), input)
+            })
+            .collect();
+        self.prompt = Some(PromptDialog { request_id: id.to_string(), rows });
+        self.notice = None;
+        cx.notify();
+    }
+
+    /// Sends the waiting Request with the typed values. Nothing is saved: the values are for this send only.
+    fn confirm_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.prompt.take() else {
+            return;
+        };
+        let answers: Vec<KeyValue> =
+            dialog.rows.iter().map(|(name, input)| KeyValue::new(name.clone(), input.read(cx).text().to_string())).collect();
+        self.send_with(cx, &dialog.request_id, &answers);
+    }
+
+    fn cancel_prompt(&mut self, cx: &mut Context<Self>) {
+        self.prompt = None;
+        cx.notify();
+    }
+
+    /// The dialog that asks for the prompt Variables before a send. None when no send is waiting on it.
+    fn prompt_dialog(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
+        let dialog = self.prompt.as_ref()?;
+        let rows: Vec<_> = dialog
+            .rows
+            .iter()
+            .map(|(name, input)| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().w(px(160.0)).flex_none().font_family(MONO).overflow_hidden().whitespace_nowrap().child(name.clone()))
+                    .child(div().flex_1().child(Self::input_cell(input)))
+            })
+            .collect();
+        Some(
+            div()
+                .id("prompt-dialog")
+                .absolute()
+                .top(px(120.0))
+                .left(px(440.0))
+                .w(px(480.0))
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .bg(rgb(CHROME_BG))
+                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Values for this send"))
+                .child(muted_note("These variables have no stored value. The values are used for this send only and are not saved."))
+                .children(rows)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_end()
+                        .gap_2()
+                        .child(Self::small_button(SharedString::from("prompt-cancel"), "Cancel".to_string()).on_click(cx.listener(
+                            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.cancel_prompt(cx),
+                        )))
+                        .child(
+                            Self::small_button(SharedString::from("prompt-send"), "Send".to_string())
+                                .text_color(rgb(ACCENT))
+                                .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                    this.confirm_prompt(cx)
+                                })),
+                        ),
+                ),
+        )
     }
 
     /// Writes history.json. Nothing is written when the file could not be read at start, or there is no folder.
@@ -2284,6 +2397,7 @@ impl Render for Shell {
             )
             .child(self.status_bar())
             .children(self.environment_menu(cx))
+            .children(self.prompt_dialog(cx))
     }
 }
 
