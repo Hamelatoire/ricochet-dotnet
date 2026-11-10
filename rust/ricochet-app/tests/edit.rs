@@ -464,3 +464,30 @@ fn a_capture_source_steps_through_its_list_and_a_body_source_drops_the_path() {
     assert!(!capture_needs_path(sources::BODY));
     assert!(capture_needs_path(sources::HEADER));
 }
+
+#[test]
+fn a_saved_capture_is_written_to_the_request_file_and_removing_it_leaves_no_key() {
+    let folder = temp_folder("capture-save");
+    write_fixture(&folder);
+
+    let (mut model, store) = ShellModel::open(Some(folder.clone()));
+    let mut store = store.expect("the folder opened");
+    let request_file = |folder: &std::path::Path| -> String {
+        walk(folder).into_iter().find(|(path, _)| path.file_name().unwrap() == "inner-inner.json").map(|(_, text)| text).unwrap()
+    };
+
+    let request = find_request_mut(&mut model.workspace, "inner").unwrap();
+    add_capture(request);
+    assert!(set_field(request, Field::CaptureName(0), "token"));
+    assert!(set_field(request, Field::CapturePath(0), "data.token"));
+    store.save(&model.workspace).unwrap();
+    let saved = request_file(&folder);
+    assert!(saved.contains("\"variable\": \"token\"") || saved.contains("\"variable\":\"token\""), "{saved}");
+    assert!(saved.contains("data.token"), "{saved}");
+
+    assert!(remove_capture(find_request_mut(&mut model.workspace, "inner").unwrap(), 0));
+    store.save(&model.workspace).unwrap();
+    let removed = request_file(&folder);
+    assert!(!removed.contains("captures"), "an emptied list writes no key: {removed}");
+    std::fs::remove_dir_all(&folder).ok();
+}
