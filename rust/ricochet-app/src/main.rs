@@ -90,6 +90,8 @@ enum ResponseTab {
     Headers,
     /// Compares the response with the one sent before it, for the same Request.
     Compare,
+    /// The body as it arrived, without pretty-printing.
+    Raw,
 }
 
 /// The section of the Request on show under the URL bar.
@@ -2432,6 +2434,7 @@ impl Shell {
             ResponseTab::Body => sent.body.clone(),
             ResponseTab::Headers => response.headers.iter().map(|header| format!("{}: {}\n", header.key, header.value)).collect(),
             ResponseTab::Compare => String::new(),
+            ResponseTab::Raw => String::from_utf8_lossy(&response.body).into_owned(),
         };
 
         pane = pane.child(
@@ -2459,6 +2462,7 @@ impl Shell {
                 .child(self.response_tab_button(ResponseTab::Body, "Body".to_string(), cx))
                 .child(self.response_tab_button(ResponseTab::Headers, format!("Headers {}", response.headers.len()), cx))
                 .child(self.response_tab_button(ResponseTab::Compare, "Compare".to_string(), cx))
+                .child(self.response_tab_button(ResponseTab::Raw, "Raw".to_string(), cx))
                 .child(
                     div()
                         .id("copy-response")
@@ -2493,6 +2497,10 @@ impl Shell {
             ResponseTab::Body => content.children(Self::body_lines(sent)),
             ResponseTab::Headers => {
                 content.gap_1().children(response.headers.iter().map(|header| pair_row(header.key.clone(), header.value.clone(), false)))
+            }
+            ResponseTab::Raw => {
+                let text = String::from_utf8_lossy(&response.body).into_owned();
+                content.children(text.lines().map(|line| div().flex_none().child(line.to_string())).collect::<Vec<_>>())
             }
             ResponseTab::Compare => {
                 let previous = self.state.selected_item().and_then(|id| self.previous_responses.get(id));
