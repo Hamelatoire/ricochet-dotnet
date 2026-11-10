@@ -36,6 +36,8 @@ use ricochet_core::postman;
 use ricochet_core::collection_runner::{self, CollectionRunner, RunOptions};
 use ricochet_app::exports::{self, ExportFormat};
 use ricochet_app::bulk_page::{self, BulkShared};
+use ricochet_app::mock_page::{self, MockLog};
+use ricochet_core::mock_server::MockServer;
 use ricochet_core::bulk_runner;
 use ricochet_core::insomnia;
 use ricochet_core::store::WorkspaceFolder;
@@ -312,6 +314,12 @@ struct BulkPanel {
     error: Option<String>,
 }
 
+/// The mock server page while it is open. The server itself keeps running when the page is closed.
+struct MockPanel {
+    port: Entity<TextArea>,
+    error: Option<String>,
+}
+
 struct Shell {
     model: ShellModel,
     /// The store that read the folder. A save goes through it, so only files it understood are changed.
@@ -344,6 +352,11 @@ struct Shell {
     palette: Option<PaletteState>,
     /// The bulk run panel, or None while it is closed.
     bulk: Option<BulkPanel>,
+    /// The mock server of the saved response examples, running or not.
+    mock: MockServer,
+    mock_log: MockLog,
+    /// The mock server page, or None while it is closed.
+    mock_panel: Option<MockPanel>,
     /// Whether the keyboard shortcut sheet is open (F1 or Ctrl+/).
     shortcut_sheet_open: bool,
     /// Set by the first Reload click when there are unsaved changes, so the second click reloads.
@@ -413,6 +426,9 @@ impl Shell {
             prompt: None,
             palette: None,
             bulk: None,
+            mock: MockServer::new(),
+            mock_log: MockLog::default(),
+            mock_panel: None,
             shortcut_sheet_open: false,
             reload_armed: false,
             sync,
@@ -1008,6 +1024,7 @@ impl Shell {
     /// Closes whichever overlay is open: the palette, then the shortcut sheet.
     fn close_palette(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
+        self.mock_panel = None;
         // Closing the bulk panel stops a run still going; ids already in flight finish.
         if let Some(panel) = self.bulk.take() {
             if let Some(shared) = panel.shared {
@@ -1429,6 +1446,144 @@ impl Shell {
             .ok();
         })
         .detach();
+    }
+
+    /// Opens the mock server page.
+    fn open_mock(&mut self, cx: &mut Context<Self>) {
+        let port = cx.new(|cx| TextArea::new("5050".to_string(), "Port", cx));
+        self.mock_panel = Some(MockPanel { port, error: None });
+        cx.notify();
+    }
+
+    /// Starts the mock server on the typed port with the saved examples as its routes, or stops it. The window
+    /// refreshes while it runs, so the log of answered requests stays current.
+    fn toggle_mock(&mut self, cx: &mut Context<Self>) {
+        if self.mock.is_running() {
+            self.mock.stop();
+            cx.notify();
+            return;
+        }
+        let Some(panel) = self.mock_panel.as_mut() else {
+            return;
+        };
+        let port = match mock_page::parse_port(&panel.port.read(cx).text().to_string()) {
+            Ok(port) => port,
+            Err(error) => {
+                panel.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        let table = mock_page::table_of(&self.model.workspace);
+        if table.is_empty() {
+            panel.error = Some("There are no saved examples to answer with. Use Save example on a response first.".to_string());
+            cx.notify();
+            return;
+        }
+        let sink = self.mock_log.clone();
+        match self.mock.start(port, table, move |entry| sink.push(entry)) {
+            Ok(()) => panel.error = None,
+            Err(error) => {
+                panel.error = Some(error.message().to_string());
+                cx.notify();
+                return;
+            }
+        }
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
+                let Ok(running) = this.update(cx, |shell, cx| {
+                    cx.notify();
+                    shell.mock.is_running()
+                }) else {
+                    break;
+                };
+                if !running {
+                    break;
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The mock server page: the port, a Start or Stop button, and the latest answered requests. None while closed.
+    fn mock_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
+        let panel = self.mock_panel.as_ref()?;
+        let running = self.mock.is_running();
+        let status = match self.mock.address() {
+            Some(address) => format!("Running at http://{address}. {} route(s).", mock_page::table_of(&self.model.workspace).len()),
+            None => "Stopped.".to_string(),
+        };
+        let lines: Vec<_> = self
+            .mock_log
+            .entries()
+            .iter()
+            .rev()
+            .take(12)
+            .map(|entry| {
+                div()
+                    .text_xs()
+                    .font_family(MONO)
+                    .text_color(rgb(if entry.status_code < 400 { SUCCESS } else { ERROR }))
+                    .child(format!("{}  {} {}  {}", entry.at.format("%H:%M:%S"), entry.method, entry.path, entry.status_code))
+            })
+            .collect();
+        Some(
+            div()
+                .id("mock-panel")
+                .absolute()
+                .top(px(70.0))
+                .left(px(300.0))
+                .w(px(640.0))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_4()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .bg(rgb(CHROME_BG))
+                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Mock server"))
+                .child(muted_note("Answers requests on this computer with the saved response examples, matched by method and path. Press Escape to close; the server keeps running."))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .child(div().text_sm().text_color(rgb(MUTED)).child("Port"))
+                        .child(
+                            div()
+                                .id("mock-port")
+                                .w(px(100.0))
+                                .p_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(BORDER))
+                                .bg(rgb(FIELD_BG))
+                                .font_family(MONO)
+                                .child(panel.port.clone()),
+                        )
+                        .child(
+                            Self::small_button(SharedString::from("mock-toggle"), if running { "Stop" } else { "Start" }.to_string()).on_click(
+                                cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.toggle_mock(cx)),
+                            ),
+                        )
+                        .child(Self::small_button(SharedString::from("mock-clear"), "Clear log".to_string()).on_click(cx.listener(
+                            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.mock_log.clear();
+                                cx.notify();
+                            },
+                        )))
+                        .child(Self::small_button(SharedString::from("mock-close"), "Close".to_string()).on_click(cx.listener(
+                            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx),
+                        ))),
+                )
+                .child(div().text_sm().text_color(rgb(MUTED)).child(status))
+                .children(panel.error.clone().map(|error| div().text_sm().text_color(rgb(ERROR)).child(error)))
+                .children(lines),
+        )
     }
 
     /// Opens the bulk run panel for the selected Request.
@@ -1918,6 +2073,9 @@ impl Shell {
         )));
         row = row.child(Self::small_button(SharedString::from("tree-bulk"), "Bulk run".to_string()).on_click(cx.listener(
             |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.open_bulk(cx),
+        )));
+        row = row.child(Self::small_button(SharedString::from("tree-mock"), "Mock server".to_string()).on_click(cx.listener(
+            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.open_mock(cx),
         )));
         if let Some((_, input, _)) = self.renaming.as_ref() {
             row = div().flex().flex_col().gap_1().child(row).child(
@@ -3256,6 +3414,7 @@ impl Render for Shell {
             .children(self.prompt_dialog(cx))
             .children(self.palette_overlay(cx))
             .children(self.bulk_overlay(cx))
+            .children(self.mock_overlay(cx))
             .children(self.shortcut_sheet_overlay())
             .children(self.outside_change_banner(cx))
     }
