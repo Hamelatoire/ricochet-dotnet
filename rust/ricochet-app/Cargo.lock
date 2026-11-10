@@ -4589,6 +4589,7 @@ dependencies = [
  "gpui",
  "pretty_assertions",
  "ricochet-core",
+ "unicode-segmentation",
  "winresource",
 ]
 

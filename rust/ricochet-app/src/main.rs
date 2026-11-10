@@ -1,14 +1,16 @@
-// The Ricochet window (ADR 0091): a top bar with the Environment, a sidebar of Collections and recent sends, a request
+// The Ricochet window (ADR 0091): a top bar with Save and the Environment, a sidebar of Collections and recent sends, a request
 // pane with a URL bar and section tabs, a response pane and a status bar. Reads a Workspace folder from the first
-// argument or RICOCHET_DATA. Send resolves Variables first; editing comes in a later slice.
+// argument or RICOCHET_DATA. The URL, method and headers can be edited and saved; the body and auth are read-only.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+
+mod text_input;
 
 use gpui::{
-    App, Application, Bounds, ClickEvent, ClipboardItem, Context, FontWeight, Image, ImageFormat, Render, SharedString,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, img, prelude::*, px, rgb, size,
+    App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Render, SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, div, prelude::*, px, rgb, size,
 };
+use ricochet_app::edit::{self, Field};
 use ricochet_app::json_color::{SpanKind, color_line};
 use ricochet_app::request_view::{RecentSend, RecentSends, UrlSegment, query_params, url_segments};
 use ricochet_app::scope::variables_in_scope;
@@ -19,10 +21,11 @@ use ricochet_app::tree::{RowKind, TreeRow, build_tree_folded, find_request};
 use ricochet_core::models::{ApiRequest, KeyValue, auth_kinds};
 use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
+use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
+use text_input::{Changed, TextInput};
 
-/// The app icon, also embedded in the exe by `build.rs`.
-const ICON_PNG: &[u8] = include_bytes!("../assets/ricochet-64.png");
+actions!(ricochet, [Save, SendRequest]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -140,8 +143,24 @@ fn pair_row(key: String, value: String, dimmed: bool) -> gpui::Div {
         .child(div().flex_1().overflow_hidden().text_color(rgb(if dimmed { FAINT } else { MUTED })).child(value))
 }
 
+/// The text fields of the Request on show. They are rebuilt when another Request is picked or a header is added or
+/// removed, so each field's index always matches the Request.
+struct RequestInputs {
+    item_id: String,
+    url: Entity<TextInput>,
+    /// One (name, value) pair per header, in the Request's order.
+    headers: Vec<(Entity<TextInput>, Entity<TextInput>)>,
+    _subscriptions: Vec<Subscription>,
+}
+
 struct Shell {
     model: ShellModel,
+    /// The store that read the folder. A save goes through it, so only files it understood are changed.
+    store: Option<WorkspaceFolder>,
+    inputs: Option<RequestInputs>,
+    /// The outcome of the last save, shown in the status bar. The flag is true for a problem.
+    notice: Option<(String, bool)>,
+    focus_handle: FocusHandle,
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
     responses: HashMap<String, ResponseView>,
@@ -150,22 +169,24 @@ struct Shell {
     response_tab: ResponseTab,
     /// The Workspace's `.env` Variables, read at start and again before each send.
     dot_env: Vec<KeyValue>,
-    icon: Arc<Image>,
 }
 
 impl Shell {
-    fn new(model: ShellModel) -> Self {
+    fn new(model: ShellModel, store: Option<WorkspaceFolder>, cx: &mut Context<Self>) -> Self {
         let state = AppState::for_workspace(&model.workspace);
         let dot_env = read_dot_env(&model);
         Self {
             model,
+            store,
+            inputs: None,
+            notice: None,
+            focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
             recent: RecentSends::default(),
             request_tab: RequestTab::Headers,
             response_tab: ResponseTab::Body,
             dot_env,
-            icon: Arc::new(Image::from_bytes(ImageFormat::Png, ICON_PNG.to_vec())),
         }
     }
 
@@ -188,6 +209,96 @@ impl Shell {
             .map(|environment| environment.name.trim().to_string())
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| NO_ENVIRONMENT.to_string())
+    }
+
+    /// Makes the text fields for the Request on show, when they are not already the ones for it.
+    fn ensure_inputs(&mut self, cx: &mut Context<Self>) {
+        let selected = self.state.selected_item().filter(|id| find_request(&self.model.workspace, id).is_some());
+        if self.inputs.as_ref().map(|inputs| inputs.item_id.as_str()) == selected {
+            return;
+        }
+        let Some(item_id) = selected.map(str::to_string) else {
+            self.inputs = None;
+            return;
+        };
+        let Some(request) = find_request(&self.model.workspace, &item_id).cloned() else {
+            return;
+        };
+        let mut subscriptions = Vec::new();
+        let url = Self::make_input(Field::Url, request.url.clone(), "Enter a URL", &mut subscriptions, cx);
+        let headers = request
+            .headers
+            .iter()
+            .enumerate()
+            .map(|(index, header)| {
+                let value = if header.is_secret { String::new() } else { header.value.clone() };
+                (
+                    Self::make_input(Field::HeaderKey(index), header.key.clone(), "Name", &mut subscriptions, cx),
+                    Self::make_input(Field::HeaderValue(index), value, "Value", &mut subscriptions, cx),
+                )
+            })
+            .collect();
+        self.inputs = Some(RequestInputs { item_id, url, headers, _subscriptions: subscriptions });
+    }
+
+    fn make_input(
+        field: Field,
+        text: String,
+        placeholder: &'static str,
+        subscriptions: &mut Vec<Subscription>,
+        cx: &mut Context<Self>,
+    ) -> Entity<TextInput> {
+        let input = cx.new(|cx| TextInput::new(text, placeholder, cx));
+        subscriptions.push(cx.subscribe(&input, move |this: &mut Shell, input, _: &Changed, cx| {
+            let text = input.read(cx).text().to_string();
+            this.change_request(cx, |request| edit::set_field(request, field, &text));
+        }));
+        input
+    }
+
+    /// Applies a change to the Request on show. When it changed anything, the Request is marked unsaved.
+    fn change_request(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut ApiRequest) -> bool) {
+        let Some(item_id) = self.state.selected_item().map(str::to_string) else {
+            return;
+        };
+        let Some(request) = edit::find_request_mut(&mut self.model.workspace, &item_id) else {
+            return;
+        };
+        if change(request) {
+            self.state.mark_unsaved(&item_id);
+            self.notice = None;
+            cx.notify();
+        }
+    }
+
+    /// Writes the Workspace through the store that read it. Nothing is written when the folder changed on disk since
+    /// it was read, because the window does not hold those changes and a save could undo them.
+    fn save_workspace(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+        let Some(store) = self.store.as_mut() else {
+            self.notice = Some(("No workspace folder is open, so there is nowhere to save.".to_string(), true));
+            return;
+        };
+        if !self.state.has_unsaved() {
+            self.notice = Some(("Nothing to save.".to_string(), false));
+            return;
+        }
+        if store.has_outside_changes() {
+            let text = "The folder changed on disk since it was opened, so nothing was saved.";
+            self.notice = Some((text.to_string(), true));
+            return;
+        }
+        self.notice = Some(match store.save(&self.model.workspace) {
+            Ok(left_alone) if left_alone.is_empty() => {
+                self.state.clear_unsaved();
+                ("Saved.".to_string(), false)
+            }
+            Ok(left_alone) => {
+                self.state.clear_unsaved();
+                (format!("Saved. {} file(s) could not be read and were left alone.", left_alone.len()), true)
+            }
+            Err(error) => (format!("The save failed: {error}"), true),
+        });
     }
 
     /// Sends the selected Request off the UI thread, with its Variables resolved the way the C# app layers them.
@@ -241,6 +352,7 @@ impl Shell {
     fn top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let has_environments = !self.model.workspace.environments.is_empty();
         let is_set = self.state.active_environment_id().is_some();
+        let unsaved = self.state.unsaved_count();
         div()
             .h(px(40.0))
             .flex_none()
@@ -252,9 +364,22 @@ impl Shell {
             .bg(rgb(CHROME_BG))
             .border_b_1()
             .border_color(rgb(BORDER))
-            .child(img(self.icon.clone()).size(px(20.0)))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Ricochet"))
             .child(div().flex_1())
+            .child(
+                div()
+                    .id("save-workspace")
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(if unsaved > 0 { ACCENT } else { BORDER }))
+                    .text_color(rgb(if unsaved > 0 { TEXT } else { FAINT }))
+                    .when(unsaved > 0, |style| style.cursor_pointer().hover(|style| style.bg(rgb(ROW_HOVER))))
+                    .child(if unsaved > 0 { format!("Save ({unsaved})") } else { "Saved".to_string() })
+                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.save_workspace(cx);
+                    })),
+            )
             .child(div().text_xs().text_color(rgb(FAINT)).child("Environment"))
             .child(
                 div()
@@ -437,7 +562,7 @@ impl Shell {
                     .cursor_pointer()
                     .whitespace_nowrap()
                     .text_color(rgb(if is_active { TEXT } else { MUTED }))
-                    .child(label)
+                    .child(if self.state.is_unsaved(id) { format!("{label} •") } else { label })
                     .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
                         this.state.activate_tab(&show_id);
                         cx.notify();
@@ -472,19 +597,39 @@ impl Shell {
             .children(tabs)
     }
 
-    /// The method, the URL with its placeholders as chips, and the Send button, in one control.
-    fn url_bar(&self, request: &ApiRequest, scope: &[KeyValue], cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The method, the URL and the Send button, in one control. The URL shows its placeholders as chips until it is
+    /// clicked, and is then a text field showing the text as written.
+    fn url_bar(&self, request: &ApiRequest, scope: &[KeyValue], url_focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let sending = matches!(self.selected_response(), Some(ResponseView::Sending));
-        let segments = url_segments(&request.url, scope).into_iter().map(|segment| match segment {
-            UrlSegment::Text(text) => div().flex_none().child(text),
-            UrlSegment::Chip { name, resolves } => div()
-                .flex_none()
-                .px_1()
-                .rounded_sm()
-                .bg(rgb(if resolves { CHIP_BG } else { 0x4a3a1a }))
-                .text_color(rgb(if resolves { CHIP_TEXT } else { WARNING }))
-                .child(name),
-        });
+        let url_area = div().id("url-field").flex_1().h_full().flex().flex_row().items_center().px_3().overflow_hidden().font_family(MONO);
+        let url_area = match self.inputs.as_ref().filter(|_| url_focused) {
+            Some(inputs) => url_area.child(inputs.url.clone()),
+            None => {
+                let chips = url_area.whitespace_nowrap().cursor_text().on_click(cx.listener(
+                    |this: &mut Shell, _: &ClickEvent, window: &mut Window, cx: &mut Context<Shell>| {
+                        if let Some(inputs) = &this.inputs {
+                            window.focus(&inputs.url.focus_handle(cx));
+                            inputs.url.update(cx, |input, cx| input.move_to_end(cx));
+                            cx.notify();
+                        }
+                    },
+                ));
+                if request.url.is_empty() {
+                    chips.child(div().text_color(rgb(FAINT)).child("Enter a URL"))
+                } else {
+                    chips.children(url_segments(&request.url, scope).into_iter().map(|segment| match segment {
+                        UrlSegment::Text(text) => div().flex_none().child(text),
+                        UrlSegment::Chip { name, resolves } => div()
+                            .flex_none()
+                            .px_1()
+                            .rounded_sm()
+                            .bg(rgb(if resolves { CHIP_BG } else { 0x4a3a1a }))
+                            .text_color(rgb(if resolves { CHIP_TEXT } else { WARNING }))
+                            .child(name),
+                    }))
+                }
+            }
+        };
         div()
             .flex()
             .flex_row()
@@ -493,11 +638,12 @@ impl Shell {
             .flex_none()
             .rounded_md()
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(if url_focused { ACCENT } else { BORDER }))
             .bg(rgb(FIELD_BG))
             .overflow_hidden()
             .child(
                 div()
+                    .id("method")
                     .h_full()
                     .flex()
                     .flex_none()
@@ -507,20 +653,17 @@ impl Shell {
                     .border_color(rgb(BORDER))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(method_color(&request.method)))
-                    .child(request.method.clone()),
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(ROW_HOVER)))
+                    .child(request.method.clone())
+                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.change_request(cx, |request| {
+                            edit::cycle_method(request);
+                            true
+                        });
+                    })),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .px_3()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .font_family(MONO)
-                    .children(segments),
-            )
+            .child(url_area)
             .child(
                 div()
                     .id("send-request")
@@ -542,6 +685,87 @@ impl Shell {
             )
     }
 
+    fn input_cell(input: &Entity<TextInput>) -> gpui::Div {
+        div().px_2().py_1().rounded_sm().border_1().border_color(rgb(BORDER)).bg(rgb(FIELD_BG)).font_family(MONO).overflow_hidden().child(input.clone())
+    }
+
+    /// The headers as editable rows: an on/off box, the name, the value and a remove mark, then a row to add one.
+    /// A Secret header's value is masked and cannot be typed, because Secrets are not ported yet (ADR 0092).
+    fn headers_editor(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
+        let mut section = div().flex().flex_col().gap_1();
+        let inputs = self.inputs.as_ref().map(|inputs| inputs.headers.as_slice()).unwrap_or(&[]);
+        for (index, (header, (key_input, value_input))) in request.headers.iter().zip(inputs).enumerate() {
+            let value_cell = if header.is_secret {
+                div().px_2().py_1().font_family(MONO).text_color(rgb(FAINT)).child("•••••• (a Secret, not editable here)")
+            } else {
+                Self::input_cell(value_input)
+            };
+            section = section.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("header-toggle-{index}")))
+                            .w(px(18.0))
+                            .h(px(18.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(if header.enabled { ACCENT } else { BORDER }))
+                            .text_xs()
+                            .text_color(rgb(ACCENT))
+                            .cursor_pointer()
+                            .child(if header.enabled { "✓" } else { "" })
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::toggle_header(request, index));
+                            })),
+                    )
+                    .child(Self::input_cell(key_input).w(px(240.0)).flex_none())
+                    .child(value_cell.flex_1())
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("header-remove-{index}")))
+                            .px_2()
+                            .flex_none()
+                            .text_color(rgb(FAINT))
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(rgb(ERROR)))
+                            .child("×")
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::remove_header(request, index));
+                                this.inputs = None;
+                            })),
+                    ),
+            );
+        }
+        section.child(
+            div().flex().flex_row().child(
+                div()
+                    .id("header-add")
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .hover(|style| style.text_color(rgb(TEXT)).bg(rgb(ROW_HOVER)))
+                    .child("+ Add header")
+                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.change_request(cx, |request| {
+                            edit::add_header(request);
+                            true
+                        });
+                        this.inputs = None;
+                    })),
+            ),
+        )
+    }
+
     fn request_tab_button(&self, tab: RequestTab, label: String, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let is_active = self.request_tab == tab;
         div()
@@ -559,7 +783,7 @@ impl Shell {
             }))
     }
 
-    fn request_section(&self, request: &ApiRequest) -> gpui::Div {
+    fn request_section(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
         let section = div().flex().flex_col().gap_1();
         match self.request_tab {
             RequestTab::Params => {
@@ -569,15 +793,7 @@ impl Shell {
                 }
                 section.children(params.into_iter().map(|(key, value)| pair_row(key, value, false)))
             }
-            RequestTab::Headers => {
-                if request.headers.is_empty() {
-                    return section.child(muted_note("No headers."));
-                }
-                section.children(request.headers.iter().map(|header| {
-                    let value = if header.is_secret { "••••••".to_string() } else { header.value.clone() };
-                    pair_row(header.key.clone(), value, !header.enabled)
-                }))
-            }
+            RequestTab::Headers => self.headers_editor(request, cx),
             RequestTab::Auth => section.child(muted_note(auth_label(request))),
             RequestTab::Body => {
                 if request.body.is_empty() {
@@ -603,7 +819,7 @@ impl Shell {
         }
     }
 
-    fn request_pane(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn request_pane(&self, url_focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let pane = div().flex_none().flex().flex_col().gap_2().p_3();
         if let Some(error) = &self.model.error {
             return pane.child(div().text_color(rgb(WARNING)).child(error.clone()));
@@ -617,7 +833,7 @@ impl Shell {
         let checks = request.assertions.as_ref().map_or(0, Vec::len);
         let enabled_headers = request.headers.iter().filter(|header| header.enabled).count();
 
-        let mut pane = pane.child(self.url_bar(request, &scope, cx));
+        let mut pane = pane.child(self.url_bar(request, &scope, url_focused, cx));
         if resolved != request.url {
             pane = pane.child(
                 div()
@@ -644,7 +860,7 @@ impl Shell {
                 .child(self.request_tab_button(RequestTab::Body, "Body".to_string(), cx))
                 .child(self.request_tab_button(RequestTab::Checks, format!("Checks {checks}"), cx)),
         )
-        .child(self.request_section(request).id("request-section").max_h(px(220.0)).overflow_y_scroll().py_1())
+        .child(self.request_section(request, cx).id("request-section").max_h(px(220.0)).overflow_y_scroll().py_1())
     }
 
     fn response_tab_button(&self, tab: ResponseTab, label: String, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -775,6 +991,10 @@ impl Shell {
             .text_color(rgb(FAINT))
             .child(format!("Branch: {branch}"))
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(status.workspace.clone()))
+            .children(self.notice.as_ref().map(|(text, is_problem)| {
+                div().flex_none().text_color(rgb(if *is_problem { WARNING } else { SUCCESS })).child(text.clone())
+            }))
+            .children((self.state.unsaved_count() > 0).then(|| div().flex_none().child(format!("{} unsaved", self.state.unsaved_count()))))
     }
 }
 
@@ -783,8 +1003,16 @@ fn read_dot_env(model: &ShellModel) -> Vec<KeyValue> {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_inputs(cx);
+        let url_focused = self.inputs.as_ref().is_some_and(|inputs| inputs.url.focus_handle(cx).is_focused(window));
         div()
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this: &mut Shell, _: &Save, _: &mut Window, cx: &mut Context<Shell>| this.save_workspace(cx)))
+            .on_action(cx.listener(|this: &mut Shell, _: &SendRequest, _: &mut Window, cx: &mut Context<Shell>| {
+                this.send_selected(cx);
+                cx.notify();
+            }))
             .flex()
             .flex_col()
             .size_full()
@@ -800,7 +1028,7 @@ impl Render for Shell {
                         .flex_col()
                         .overflow_hidden()
                         .child(self.tab_strip(cx))
-                        .child(self.request_pane(cx))
+                        .child(self.request_pane(url_focused, cx))
                         .child(self.response_pane(cx)),
                 ),
             )
@@ -810,9 +1038,15 @@ impl Render for Shell {
 
 fn main() {
     let folder = folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
-    let model = ShellModel::load(folder);
+    let (model, store) = ShellModel::open(folder);
 
     Application::new().run(move |cx: &mut App| {
+        text_input::bind_keys(cx);
+        cx.bind_keys([
+            KeyBinding::new("secondary-s", Save, None),
+            KeyBinding::new("secondary-enter", SendRequest, None),
+            KeyBinding::new("enter", SendRequest, Some("TextInput")),
+        ]);
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
         cx.open_window(
             WindowOptions {
@@ -820,7 +1054,11 @@ fn main() {
                 titlebar: Some(TitlebarOptions { title: Some("Ricochet".into()), ..Default::default() }),
                 ..Default::default()
             },
-            move |_, cx| cx.new(move |_| Shell::new(model)),
+            move |window, cx| {
+                let shell = cx.new(move |cx| Shell::new(model, store, cx));
+                window.focus(&shell.read(cx).focus_handle);
+                shell
+            },
         )
         .unwrap();
         cx.activate(true);

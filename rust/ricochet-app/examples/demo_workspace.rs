@@ -42,7 +42,10 @@ fn main() -> std::io::Result<()> {
         environments: vec![staging],
         ..Default::default()
     };
-    let issues = WorkspaceFolder::new(&folder).save(&workspace)?;
+    // Load first, as the app does: that gives the Workspace its id before anything is written.
+    let mut store = WorkspaceFolder::new(&folder);
+    store.load()?;
+    let issues = store.save(&workspace)?;
     println!("Wrote the demo Workspace to {folder} ({} issue(s))", issues.len());
     Ok(())
 }

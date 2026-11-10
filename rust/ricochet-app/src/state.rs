@@ -20,6 +20,8 @@ pub struct AppState {
     active_environment_id: Option<String>,
     /// Ids of the Collections and Folders folded shut in the sidebar. Everything else is open.
     collapsed: BTreeSet<String>,
+    /// Ids of the sidebar items whose Requests have changes that are not saved yet.
+    unsaved: BTreeSet<String>,
 }
 
 impl AppState {
@@ -43,6 +45,28 @@ impl AppState {
 
     pub fn active_environment_id(&self) -> Option<&str> {
         self.active_environment_id.as_deref()
+    }
+
+    /// Records that a Request has a change that is not on disk yet.
+    pub fn mark_unsaved(&mut self, item_id: &str) {
+        self.unsaved.insert(item_id.to_string());
+    }
+
+    pub fn is_unsaved(&self, item_id: &str) -> bool {
+        self.unsaved.contains(item_id)
+    }
+
+    pub fn has_unsaved(&self) -> bool {
+        !self.unsaved.is_empty()
+    }
+
+    pub fn unsaved_count(&self) -> usize {
+        self.unsaved.len()
+    }
+
+    /// Forgets every unsaved mark, after a save wrote the whole Workspace.
+    pub fn clear_unsaved(&mut self) {
+        self.unsaved.clear();
     }
 
     pub fn is_collapsed(&self, item_id: &str) -> bool {

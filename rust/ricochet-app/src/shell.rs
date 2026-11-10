@@ -33,21 +33,29 @@ pub fn folder_from(arg: Option<&str>, env: Option<&str>) -> Option<PathBuf> {
 impl ShellModel {
     /// Reads the folder through the store. A missing folder is reported, never created.
     pub fn load(folder: Option<PathBuf>) -> Self {
+        Self::open(folder).0
+    }
+
+    /// As [`ShellModel::load`], and also hands back the store that read the folder. Saving must go through that
+    /// same store, because it knows which files it understood and so may change. None when nothing was read.
+    pub fn open(folder: Option<PathBuf>) -> (Self, Option<WorkspaceFolder>) {
         let Some(path) = folder else {
-            return Self::failed(None, "No workspace folder. Pass a folder path on the command line or set RICOCHET_DATA.");
+            let message = "No workspace folder. Pass a folder path on the command line or set RICOCHET_DATA.";
+            return (Self::failed(None, message), None);
         };
         if !path.is_dir() {
             let message = format!("The workspace folder {} was not found.", path.display());
-            return Self::failed(Some(path), &message);
+            return (Self::failed(Some(path), &message), None);
         }
-        match WorkspaceFolder::new(&path).load() {
+        let mut store = WorkspaceFolder::new(&path);
+        match store.load() {
             Ok((workspace, issues)) => {
                 let branch = read_branch(&path);
-                Self::from_parts(Some(path), workspace, issues, branch)
+                (Self::from_parts(Some(path), workspace, issues, branch), Some(store))
             }
             Err(error) => {
                 let message = format!("The workspace could not be read: {error}");
-                Self::failed(Some(path), &message)
+                (Self::failed(Some(path), &message), None)
             }
         }
     }
