@@ -3,7 +3,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pretty_assertions::assert_eq;
-use ricochet_app::edit::{Field, set_secret, rename_request, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, fill_secret_headers, find_request_mut, next_method, remove_check, remove_header, remove_header_and_secret, set_field, set_header_name, set_secret_header, toggle_check, toggle_header, toggle_key_in_query};
+use ricochet_app::edit::{Field, add_capture, cycle_capture_source, remove_capture, set_secret, toggle_capture, rename_request, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, fill_secret_headers, find_request_mut, next_method, remove_check, remove_header, remove_header_and_secret, set_field, set_header_name, set_secret_header, toggle_check, toggle_header, toggle_key_in_query};
 use ricochet_app::shell::ShellModel;
 use ricochet_app::state::AppState;
 use ricochet_core::models::{ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
@@ -415,4 +415,52 @@ fn a_typed_secret_header_reaches_the_vault_encrypted_and_never_the_workspace_fil
 
     std::fs::remove_dir_all(&folder).ok();
     std::fs::remove_dir_all(&personal).ok();
+}
+
+#[test]
+fn captures_are_added_with_a_json_default_and_go_back_to_none_when_the_last_is_removed() {
+    use ricochet_core::assertions::sources;
+    let mut request = request();
+    assert_eq!(add_capture(&mut request), 0);
+    assert_eq!(add_capture(&mut request), 1);
+    assert_eq!(request.captures.as_ref().unwrap()[0].source, sources::JSON);
+    assert!(remove_capture(&mut request, 0));
+    assert!(remove_capture(&mut request, 0));
+    assert!(request.captures.is_none(), "an empty list is written as none, so the file gains nothing");
+    assert!(!remove_capture(&mut request, 0));
+    assert!(!toggle_capture(&mut request, 0));
+    assert!(!cycle_capture_source(&mut request, 0));
+}
+
+#[test]
+fn a_capture_name_and_path_are_editable_and_a_capture_can_be_turned_off() {
+    let mut request = request();
+    add_capture(&mut request);
+    assert!(set_field(&mut request, Field::CaptureName(0), "token"));
+    assert!(set_field(&mut request, Field::CapturePath(0), "data.token"));
+    assert!(!set_field(&mut request, Field::CaptureName(0), "token"));
+    assert!(!set_field(&mut request, Field::CapturePath(3), "x"));
+    let capture = &request.captures.as_ref().unwrap()[0];
+    assert_eq!((capture.variable.as_str(), capture.path.as_str()), ("token", "data.token"));
+    assert!(toggle_capture(&mut request, 0));
+    assert!(!request.captures.as_ref().unwrap()[0].enabled);
+}
+
+#[test]
+fn a_capture_source_steps_through_its_list_and_a_body_source_drops_the_path() {
+    use ricochet_core::assertions::sources;
+    use ricochet_app::edit::capture_needs_path;
+    let mut request = request();
+    add_capture(&mut request);
+    assert!(set_field(&mut request, Field::CapturePath(0), "X-Token"));
+    assert!(cycle_capture_source(&mut request, 0));
+    assert_eq!(request.captures.as_ref().unwrap()[0].source, sources::HEADER);
+    assert_eq!(request.captures.as_ref().unwrap()[0].path, "X-Token");
+    assert!(cycle_capture_source(&mut request, 0));
+    assert_eq!(request.captures.as_ref().unwrap()[0].source, sources::BODY);
+    assert_eq!(request.captures.as_ref().unwrap()[0].path, "", "a body capture takes no path");
+    assert!(cycle_capture_source(&mut request, 0));
+    assert_eq!(request.captures.as_ref().unwrap()[0].source, sources::JSON);
+    assert!(!capture_needs_path(sources::BODY));
+    assert!(capture_needs_path(sources::HEADER));
 }

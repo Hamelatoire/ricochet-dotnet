@@ -90,6 +90,7 @@ enum RequestTab {
     Auth,
     Body,
     Checks,
+    Captures,
 }
 
 fn status_color(status_code: u16) -> u32 {
@@ -173,6 +174,8 @@ struct RequestInputs {
     headers: Vec<(Entity<TextInput>, Option<Entity<TextInput>>)>,
     /// One (path, expected) pair per check, in the Request's order.
     checks: Vec<(Entity<TextInput>, Entity<TextInput>)>,
+    /// One (variable, path) pair per capture, in the Request's order.
+    captures: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -349,6 +352,19 @@ impl Shell {
                 )
             })
             .collect();
+        let captures = request
+            .captures
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .enumerate()
+            .map(|(index, capture)| {
+                (
+                    Self::make_input(Field::CaptureName(index), capture.variable.clone(), "Variable", &mut subscriptions, cx),
+                    Self::make_input(Field::CapturePath(index), capture.path.clone(), "Path", &mut subscriptions, cx),
+                )
+            })
+            .collect();
         let auth_token = self.make_secret_input(auth_key(&request.id, "token"), "Token", &mut subscriptions, cx);
         let auth_password = self.make_secret_input(auth_key(&request.id, "password"), "Password", &mut subscriptions, cx);
         let auth_key_value = self.make_secret_input(auth_key(&request.id, "keyValue"), "Value", &mut subscriptions, cx);
@@ -374,6 +390,7 @@ impl Shell {
             auth_key_value,
             headers,
             checks,
+            captures,
             _subscriptions: subscriptions,
         });
     }
@@ -1541,6 +1558,98 @@ impl Shell {
         )
     }
 
+    /// The captures as editable rows: on/off, where the value comes from, the path (when the source takes one), the
+    /// Variable it is saved to and a remove mark, then a row to add one.
+    fn captures_editor(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
+        let mut section = div().flex().flex_col().gap_1();
+        let captures = request.captures.as_deref().unwrap_or(&[]);
+        let inputs = self.inputs.as_ref().map(|inputs| inputs.captures.as_slice()).unwrap_or(&[]);
+        if captures.is_empty() {
+            section = section.child(muted_note("No saved values. A saved value keeps part of a response for later Requests to use."));
+        }
+        for (index, capture) in captures.iter().enumerate() {
+            let inputs = inputs.get(index);
+            let path_cell = match inputs {
+                Some((_, path)) if edit::capture_needs_path(&capture.source) => Self::input_cell(path).w(px(180.0)).flex_none(),
+                _ => div().w(px(180.0)).flex_none().text_xs().text_color(rgb(FAINT)).child("No path for this source"),
+            };
+            let name_cell = match inputs {
+                Some((name, _)) => Self::input_cell(name).flex_1(),
+                None => div().flex_1(),
+            };
+            section = section.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("capture-toggle-{index}")))
+                            .w(px(18.0))
+                            .h(px(18.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(if capture.enabled { ACCENT } else { BORDER }))
+                            .text_xs()
+                            .text_color(rgb(ACCENT))
+                            .cursor_pointer()
+                            .child(if capture.enabled { "✓" } else { "" })
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::toggle_capture(request, index));
+                            })),
+                    )
+                    .child(
+                        Self::small_button(SharedString::from(format!("capture-source-{index}")), capture.source.clone())
+                            .flex_none()
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::cycle_capture_source(request, index));
+                            })),
+                    )
+                    .child(path_cell)
+                    .child(name_cell)
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("capture-remove-{index}")))
+                            .px_2()
+                            .flex_none()
+                            .text_color(rgb(FAINT))
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(rgb(ERROR)))
+                            .child("×")
+                            .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| edit::remove_capture(request, index));
+                                this.inputs = None;
+                            })),
+                    ),
+            );
+        }
+        section.child(
+            div().flex().flex_row().child(
+                div()
+                    .id("capture-add")
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .hover(|style| style.text_color(rgb(TEXT)).bg(rgb(ROW_HOVER)))
+                    .child("+ Add saved value")
+                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.change_request(cx, |request| {
+                            edit::add_capture(request);
+                            true
+                        });
+                        this.inputs = None;
+                    })),
+            ),
+        )
+    }
+
     fn request_section(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
         let section = div().flex().flex_col().gap_1();
         match self.request_tab {
@@ -1573,6 +1682,7 @@ impl Shell {
                 None => section.child(muted_note("Pick a request in the sidebar to edit its body.")),
             },
             RequestTab::Checks => self.checks_editor(request, cx),
+            RequestTab::Captures => self.captures_editor(request, cx),
         }
     }
 
@@ -1588,6 +1698,7 @@ impl Shell {
         let scope = self.scope_for(self.state.selected_item().unwrap_or_default());
         let resolved = variables::apply(request, &scope).url;
         let checks = request.assertions.as_ref().map_or(0, Vec::len);
+        let captures = request.captures.as_ref().map_or(0, Vec::len);
         let enabled_headers = request.headers.iter().filter(|header| header.enabled).count();
 
         let name_field = match self.inputs.as_ref() {
@@ -1619,7 +1730,8 @@ impl Shell {
                 .child(self.request_tab_button(RequestTab::Headers, format!("Headers {enabled_headers}"), cx))
                 .child(self.request_tab_button(RequestTab::Auth, "Auth".to_string(), cx))
                 .child(self.request_tab_button(RequestTab::Body, "Body".to_string(), cx))
-                .child(self.request_tab_button(RequestTab::Checks, format!("Checks {checks}"), cx)),
+                .child(self.request_tab_button(RequestTab::Checks, format!("Checks {checks}"), cx))
+                .child(self.request_tab_button(RequestTab::Captures, format!("Captures {captures}"), cx)),
         )
         .child(self.request_section(request, cx).id("request-section").max_h(px(220.0)).overflow_y_scroll().py_1())
     }

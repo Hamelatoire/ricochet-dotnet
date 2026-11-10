@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use ricochet_core::assertions::{RequestAssertion, ops, sources};
+use ricochet_core::assertions::{RequestAssertion, RequestCapture, ops, sources};
 use ricochet_core::models::{ApiRequest, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
 use ricochet_core::secrets::{SecretValue, header_key};
 
@@ -31,6 +31,10 @@ pub enum Field {
     CheckPath(usize),
     /// The text a check compares with.
     CheckExpected(usize),
+    /// The Variable a capture saves its value to.
+    CaptureName(usize),
+    /// The path a capture reads from, such as a header name or a JSON path.
+    CapturePath(usize),
 }
 
 /// The sources a check reads from, in the order its button steps through them.
@@ -122,6 +126,14 @@ pub fn set_field(request: &mut ApiRequest, field: Field, text: &str) -> bool {
         },
         Field::CheckExpected(index) => match request.assertions.as_mut().and_then(|checks| checks.get_mut(index)) {
             Some(check) => &mut check.expected,
+            None => return false,
+        },
+        Field::CaptureName(index) => match request.captures.as_mut().and_then(|captures| captures.get_mut(index)) {
+            Some(capture) => &mut capture.variable,
+            None => return false,
+        },
+        Field::CapturePath(index) => match request.captures.as_mut().and_then(|captures| captures.get_mut(index)) {
+            Some(capture) => &mut capture.path,
             None => return false,
         },
     };
@@ -233,6 +245,63 @@ pub fn remove_check(request: &mut ApiRequest, index: usize) -> bool {
     checks.remove(index);
     if checks.is_empty() {
         request.assertions = None;
+    }
+    true
+}
+
+/// The sources a capture reads from, in the order its button steps through them. Same as the C# editor offers.
+pub const CAPTURE_SOURCES: [&str; 3] = [sources::JSON, sources::HEADER, sources::BODY];
+
+/// Whether a capture from this source needs a path. A body capture has none, so its path is kept empty.
+pub fn capture_needs_path(source: &str) -> bool {
+    matches!(source, sources::HEADER | sources::JSON)
+}
+
+/// Adds a capture that reads a JSON value with nothing set yet, and returns its index.
+pub fn add_capture(request: &mut ApiRequest) -> usize {
+    let captures = request.captures.get_or_insert_with(Vec::new);
+    captures.push(RequestCapture::default());
+    captures.len() - 1
+}
+
+/// Removes a capture. The list goes back to none when it is empty, so the Request's file adds nothing.
+/// Returns false when there is no capture at that index.
+pub fn remove_capture(request: &mut ApiRequest, index: usize) -> bool {
+    let Some(captures) = request.captures.as_mut() else {
+        return false;
+    };
+    if index >= captures.len() {
+        return false;
+    }
+    captures.remove(index);
+    if captures.is_empty() {
+        request.captures = None;
+    }
+    true
+}
+
+/// Turns a capture on or off. Returns false when there is no capture at that index.
+pub fn toggle_capture(request: &mut ApiRequest, index: usize) -> bool {
+    match request.captures.as_mut().and_then(|captures| captures.get_mut(index)) {
+        Some(capture) => {
+            capture.enabled = !capture.enabled;
+            true
+        }
+        None => false,
+    }
+}
+
+/// Moves a capture's source to the next one in [`CAPTURE_SOURCES`]. A source outside the list goes to the first one.
+/// When the new source takes no path, the path is cleared, so the file never holds a path that does nothing.
+/// Returns false when there is no capture at that index.
+pub fn cycle_capture_source(request: &mut ApiRequest, index: usize) -> bool {
+    let Some(capture) = request.captures.as_mut().and_then(|captures| captures.get_mut(index)) else {
+        return false;
+    };
+    let position = CAPTURE_SOURCES.iter().position(|choice| *choice == capture.source.as_str());
+    capture.source = CAPTURE_SOURCES[position.map_or(0, |position| (position + 1) % CAPTURE_SOURCES.len())].to_string();
+    if !capture_needs_path(&capture.source) {
+        capture.path.clear();
     }
     true
 }
