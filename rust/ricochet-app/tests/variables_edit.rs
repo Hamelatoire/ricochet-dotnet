@@ -52,3 +52,17 @@ fn a_variable_can_be_added_toggled_and_removed() {
     assert!(!toggle_variable(vars, index));
     assert_eq!(vars.len(), 1);
 }
+
+#[test]
+fn folder_tags_are_set_from_comma_separated_text_and_an_empty_list_is_stored_as_none() {
+    use ricochet_app::edit::{folder_tags_of, set_folder_tags};
+    let mut workspace = workspace();
+    assert!(set_folder_tags(&mut workspace, "folder", "orders, Public , orders"));
+    assert_eq!(folder_tags_of(&workspace, "folder"), vec!["orders".to_string(), "Public".to_string()]);
+    assert!(!set_folder_tags(&mut workspace, "folder", "orders, Public , orders"));
+    assert!(set_folder_tags(&mut workspace, "folder", "  "));
+    assert!(folder_tags_of(&workspace, "folder").is_empty());
+    assert_eq!(workspace.collections[0].items[0].tags, None);
+    assert!(!set_folder_tags(&mut workspace, "req", "x"), "a Request has no tags");
+    assert!(!set_folder_tags(&mut workspace, "c", "x"), "a Collection is not a Folder");
+}

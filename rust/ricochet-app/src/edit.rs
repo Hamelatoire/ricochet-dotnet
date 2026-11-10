@@ -551,3 +551,48 @@ pub fn set_override(workspace: &mut Workspace, environment_id: &str, key: &str, 
         }
     }
 }
+
+/// The tags of the Folder with this id. Empty for a Request, a Collection, or an unknown id.
+pub fn folder_tags_of(workspace: &Workspace, item_id: &str) -> Vec<String> {
+    workspace.collections.iter().find_map(|collection| folder_tags_in(&collection.items, item_id)).unwrap_or_default()
+}
+
+fn folder_tags_in(items: &[CollectionItem], item_id: &str) -> Option<Vec<String>> {
+    for item in items {
+        if item.id == item_id {
+            return if item.request.is_none() { Some(item.tags.clone().unwrap_or_default()) } else { None };
+        }
+        if let Some(found) = folder_tags_in(&item.children, item_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Sets the tags of the Folder with this id from comma separated text, as the Folder editor types them. Returns false,
+/// and changes nothing, when there is no such Folder or the tags are the same.
+pub fn set_folder_tags(workspace: &mut Workspace, item_id: &str, text: &str) -> bool {
+    let tags = ricochet_core::folder_tags::normalize(Some(ricochet_core::folder_tags::parse(text)));
+    for collection in workspace.collections.iter_mut() {
+        if let Some(item) = folder_mut(&mut collection.items, item_id) {
+            if item.tags == tags {
+                return false;
+            }
+            item.tags = tags;
+            return true;
+        }
+    }
+    false
+}
+
+fn folder_mut<'a>(items: &'a mut [CollectionItem], item_id: &str) -> Option<&'a mut CollectionItem> {
+    for item in items {
+        if item.id == item_id {
+            return if item.request.is_none() { Some(item) } else { None };
+        }
+        if let Some(found) = folder_mut(&mut item.children, item_id) {
+            return Some(found);
+        }
+    }
+    None
+}

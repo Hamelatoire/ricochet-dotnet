@@ -272,6 +272,8 @@ struct ContainerInputs {
     source: Option<String>,
     /// The name field, for an Environment. None for a Collection or Folder.
     name: Option<Entity<TextInput>>,
+    /// The tags field, for a Folder: comma separated. None for a Collection, an Environment or a Request.
+    tags: Option<Entity<TextInput>>,
     rows: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     /// One (name, default, value field) per Collection variable, for an Environment.
     overrides: Vec<(String, String, Entity<TextInput>)>,
@@ -2267,6 +2269,22 @@ impl Shell {
             }));
             input
         });
+        let is_folder = !is_environment
+            && self.selected_kind().is_some_and(|(id, kind)| id == item_id && kind == RowKind::Folder);
+        let tags = is_folder.then(|| {
+            let text = edit::folder_tags_of(&self.model.workspace, &item_id).join(", ");
+            let input = cx.new(|cx| TextInput::new(text, "Tags, separated by commas", cx));
+            let folder = item_id.clone();
+            subscriptions.push(cx.subscribe(&input, move |this: &mut Shell, input, _: &Changed, cx| {
+                let text = input.read(cx).text().to_string();
+                if edit::set_folder_tags(&mut this.model.workspace, &folder, &text) {
+                    this.state.mark_unsaved(&folder);
+                    this.notice = None;
+                    cx.notify();
+                }
+            }));
+            input
+        });
         let mut rows = Vec::new();
         for (index, variable) in variables.iter().enumerate() {
             let name = cx.new(|cx| TextInput::new(variable.key.clone(), "Name", cx));
@@ -2310,7 +2328,7 @@ impl Shell {
                 overrides.push((key, default.value.clone(), input));
             }
         }
-        self.container_inputs = Some(ContainerInputs { item_id, source, name, rows, overrides, _subscriptions: subscriptions });
+        self.container_inputs = Some(ContainerInputs { item_id, source, name, tags, rows, overrides, _subscriptions: subscriptions });
     }
 
     /// The Collection, Folder or Environment the editor shows: the Environment open in the editor, else the sidebar's
@@ -2441,6 +2459,15 @@ impl Shell {
                 .gap_2()
                 .p_3()
                 .child(heading)
+                .children(inputs.tags.as_ref().map(|tags| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(div().w(px(60.0)).flex_none().text_color(rgb(MUTED)).child("Tags"))
+                        .child(div().flex_1().child(Self::input_cell(tags)))
+                }))
                 .child(muted_note("These Variables apply to the Requests inside this item. A Variable that is off is not used."))
                 .child(list.id("container-variables").max_h(px(360.0)).overflow_y_scroll())
                 .child(add)
