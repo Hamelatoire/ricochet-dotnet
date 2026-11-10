@@ -25,6 +25,7 @@ use ricochet_app::status::NO_ENVIRONMENT;
 use ricochet_app::tree::{RowKind, TreeRow, build_tree, build_tree_folded, filter_rows, find_request};
 use ricochet_app::tree_edit;
 use ricochet_app::palette::{self, PaletteAction};
+use ricochet_core::shortcut_sheet;
 use ricochet_core::models::{ApiRequest, KeyValue, auth_kinds};
 use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
@@ -33,7 +34,7 @@ use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
-actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, ClosePalette]);
+actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, ClosePalette, OpenShortcutSheet]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -236,6 +237,8 @@ struct Shell {
     prompt: Option<PromptDialog>,
     /// The command palette, or None while it is closed.
     palette: Option<PaletteState>,
+    /// Whether the keyboard shortcut sheet is open (F1 or Ctrl+/).
+    shortcut_sheet_open: bool,
     /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
     renaming: Option<(String, Entity<TextInput>, Subscription)>,
     /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
@@ -295,6 +298,7 @@ impl Shell {
             editing_environment: None,
             prompt: None,
             palette: None,
+            shortcut_sheet_open: false,
             renaming: None,
             show_hidden: false,
             focus_handle: cx.focus_handle(),
@@ -877,9 +881,55 @@ impl Shell {
         cx.notify();
     }
 
+    /// Closes whichever overlay is open: the palette, then the shortcut sheet.
     fn close_palette(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
+        self.shortcut_sheet_open = false;
         cx.notify();
+    }
+
+    /// The keyboard shortcut sheet: every shortcut, grouped by the area where it works. None while it is closed.
+    fn shortcut_sheet_overlay(&self) -> Option<gpui::Stateful<gpui::Div>> {
+        if !self.shortcut_sheet_open {
+            return None;
+        }
+        let mac_os = cfg!(target_os = "macos");
+        let mut panel = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(BORDER))
+            .bg(rgb(CHROME_BG))
+            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Keyboard shortcuts"))
+            .child(muted_note("Press Escape to close."));
+        for (area, entries) in shortcut_sheet::groups(mac_os) {
+            panel = panel.child(Self::section_label(shortcut_sheet::title(area)).pt_2());
+            for entry in entries {
+                panel = panel.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_3()
+                        .text_sm()
+                        .child(div().w(px(180.0)).flex_none().font_family(MONO).text_color(rgb(TEXT)).child(entry.keys))
+                        .child(div().flex_1().text_color(rgb(MUTED)).child(entry.action)),
+                );
+            }
+        }
+        Some(
+            div()
+                .id("shortcut-sheet")
+                .absolute()
+                .top(px(60.0))
+                .left(px(160.0))
+                .w(px(640.0))
+                .max_h(px(560.0))
+                .overflow_y_scroll()
+                .child(panel),
+        )
     }
 
     /// Closes the palette and runs the entry at this index of the filtered list. An index with no entry only closes it.
@@ -2484,6 +2534,10 @@ impl Render for Shell {
                 this.open_palette(window, cx)
             }))
             .on_action(cx.listener(|this: &mut Shell, _: &ClosePalette, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx)))
+            .on_action(cx.listener(|this: &mut Shell, _: &OpenShortcutSheet, _: &mut Window, cx: &mut Context<Shell>| {
+                this.shortcut_sheet_open = true;
+                cx.notify();
+            }))
             .on_action(cx.listener(|this: &mut Shell, _: &SendRequest, _: &mut Window, cx: &mut Context<Shell>| {
                 this.send_selected(cx);
                 cx.notify();
@@ -2511,6 +2565,7 @@ impl Render for Shell {
             .children(self.environment_menu(cx))
             .children(self.prompt_dialog(cx))
             .children(self.palette_overlay(cx))
+            .children(self.shortcut_sheet_overlay())
     }
 }
 
@@ -2527,6 +2582,8 @@ fn main() {
             KeyBinding::new("secondary-n", NewRequest, None),
             KeyBinding::new("secondary-k", OpenPalette, None),
             KeyBinding::new("escape", ClosePalette, None),
+            KeyBinding::new("f1", OpenShortcutSheet, None),
+            KeyBinding::new("secondary-/", OpenShortcutSheet, None),
             KeyBinding::new("secondary-enter", SendRequest, None),
             KeyBinding::new("enter", SendRequest, Some("TextInput")),
         ]);
