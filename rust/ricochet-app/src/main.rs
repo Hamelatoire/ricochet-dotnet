@@ -29,6 +29,7 @@ use ricochet_core::shortcut_sheet;
 use ricochet_core::models::{ApiRequest, KeyValue, auth_kinds};
 use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
+use ricochet_core::response_compare::{self, DiffKind, ResponseInput};
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
@@ -82,6 +83,8 @@ struct SentResponse {
 enum ResponseTab {
     Body,
     Headers,
+    /// Compares the response with the one sent before it, for the same Request.
+    Compare,
 }
 
 /// The section of the Request on show under the URL bar.
@@ -138,6 +141,77 @@ fn auth_label(request: &ApiRequest) -> &'static str {
         Some(auth_kinds::AWS_SIG_V4) => "AWS Signature v4. The secrets are hidden.",
         Some(_) => "An auth kind this build does not know.",
     }
+}
+
+/// The response as the comparison reads it.
+fn input_of(response: &ApiResponse) -> ResponseInput {
+    ResponseInput {
+        status: response.status_code,
+        headers: response.headers.clone(),
+        body: response.body.clone(),
+        media_type: response.media_type.clone(),
+    }
+}
+
+/// The side-by-side comparison of the response with the one before it: the status, the headers that changed, and the
+/// body rows, with removed, added and changed rows tinted. Sensitive headers show only that they are hidden.
+fn compare_view(previous: Option<&ResponseInput>, current: &ResponseInput) -> gpui::Div {
+    let Some(previous) = previous else {
+        return div().flex().flex_col().child(muted_note("Send this request again to compare its response with the one before."));
+    };
+    let comparison = response_compare::compare(previous, current, &[]);
+    let mut view = div().flex().flex_col().gap_2().font_family(MONO).text_sm();
+    if previous.status != current.status {
+        view = view.child(div().text_color(rgb(WARNING)).child(format!("Status {} → {}", previous.status, current.status)));
+    }
+    let changed: Vec<_> = comparison.headers.iter().filter(|header| header.changed()).collect();
+    if changed.is_empty() {
+        view = view.child(muted_note("No header values changed."));
+    }
+    for header in changed {
+        let before = header.previous.clone().unwrap_or_else(|| "none".to_string());
+        let after = header.current.clone().unwrap_or_else(|| "none".to_string());
+        view = view.child(div().text_color(rgb(MUTED)).child(format!("{}: {} → {}", header.name, before, after)));
+    }
+    if let Some(note) = comparison.body_note.clone() {
+        return view.child(muted_note(note));
+    }
+    for line in comparison.body {
+        let (before_bg, after_bg) = match line.kind {
+            DiffKind::Same => (WINDOW_BG, WINDOW_BG),
+            DiffKind::Removed => (0x3d1f24, WINDOW_BG),
+            DiffKind::Added => (WINDOW_BG, 0x1f3d28),
+            DiffKind::Changed => (0x3d3520, 0x3d3520),
+        };
+        let number = |value: Option<usize>| value.map(|n| n.to_string()).unwrap_or_default();
+        view = view.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .bg(rgb(before_bg))
+                        .child(div().w(px(36.0)).flex_none().text_color(rgb(FAINT)).child(number(line.previous_number)))
+                        .child(div().flex_1().overflow_hidden().child(line.previous.unwrap_or_default())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .bg(rgb(after_bg))
+                        .child(div().w(px(36.0)).flex_none().text_color(rgb(FAINT)).child(number(line.current_number)))
+                        .child(div().flex_1().overflow_hidden().child(line.current.unwrap_or_default())),
+                ),
+        );
+    }
+    view
 }
 
 fn muted_note(text: impl Into<SharedString>) -> gpui::Div {
@@ -245,6 +319,8 @@ struct Shell {
     show_hidden: bool,
     focus_handle: FocusHandle,
     state: AppState,
+    /// The response sent before the latest one, for each Request, for the Compare tab. Kept in memory only.
+    previous_responses: HashMap<String, ResponseInput>,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
     responses: HashMap<String, ResponseView>,
     /// Every send, newest first. Kept in the personal folder as history.json (see ricochet_core::history).
@@ -304,6 +380,7 @@ impl Shell {
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
+            previous_responses: HashMap::new(),
             history,
             history_readable,
             personal_dir,
@@ -659,6 +736,11 @@ impl Shell {
         }
         let unresolved = variables::find_placeholders(&sent);
 
+        // The response being replaced becomes the one the Compare tab compares with.
+        if let Some(ResponseView::Done(old)) = self.responses.get(&id) {
+            let snapshot = input_of(&old.response);
+            self.previous_responses.insert(id.clone(), snapshot);
+        }
         self.responses.insert(id.clone(), ResponseView::Sending);
         let work = cx.background_executor().spawn(async move {
             RequestSender::new().send(&sent).map_err(|error| error.message().to_string()).map(|response| {
@@ -2320,6 +2402,7 @@ impl Shell {
         let copy_text: String = match self.response_tab {
             ResponseTab::Body => sent.body.clone(),
             ResponseTab::Headers => response.headers.iter().map(|header| format!("{}: {}\n", header.key, header.value)).collect(),
+            ResponseTab::Compare => String::new(),
         };
 
         pane = pane.child(
@@ -2343,6 +2426,7 @@ impl Shell {
                 .child(div().flex_1())
                 .child(self.response_tab_button(ResponseTab::Body, "Body".to_string(), cx))
                 .child(self.response_tab_button(ResponseTab::Headers, format!("Headers {}", response.headers.len()), cx))
+                .child(self.response_tab_button(ResponseTab::Compare, "Compare".to_string(), cx))
                 .child(
                     div()
                         .id("copy-response")
@@ -2377,6 +2461,10 @@ impl Shell {
             ResponseTab::Body => content.children(Self::body_lines(sent)),
             ResponseTab::Headers => {
                 content.gap_1().children(response.headers.iter().map(|header| pair_row(header.key.clone(), header.value.clone(), false)))
+            }
+            ResponseTab::Compare => {
+                let previous = self.state.selected_item().and_then(|id| self.previous_responses.get(id));
+                content.child(compare_view(previous, &input_of(response)))
             }
         })
     }
