@@ -31,6 +31,7 @@ use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
 use ricochet_core::response_compare::{self, DiffKind, ResponseInput};
 use ricochet_core::response_examples;
+use ricochet_core::curl;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
@@ -1150,6 +1151,24 @@ impl Shell {
             .ok();
         })
         .detach();
+    }
+
+    /// Copies the selected Request as a curl command, with its Variables applied. Secret values from the vault are
+    /// masked in the command.
+    fn copy_as_curl(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.state.selected_item().map(str::to_string) else {
+            return;
+        };
+        let Some(request) = find_request(&self.model.workspace, &id) else {
+            return;
+        };
+        let resolved = variables::apply(request, &self.scope_for(&id));
+        let secrets: Vec<String> = self.vault.secrets.values().map(|value| value.expose().to_string()).collect();
+        let secret_refs: Vec<&str> = secrets.iter().map(String::as_str).collect();
+        let command = curl::generate(&resolved, &secret_refs, false);
+        cx.write_to_clipboard(ClipboardItem::new_string(command));
+        self.notice = Some(("Copied as curl. Secret values are masked.".to_string(), false));
+        cx.notify();
     }
 
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
@@ -2408,6 +2427,10 @@ impl Shell {
                 .child(self.request_tab_button(RequestTab::Auth, "Auth".to_string(), cx))
                 .child(self.request_tab_button(RequestTab::Body, "Body".to_string(), cx))
                 .child(self.request_tab_button(RequestTab::Checks, format!("Checks {checks}"), cx))
+                .child(div().flex_1())
+                .child(Self::small_button(SharedString::from("copy-curl"), "Copy as curl".to_string()).on_click(cx.listener(
+                    |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.copy_as_curl(cx),
+                )))
                 .child(self.request_tab_button(RequestTab::Captures, format!("Captures {captures}"), cx)),
         )
         .child(self.request_section(request, cx).id("request-section").max_h(px(220.0)).overflow_y_scroll().py_1())
