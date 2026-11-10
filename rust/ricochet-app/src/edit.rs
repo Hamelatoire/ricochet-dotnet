@@ -50,6 +50,37 @@ pub const CHECK_OPS: [&str; 9] = [
 /// offered, because they need Secrets.
 pub const AUTH_KINDS: [&str; 4] = [auth_kinds::NONE, auth_kinds::BEARER, auth_kinds::BASIC, auth_kinds::API_KEY];
 
+/// Renames the Request in the sidebar item with this id. The sidebar shows the item's name and the Request's name, so
+/// both are set. Returns false, and changes nothing, when the item is not a Request or the name is the same.
+pub fn rename_request(workspace: &mut Workspace, item_id: &str, name: &str) -> bool {
+    for collection in workspace.collections.iter_mut() {
+        if let Some(item) = find_item_mut(&mut collection.items, item_id) {
+            let Some(request) = item.request.as_mut() else {
+                return false;
+            };
+            if item.name == name && request.name == name {
+                return false;
+            }
+            item.name = name.to_string();
+            request.name = name.to_string();
+            return true;
+        }
+    }
+    false
+}
+
+fn find_item_mut<'a>(items: &'a mut [CollectionItem], item_id: &str) -> Option<&'a mut CollectionItem> {
+    for item in items {
+        if item.id == item_id {
+            return Some(item);
+        }
+        if let Some(found) = find_item_mut(&mut item.children, item_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 /// The Request held by the sidebar item with this id, for changing.
 pub fn find_request_mut<'a>(workspace: &'a mut Workspace, item_id: &str) -> Option<&'a mut ApiRequest> {
     workspace.collections.iter_mut().find_map(|collection| find_in(&mut collection.items, item_id))

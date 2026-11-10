@@ -3,7 +3,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pretty_assertions::assert_eq;
-use ricochet_app::edit::{Field, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, find_request_mut, next_method, remove_check, remove_header, set_field, toggle_check, toggle_header, toggle_key_in_query};
+use ricochet_app::edit::{Field, rename_request, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, find_request_mut, next_method, remove_check, remove_header, set_field, toggle_check, toggle_header, toggle_key_in_query};
 use ricochet_app::shell::ShellModel;
 use ricochet_app::state::AppState;
 use ricochet_core::models::{ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
@@ -229,4 +229,16 @@ fn a_check_path_and_expected_text_are_editable_and_a_check_can_be_turned_off() {
     assert_eq!((check.path.as_str(), check.expected.as_str()), ("Content-Type", "application/json"));
     assert!(toggle_check(&mut request, 0));
     assert!(!request.assertions.as_ref().unwrap()[0].enabled);
+}
+
+#[test]
+fn a_rename_sets_the_item_name_and_the_request_name_together() {
+    let mut workspace = workspace();
+    assert!(rename_request(&mut workspace, "inner", "Inner, renamed"));
+    let item = &workspace.collections[0].items[0].children[0];
+    assert_eq!(item.name, "Inner, renamed");
+    assert_eq!(item.request.as_ref().unwrap().name, "Inner, renamed");
+    assert!(!rename_request(&mut workspace, "inner", "Inner, renamed"), "the same name changes nothing");
+    assert!(!rename_request(&mut workspace, "folder", "Only a Request can be renamed here"));
+    assert!(!rename_request(&mut workspace, "missing", "x"));
 }

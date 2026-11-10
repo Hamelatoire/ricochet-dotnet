@@ -147,6 +147,8 @@ fn pair_row(key: String, value: String, dimmed: bool) -> gpui::Div {
 struct RequestInputs {
     item_id: String,
     url: Entity<TextInput>,
+    /// The Request's name.
+    name: Entity<TextInput>,
     /// The Request's body, as a multi-line field.
     body: Entity<TextArea>,
     /// The username of Basic auth, and the name of an API key's parameter. Neither is a Secret.
@@ -232,6 +234,18 @@ impl Shell {
         };
         let mut subscriptions = Vec::new();
         let url = Self::make_input(Field::Url, request.url.clone(), "Enter a URL", &mut subscriptions, cx);
+        let name = cx.new(|cx| TextInput::new(request.name.clone(), "Request name", cx));
+        subscriptions.push(cx.subscribe(&name, |this: &mut Shell, input, _: &Changed, cx| {
+            let text = input.read(cx).text().to_string();
+            let Some(item_id) = this.state.selected_item().map(str::to_string) else {
+                return;
+            };
+            if edit::rename_request(&mut this.model.workspace, &item_id, &text) {
+                this.state.mark_unsaved(&item_id);
+                this.notice = None;
+                cx.notify();
+            }
+        }));
         let headers = request
             .headers
             .iter()
@@ -276,6 +290,7 @@ impl Shell {
         self.inputs = Some(RequestInputs {
             item_id,
             url,
+            name,
             body,
             auth_username,
             auth_key_name,
@@ -1087,7 +1102,11 @@ impl Shell {
         let checks = request.assertions.as_ref().map_or(0, Vec::len);
         let enabled_headers = request.headers.iter().filter(|header| header.enabled).count();
 
-        let mut pane = pane.child(self.url_bar(request, &scope, url_focused, cx));
+        let name_field = match self.inputs.as_ref() {
+            Some(inputs) => Self::input_cell(&inputs.name).w_full().text_lg().font_weight(FontWeight::SEMIBOLD),
+            None => div().text_lg().child(request.name.clone()),
+        };
+        let mut pane = pane.child(name_field).child(self.url_bar(request, &scope, url_focused, cx));
         if resolved != request.url {
             pane = pane.child(
                 div()
