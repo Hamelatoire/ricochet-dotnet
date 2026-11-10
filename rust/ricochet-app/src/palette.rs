@@ -15,6 +15,8 @@ pub enum PaletteAction {
     OpenRequest(String),
     /// Uses this Environment, or none.
     UseEnvironment(Option<String>),
+    CloseAllTabs,
+    CloseOtherTabs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +30,8 @@ pub fn entries(workspace: &Workspace) -> Vec<PaletteEntry> {
     let mut all = vec![
         PaletteEntry { label: "Send request".to_string(), action: PaletteAction::Send },
         PaletteEntry { label: "Save".to_string(), action: PaletteAction::Save },
+        PaletteEntry { label: "Close all tabs".to_string(), action: PaletteAction::CloseAllTabs },
+        PaletteEntry { label: "Close other tabs".to_string(), action: PaletteAction::CloseOtherTabs },
         PaletteEntry { label: "New request".to_string(), action: PaletteAction::NewRequest },
         PaletteEntry { label: "Use no environment".to_string(), action: PaletteAction::UseEnvironment(None) },
     ];

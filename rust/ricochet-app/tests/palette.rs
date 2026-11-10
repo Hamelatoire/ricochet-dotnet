@@ -20,6 +20,8 @@ fn commands_then_environments_then_requests_are_offered() {
         vec![
             "Send request",
             "Save",
+            "Close all tabs",
+            "Close other tabs",
             "New request",
             "Use no environment",
             "Use environment: Staging",

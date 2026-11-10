@@ -34,7 +34,7 @@ use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
-actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, ClosePalette, OpenShortcutSheet]);
+actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -956,6 +956,12 @@ impl Shell {
                 self.state.set_active_environment(id.as_deref());
                 self.save_environment();
             }
+            PaletteAction::CloseAllTabs => {
+                self.state.close_all_tabs();
+                self.editing_environment = None;
+                self.tree_target = None;
+            }
+            PaletteAction::CloseOtherTabs => self.state.close_other_tabs(),
         }
         cx.notify();
     }
@@ -2534,6 +2540,24 @@ impl Render for Shell {
                 this.open_palette(window, cx)
             }))
             .on_action(cx.listener(|this: &mut Shell, _: &ClosePalette, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx)))
+            .on_action(cx.listener(|this: &mut Shell, _: &CloseTab, _: &mut Window, cx: &mut Context<Shell>| {
+                this.state.close_active_tab();
+                this.editing_environment = None;
+                this.tree_target = None;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &NextTab, _: &mut Window, cx: &mut Context<Shell>| {
+                this.state.step_tab(1);
+                this.editing_environment = None;
+                this.tree_target = None;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &PreviousTab, _: &mut Window, cx: &mut Context<Shell>| {
+                this.state.step_tab(-1);
+                this.editing_environment = None;
+                this.tree_target = None;
+                cx.notify();
+            }))
             .on_action(cx.listener(|this: &mut Shell, _: &OpenShortcutSheet, _: &mut Window, cx: &mut Context<Shell>| {
                 this.shortcut_sheet_open = true;
                 cx.notify();
@@ -2583,6 +2607,9 @@ fn main() {
             KeyBinding::new("secondary-k", OpenPalette, None),
             KeyBinding::new("escape", ClosePalette, None),
             KeyBinding::new("f1", OpenShortcutSheet, None),
+            KeyBinding::new("secondary-w", CloseTab, None),
+            KeyBinding::new("secondary-tab", NextTab, None),
+            KeyBinding::new("secondary-shift-tab", PreviousTab, None),
             KeyBinding::new("secondary-/", OpenShortcutSheet, None),
             KeyBinding::new("secondary-enter", SendRequest, None),
             KeyBinding::new("enter", SendRequest, Some("TextInput")),

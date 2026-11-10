@@ -153,3 +153,40 @@ impl AppState {
         self.open_tab(request_id);
     }
 }
+
+impl AppState {
+    /// Closes every open tab. Nothing is selected afterwards.
+    pub fn close_all_tabs(&mut self) {
+        self.open_tabs.clear();
+        self.active_tab = None;
+        self.selected_item = None;
+    }
+
+    /// Closes every tab but the one showing. Does nothing when no tab is showing.
+    pub fn close_other_tabs(&mut self) {
+        let Some(active) = self.active_tab.clone() else {
+            return;
+        };
+        self.open_tabs.retain(|id| *id == active);
+    }
+
+    /// Makes the tab after (`step` 1) or before (`step` -1) the showing one active, wrapping round. Returns false when
+    /// no tab is open.
+    pub fn step_tab(&mut self, step: isize) -> bool {
+        if self.open_tabs.is_empty() {
+            return false;
+        }
+        let len = self.open_tabs.len() as isize;
+        let current = self.active_tab.as_ref().and_then(|active| self.open_tabs.iter().position(|id| id == active)).unwrap_or(0) as isize;
+        let next = self.open_tabs[(current + step).rem_euclid(len) as usize].clone();
+        self.activate_tab(&next)
+    }
+
+    /// Closes the tab that is showing. Returns false when no tab is showing.
+    pub fn close_active_tab(&mut self) -> bool {
+        match self.active_tab.clone() {
+            Some(active) => self.close_tab(&active),
+            None => false,
+        }
+    }
+}
