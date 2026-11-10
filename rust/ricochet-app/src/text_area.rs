@@ -1,6 +1,6 @@
 //! A multi-line text field for GPUI, for the Request body. Each line is shaped on its own and drawn at a fixed line
-//! height. Lines are not wrapped, so a long line runs off to the right. There is no scrolling of the caret into view;
-//! the pane around it scrolls. Typing, the caret, selection, the clipboard and the input method work as they do in
+//! height. Lines are not wrapped, so a long line runs off to the right. With a scroll handle, the box scrolls to keep
+//! the caret in view. Typing, the caret, selection, the clipboard and the input method work as they do in
 //! [`crate::text_input`], which this follows.
 
 use std::ops::Range;
@@ -322,8 +322,8 @@ struct PrepaintState {
     lines: Vec<ShapedLine>,
     selections: Vec<PaintQuad>,
     caret: Option<PaintQuad>,
-    /// Where the caret is drawn, in window coordinates, when it is drawn.
-    caret_bounds: Option<Bounds<Pixels>>,
+    /// The field's bounds after any scroll of the box, which the lines and the caret are drawn in.
+    bounds: Bounds<Pixels>,
     line_height: Pixels,
 }
 
@@ -375,9 +375,14 @@ impl Element for TextAreaElement {
         let selected = area.selected_range.clone();
         let cursor = area.cursor_offset();
         let placeholder = area.placeholder.clone();
+        let scroll = area.scroll.clone();
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
+        let bounds = match scroll {
+            Some(scroll) => keep_visible(&scroll, bounds, line_and_column(&content, cursor).0, line_height),
+            None => bounds,
+        };
         let is_placeholder = content.is_empty();
         let color = if is_placeholder { rgb(PLACEHOLDER).into() } else { style.color };
 
@@ -437,20 +442,20 @@ impl Element for TextAreaElement {
             }
         }
 
-        let caret_bounds = caret.as_ref().map(|quad| quad.bounds);
-        PrepaintState { lines: shaped, selections, caret, caret_bounds, line_height }
+        PrepaintState { lines: shaped, selections, caret, bounds, line_height }
     }
 
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
+        let bounds = prepaint.bounds;
         let focus_handle = self.area.read(cx).focus_handle.clone();
         let is_focused = focus_handle.is_focused(window);
         window.handle_input(&focus_handle, ElementInputHandler::new(bounds, self.area.clone()), cx);
@@ -466,9 +471,6 @@ impl Element for TextAreaElement {
         }
         if is_focused && let Some(caret) = prepaint.caret.take() {
             window.paint_quad(caret);
-        }
-        if let (Some(scroll), Some(caret)) = (self.area.read(cx).scroll.clone(), prepaint.caret_bounds) {
-            keep_visible(&scroll, caret, window);
         }
         let line_height = f32::from(prepaint.line_height);
         self.area.update(cx, |area, _cx| {
@@ -516,20 +518,26 @@ impl Focusable for TextArea {
     }
 }
 
-/// Scrolls the box so the caret is fully inside it. Does nothing before the box has been laid out.
-fn keep_visible(scroll: &ScrollHandle, caret: Bounds<Pixels>, window: &mut Window) {
+/// Scrolls the box so the caret's line is fully inside it, and returns the field's bounds moved by that scroll, so
+/// this frame is drawn where the box will show it. The box's scroll offset is applied when it is laid out, so the
+/// shift is also taken from the bounds here rather than by asking for another frame. Does nothing before the box has
+/// been laid out.
+fn keep_visible(scroll: &ScrollHandle, mut bounds: Bounds<Pixels>, caret_row: usize, line_height: Pixels) -> Bounds<Pixels> {
     let view = scroll.bounds();
     if view.size.height <= px(0.) {
-        return;
+        return bounds;
     }
-    let shift = if caret.bottom() > view.bottom() {
-        view.bottom() - caret.bottom()
-    } else if caret.top() < view.top() {
-        view.top() - caret.top()
+    let top = bounds.top() + line_height * caret_row as f32;
+    let bottom = top + line_height;
+    let shift = if bottom > view.bottom() {
+        view.bottom() - bottom
+    } else if top < view.top() {
+        view.top() - top
     } else {
-        return;
+        return bounds;
     };
     let offset = scroll.offset();
     scroll.set_offset(point(offset.x, offset.y + shift));
-    window.refresh();
+    bounds.origin.y += shift;
+    bounds
 }
