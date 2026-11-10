@@ -182,9 +182,13 @@ struct RequestInputs {
 /// The name and value fields of a selected Collection's or Folder's Variables, one pair per variable in order.
 struct ContainerInputs {
     item_id: String,
+    /// The Collection whose variables an Environment overrides. None when the editor shows no overrides.
+    source: Option<String>,
     /// The name field, for an Environment. None for a Collection or Folder.
     name: Option<Entity<TextInput>>,
     rows: Vec<(Entity<TextInput>, Entity<TextInput>)>,
+    /// One (name, default, value field) per Collection variable, for an Environment.
+    overrides: Vec<(String, String, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1711,12 +1715,13 @@ impl Shell {
             self.container_inputs = None;
             return;
         };
-        if self.container_inputs.as_ref().is_some_and(|inputs| inputs.item_id == item_id) {
+        let is_environment = self.editing_environment.as_deref() == Some(item_id.as_str());
+        let source = if is_environment { self.override_source() } else { None };
+        if self.container_inputs.as_ref().is_some_and(|inputs| inputs.item_id == item_id && inputs.source == source) {
             return;
         }
         let variables: Vec<KeyValue> = edit::variables_of(&self.model.workspace, &item_id).map(<[KeyValue]>::to_vec).unwrap_or_default();
         let mut subscriptions = Vec::new();
-        let is_environment = self.editing_environment.as_deref() == Some(item_id.as_str());
         let name = is_environment.then(|| {
             let current = self.model.workspace.environments.iter().find(|environment| environment.id == item_id).map(|environment| environment.name.clone());
             let input = cx.new(|cx| TextInput::new(current.unwrap_or_default(), "Environment name", cx));
@@ -1747,7 +1752,36 @@ impl Shell {
             }));
             rows.push((name, value));
         }
-        self.container_inputs = Some(ContainerInputs { item_id, name, rows, _subscriptions: subscriptions });
+        let mut overrides = Vec::new();
+        if let (true, Some(collection)) = (is_environment, source.as_deref()) {
+            for default in edit::collection_variables(&self.model.workspace, collection) {
+                let current = self
+                    .model
+                    .workspace
+                    .environments
+                    .iter()
+                    .find(|environment| environment.id == item_id)
+                    .and_then(|environment| environment.variables.iter().find(|variable| variable.key == default.key))
+                    .map(|variable| variable.value.clone())
+                    .unwrap_or_default();
+                let key = default.key.clone();
+                let input = cx.new(|cx| TextInput::new(current, "Value for this environment", cx));
+                let watched = key.clone();
+                subscriptions.push(cx.subscribe(&input, move |this: &mut Shell, input, _: &Changed, cx| {
+                    let text = input.read(cx).text().to_string();
+                    let Some(environment) = this.editing_environment.clone() else {
+                        return;
+                    };
+                    if edit::set_override(&mut this.model.workspace, &environment, &watched, &text) {
+                        this.state.mark_unsaved(&environment);
+                        this.notice = None;
+                        cx.notify();
+                    }
+                }));
+                overrides.push((key, default.value.clone(), input));
+            }
+        }
+        self.container_inputs = Some(ContainerInputs { item_id, source, name, rows, overrides, _subscriptions: subscriptions });
     }
 
     /// The Collection, Folder or Environment the editor shows: the Environment open in the editor, else the sidebar's
@@ -1759,6 +1793,12 @@ impl Shell {
             }
         }
         self.selected_kind().filter(|(_, kind)| matches!(kind, RowKind::Collection | RowKind::Folder)).map(|(id, _)| id)
+    }
+
+    /// The Collection that the sidebar's selection is in, which an Environment's overrides are read from.
+    fn override_source(&self) -> Option<String> {
+        let item = self.tree_target.as_deref().or(self.state.selected_item())?;
+        edit::collection_id_of(&self.model.workspace, item)
     }
 
     /// Deletes the Environment on the second click: the first only asks.
@@ -1875,6 +1915,28 @@ impl Shell {
                 .child(muted_note("These Variables apply to the Requests inside this item. A Variable that is off is not used."))
                 .child(list.id("container-variables").max_h(px(360.0)).overflow_y_scroll())
                 .child(add)
+                .children((!inputs.overrides.is_empty()).then(|| {
+                    let mut section = div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .pt_2()
+                        .child(muted_note("From the collection. A value typed here overrides the default, and an empty value uses the default."));
+                    for (key, default, input) in &inputs.overrides {
+                        let default_text = if default.is_empty() { "No default".to_string() } else { format!("Default: {default}") };
+                        section = section.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(div().w(px(220.0)).flex_none().font_family(MONO).overflow_hidden().whitespace_nowrap().child(key.clone()))
+                                .child(div().w(px(200.0)).flex_none().text_xs().text_color(rgb(FAINT)).overflow_hidden().whitespace_nowrap().child(default_text))
+                                .child(div().flex_1().child(Self::input_cell(input))),
+                        );
+                    }
+                    section
+                }))
                 .children(delete_environment),
         )
     }

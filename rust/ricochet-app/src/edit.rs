@@ -506,3 +506,48 @@ pub fn delete_environment(workspace: &mut Workspace, id: &str) -> bool {
     workspace.environments.retain(|environment| environment.id != id);
     workspace.environments.len() != before
 }
+
+/// The id of the Collection that holds the item with this id, or is that Collection. None when there is none.
+pub fn collection_id_of(workspace: &Workspace, item_id: &str) -> Option<String> {
+    workspace
+        .collections
+        .iter()
+        .find(|collection| collection.id == item_id || contains_item(&collection.items, item_id))
+        .map(|collection| collection.id.clone())
+}
+
+fn contains_item(items: &[CollectionItem], item_id: &str) -> bool {
+    items.iter().any(|item| item.id == item_id || contains_item(&item.children, item_id))
+}
+
+/// The Variables of the Collection with this id, as they are by default. Empty when there is no such Collection.
+pub fn collection_variables(workspace: &Workspace, collection_id: &str) -> Vec<KeyValue> {
+    workspace.collections.iter().find(|collection| collection.id == collection_id).map(|collection| collection.variables.clone()).unwrap_or_default()
+}
+
+/// Sets the Environment's value for one Collection variable. An empty value removes the Environment's entry, so the
+/// default applies again. Returns true when the Environment changed.
+pub fn set_override(workspace: &mut Workspace, environment_id: &str, key: &str, value: &str) -> bool {
+    let Some(environment) = workspace.environments.iter_mut().find(|environment| environment.id == environment_id) else {
+        return false;
+    };
+    let position = environment.variables.iter().position(|variable| variable.key == key);
+    match (position, value.is_empty()) {
+        (Some(index), true) => {
+            environment.variables.remove(index);
+            true
+        }
+        (Some(index), false) => {
+            if environment.variables[index].value == value {
+                return false;
+            }
+            environment.variables[index].value = value.to_string();
+            true
+        }
+        (None, true) => false,
+        (None, false) => {
+            environment.variables.push(KeyValue::new(key, value));
+            true
+        }
+    }
+}
