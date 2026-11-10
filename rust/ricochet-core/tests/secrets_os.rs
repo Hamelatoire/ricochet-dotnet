@@ -3,6 +3,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pretty_assertions::assert_eq;
@@ -12,9 +13,12 @@ use ricochet_core::secrets_os::KeychainVault as Vault;
 #[cfg(target_os = "linux")]
 use ricochet_core::secrets_os::SecretServiceVault as Vault;
 
+/// A name no other test uses. The counter matters: the tests run in parallel, and the macOS clock ticks in
+/// microseconds, so two tests can read the same time and would otherwise share one item.
 fn unique_name() -> String {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    format!("ricochet-test-{}-{nanos}", std::process::id())
+    format!("ricochet-test-{}-{nanos}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst))
 }
 
 fn sample() -> BTreeMap<String, SecretValue> {
