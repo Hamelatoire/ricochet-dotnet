@@ -33,6 +33,7 @@ use ricochet_core::response_compare::{self, DiffKind, ResponseInput};
 use ricochet_core::response_examples;
 use ricochet_core::curl;
 use ricochet_core::postman;
+use ricochet_core::insomnia;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
@@ -1190,7 +1191,7 @@ impl Shell {
             };
             let file_name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
             this.update(cx, |shell, cx| match std::fs::read_to_string(&path) {
-                Ok(text) => shell.finish_postman_import(&text, &file_name, cx),
+                Ok(text) => shell.finish_import(&text, &file_name, cx),
                 Err(error) => {
                     shell.notice = Some((format!("The file could not be read: {error}"), true));
                     cx.notify();
@@ -1201,8 +1202,9 @@ impl Shell {
         .detach();
     }
 
-    fn finish_postman_import(&mut self, text: &str, file_name: &str, cx: &mut Context<Self>) {
-        match postman::import(text, file_name) {
+    /// Imports a Postman export, or else an Insomnia export, into the Workspace.
+    fn finish_import(&mut self, text: &str, file_name: &str, cx: &mut Context<Self>) {
+        let postman_error = match postman::import(text, file_name) {
             Ok(result) => {
                 if let Some(collection) = result.collection {
                     let id = collection.id.clone();
@@ -1224,8 +1226,34 @@ impl Shell {
                     format!("{} {problems} item(s) could not be carried over. Save to keep the import.", result.summary)
                 };
                 self.notice = Some((text, problems > 0));
+                cx.notify();
+                return;
             }
-            Err(error) => self.notice = Some((format!("The file could not be imported: {error}"), true)),
+            Err(error) => error,
+        };
+        match insomnia::import(text, file_name) {
+            Ok(result) => {
+                for workspace in result.workspaces {
+                    let id = workspace.collection.id.clone();
+                    self.model.workspace.collections.push(workspace.collection);
+                    self.state.mark_unsaved(&id);
+                    for environment in workspace.environments {
+                        let id = environment.id.clone();
+                        self.model.workspace.environments.push(environment);
+                        self.state.mark_unsaved(&id);
+                    }
+                }
+                let problems = result.issues.len();
+                let text = if problems == 0 {
+                    format!("{} Save to keep it.", result.summary)
+                } else {
+                    format!("{} {problems} item(s) could not be carried over. Save to keep the import.", result.summary)
+                };
+                self.notice = Some((text, problems > 0));
+            }
+            Err(_) => {
+                self.notice = Some((format!("The file is not a Postman or Insomnia export. {postman_error}"), true));
+            }
         }
         cx.notify();
     }
