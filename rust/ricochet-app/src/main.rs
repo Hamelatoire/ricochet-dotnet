@@ -18,7 +18,7 @@ use ricochet_core::models::HistoryEntry;
 use ricochet_core::personal_state::{self, default_personal_directory};
 use chrono::Local;
 use std::path::PathBuf;
-use ricochet_app::scope::variables_in_scope;
+use ricochet_app::scope::{self, variables_in_scope};
 use ricochet_app::shell::{ShellModel, folder_from};
 use ricochet_app::state::AppState;
 use ricochet_app::status::NO_ENVIRONMENT;
@@ -501,6 +501,7 @@ impl Shell {
             return;
         };
         let history_copy = history::redacted(request);
+        let collection_id = scope::collection_of(&self.model.workspace, &id).map(|collection| collection.id.clone());
         let (sent, missing_secret) = self.with_secrets(variables::apply(request, &self.scope_for(&id)));
         if self.vault.problem.is_some() || missing_secret {
             self.notice = Some((
@@ -535,7 +536,7 @@ impl Shell {
                         Err(_) => 0,
                     },
                     at: Local::now().fixed_offset(),
-                    collection_id: None,
+                    collection_id: collection_id.clone(),
                     certificates_unverified: match &outcome {
                         Ok(sent) if sent.response.certificates_unverified => Some(true),
                         _ => None,
