@@ -45,4 +45,5 @@ pub mod response_examples;
 pub mod collection_runner;
 pub mod bulk_runner;
 pub mod personal_state;
+pub mod personal_secrets;
 pub mod git_branch;
