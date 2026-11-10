@@ -383,3 +383,92 @@ pub fn fill_secret_headers(sent: &mut ApiRequest, stored: &ApiRequest, lookup: i
     }
     missing
 }
+
+/// Which text of a variable row the window edits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariableField {
+    Name,
+    Value,
+}
+
+/// The Variables of the Collection or Folder with this id, for reading. None for a Request or an unknown id.
+pub fn variables_of<'a>(workspace: &'a Workspace, item_id: &str) -> Option<&'a [KeyValue]> {
+    if let Some(collection) = workspace.collections.iter().find(|collection| collection.id == item_id) {
+        return Some(&collection.variables);
+    }
+    workspace.collections.iter().find_map(|collection| folder_variables(&collection.items, item_id))
+}
+
+fn folder_variables<'a>(items: &'a [CollectionItem], item_id: &str) -> Option<&'a [KeyValue]> {
+    for item in items {
+        if item.id == item_id {
+            return if item.request.is_none() { Some(&item.variables) } else { None };
+        }
+        if let Some(found) = folder_variables(&item.children, item_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The Variables of the Collection or Folder with this id, for changing. None for a Request or an unknown id.
+pub fn variables_mut<'a>(workspace: &'a mut Workspace, item_id: &str) -> Option<&'a mut Vec<KeyValue>> {
+    if let Some(index) = workspace.collections.iter().position(|collection| collection.id == item_id) {
+        return Some(&mut workspace.collections[index].variables);
+    }
+    workspace.collections.iter_mut().find_map(|collection| folder_variables_mut(&mut collection.items, item_id))
+}
+
+fn folder_variables_mut<'a>(items: &'a mut [CollectionItem], item_id: &str) -> Option<&'a mut Vec<KeyValue>> {
+    for item in items {
+        if item.id == item_id {
+            return if item.request.is_none() { Some(&mut item.variables) } else { None };
+        }
+        if let Some(found) = folder_variables_mut(&mut item.children, item_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Sets the name or value of the variable at `index`. Returns true when it changed. A row that does not exist is left alone.
+pub fn set_variable_text(variables: &mut [KeyValue], index: usize, field: VariableField, text: &str) -> bool {
+    let Some(variable) = variables.get_mut(index) else {
+        return false;
+    };
+    let target = match field {
+        VariableField::Name => &mut variable.key,
+        VariableField::Value => &mut variable.value,
+    };
+    if target == text {
+        return false;
+    }
+    *target = text.to_string();
+    true
+}
+
+/// Adds an enabled variable with no name or value, and returns its index.
+pub fn add_variable(variables: &mut Vec<KeyValue>) -> usize {
+    variables.push(KeyValue { key: String::new(), value: String::new(), enabled: true, ..Default::default() });
+    variables.len() - 1
+}
+
+/// Removes the variable at `index`. Returns false when there is none there.
+pub fn remove_variable(variables: &mut Vec<KeyValue>, index: usize) -> bool {
+    if index < variables.len() {
+        variables.remove(index);
+        return true;
+    }
+    false
+}
+
+/// Turns the variable at `index` on or off. Returns false when there is none there.
+pub fn toggle_variable(variables: &mut [KeyValue], index: usize) -> bool {
+    match variables.get_mut(index) {
+        Some(variable) => {
+            variable.enabled = !variable.enabled;
+            true
+        }
+        None => false,
+    }
+}

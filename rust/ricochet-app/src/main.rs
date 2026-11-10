@@ -179,6 +179,13 @@ struct RequestInputs {
     _subscriptions: Vec<Subscription>,
 }
 
+/// The name and value fields of a selected Collection's or Folder's Variables, one pair per variable in order.
+struct ContainerInputs {
+    item_id: String,
+    rows: Vec<(Entity<TextInput>, Entity<TextInput>)>,
+    _subscriptions: Vec<Subscription>,
+}
+
 struct Shell {
     model: ShellModel,
     /// The store that read the folder. A save goes through it, so only files it understood are changed.
@@ -201,6 +208,8 @@ struct Shell {
     /// The sidebar row clicked last, which the sidebar buttons act on. It can be a Folder or Collection, which never
     /// becomes the selected Request, so the Request on show stays put.
     tree_target: Option<String>,
+    /// The fields of the selected Collection's or Folder's Variables. None when a Request, or nothing, is selected.
+    container_inputs: Option<ContainerInputs>,
     /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
     renaming: Option<(String, Entity<TextInput>, Subscription)>,
     /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
@@ -256,6 +265,7 @@ impl Shell {
             body_scroll: gpui::ScrollHandle::new(),
             confirm_delete: None,
             tree_target: None,
+            container_inputs: None,
             renaming: None,
             show_hidden: false,
             focus_handle: cx.focus_handle(),
@@ -1686,10 +1696,129 @@ impl Shell {
         }
     }
 
+    /// Rebuilds the variable fields when another Collection or Folder is selected, and clears them for a Request.
+    fn ensure_container_inputs(&mut self, cx: &mut Context<Self>) {
+        let selected = self
+            .selected_kind()
+            .filter(|(_, kind)| matches!(kind, RowKind::Collection | RowKind::Folder))
+            .map(|(id, _)| id);
+        let Some(item_id) = selected else {
+            self.container_inputs = None;
+            return;
+        };
+        if self.container_inputs.as_ref().is_some_and(|inputs| inputs.item_id == item_id) {
+            return;
+        }
+        let variables: Vec<KeyValue> = edit::variables_of(&self.model.workspace, &item_id).map(<[KeyValue]>::to_vec).unwrap_or_default();
+        let mut subscriptions = Vec::new();
+        let mut rows = Vec::new();
+        for (index, variable) in variables.iter().enumerate() {
+            let name = cx.new(|cx| TextInput::new(variable.key.clone(), "Name", cx));
+            subscriptions.push(cx.subscribe(&name, move |this: &mut Shell, input, _: &Changed, cx| {
+                let text = input.read(cx).text().to_string();
+                this.change_variable(cx, index, edit::VariableField::Name, &text);
+            }));
+            let value = cx.new(|cx| TextInput::new(variable.value.clone(), "Value", cx));
+            subscriptions.push(cx.subscribe(&value, move |this: &mut Shell, input, _: &Changed, cx| {
+                let text = input.read(cx).text().to_string();
+                this.change_variable(cx, index, edit::VariableField::Value, &text);
+            }));
+            rows.push((name, value));
+        }
+        self.container_inputs = Some(ContainerInputs { item_id, rows, _subscriptions: subscriptions });
+    }
+
+    /// Changes the name or value of one variable as the user types.
+    fn change_variable(&mut self, cx: &mut Context<Self>, index: usize, field: edit::VariableField, text: &str) {
+        let Some(item_id) = self.container_inputs.as_ref().map(|inputs| inputs.item_id.clone()) else {
+            return;
+        };
+        let Some(variables) = edit::variables_mut(&mut self.model.workspace, &item_id) else {
+            return;
+        };
+        if edit::set_variable_text(variables, index, field, text) {
+            self.state.mark_unsaved(&item_id);
+            self.notice = None;
+            cx.notify();
+        }
+    }
+
+    /// Adds, turns on or off, or removes variables. The fields are rebuilt afterwards so their rows match the list.
+    fn edit_variables(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Vec<KeyValue>) -> bool) {
+        let Some(item_id) = self.container_inputs.as_ref().map(|inputs| inputs.item_id.clone()) else {
+            return;
+        };
+        let Some(variables) = edit::variables_mut(&mut self.model.workspace, &item_id) else {
+            return;
+        };
+        if change(variables) {
+            self.state.mark_unsaved(&item_id);
+            self.notice = None;
+            self.container_inputs = None;
+        }
+        cx.notify();
+    }
+
+    /// The pane for a selected Collection or Folder: its name, and its Variables with an on and off switch and a
+    /// remove mark on each row, then a row to add one. None when a Request or nothing is selected.
+    fn container_pane(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let (item_id, _) = self.selected_kind().filter(|(_, kind)| matches!(kind, RowKind::Collection | RowKind::Folder))?;
+        let inputs = self.container_inputs.as_ref().filter(|inputs| inputs.item_id == item_id)?;
+        let variables: &[KeyValue] = edit::variables_of(&self.model.workspace, &item_id).unwrap_or_default();
+        let title = build_tree(&self.model.workspace, true).into_iter().find(|row| row.id == item_id).map(|row| row.label).unwrap_or_default();
+
+        let mut list = div().flex().flex_col().gap_1();
+        for (index, (variable, (name_input, value_input))) in variables.iter().zip(&inputs.rows).enumerate() {
+            let label = if variable.enabled { "On" } else { "Off" };
+            let switch = Self::small_button(SharedString::from(format!("var-switch-{index}")), label.to_string())
+                .text_color(rgb(if variable.enabled { SUCCESS } else { FAINT }))
+                .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    this.edit_variables(cx, |vars| edit::toggle_variable(vars, index));
+                }));
+            let remove = Self::small_button(SharedString::from(format!("var-remove-{index}")), "×".to_string())
+                .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    this.edit_variables(cx, |vars| edit::remove_variable(vars, index));
+                }));
+            list = list.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(switch)
+                    .child(div().w(px(220.0)).flex_none().child(Self::input_cell(name_input)))
+                    .child(div().flex_1().child(Self::input_cell(value_input)))
+                    .child(remove),
+            );
+        }
+        let add = Self::small_button(SharedString::from("var-add"), "+ Variable".to_string())
+            .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                this.edit_variables(cx, |vars| {
+                    edit::add_variable(vars);
+                    true
+                });
+            }));
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+                .child(muted_note("These Variables apply to the Requests inside this item. A Variable that is off is not used."))
+                .child(list.id("container-variables").max_h(px(360.0)).overflow_y_scroll())
+                .child(add),
+        )
+    }
+
     fn request_pane(&self, url_focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let pane = div().flex_none().flex().flex_col().gap_2().p_3();
         if let Some(error) = &self.model.error {
             return pane.child(div().text_color(rgb(WARNING)).child(error.clone()));
+        }
+        if let Some(container) = self.container_pane(cx) {
+            return container;
         }
         let Some(request) = self.selected_request() else {
             return pane.child(muted_note("Pick a request in the sidebar to open it."));
@@ -1957,6 +2086,7 @@ fn read_dot_env(model: &ShellModel) -> Vec<KeyValue> {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_inputs(cx);
+        self.ensure_container_inputs(cx);
         let url_focused = self.inputs.as_ref().is_some_and(|inputs| inputs.url.focus_handle(cx).is_focused(window));
         div()
             .track_focus(&self.focus_handle)
