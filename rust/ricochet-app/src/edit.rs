@@ -1,9 +1,12 @@
 //! Changes the window makes to a Request before it is saved. Plain functions on the Core model, so tests reach them
-//! without a window. Secret values are never edited here: a Secret header's value is left alone (ADR 0092 is not
-//! built, so nothing in this app may put a Secret into a Workspace file).
+//! without a window. A Secret header's value never goes into the Request: it goes to the secrets vault, through
+//! [`set_secret_header`], and is filled in only for sending, through [`fill_secret_headers`] (ADR 0092).
+
+use std::collections::BTreeMap;
 
 use ricochet_core::assertions::{RequestAssertion, ops, sources};
 use ricochet_core::models::{ApiRequest, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
+use ricochet_core::secrets::{SecretValue, header_key};
 
 /// The methods the method button steps through, in order.
 pub const METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -244,4 +247,70 @@ pub fn set_secret(secrets: &mut std::collections::BTreeMap<String, ricochet_core
     }
     secrets.insert(key.to_string(), ricochet_core::secrets::SecretValue::new(text));
     true
+}
+
+/// Stores a value typed into a Secret header. The value goes to the vault under the header's key, and the Request
+/// keeps an empty value, so the Workspace file never holds it. Returns true when the vault or the Request changed.
+/// A header that is not a Secret, or no header at that index, is left alone and returns false.
+pub fn set_secret_header(request: &mut ApiRequest, secrets: &mut BTreeMap<String, SecretValue>, index: usize, text: &str) -> bool {
+    let Some(header) = request.headers.get_mut(index) else {
+        return false;
+    };
+    if !header.is_secret {
+        return false;
+    }
+    let key = header_key(&request.id, &header.key);
+    let cleared = !header.value.is_empty();
+    header.value.clear();
+    let stored = set_secret(secrets, &key, text);
+    cleared || stored
+}
+
+/// Changes a header's name. When the header is a Secret, its vault entry moves to the new name, so the value stays with
+/// the header and is never sent under a name it was not typed for. Returns true when the name changed.
+pub fn set_header_name(request: &mut ApiRequest, secrets: &mut BTreeMap<String, SecretValue>, index: usize, name: &str) -> bool {
+    let Some(header) = request.headers.get(index) else {
+        return false;
+    };
+    let old_key = header.is_secret.then(|| header_key(&request.id, &header.key));
+    if !set_field(request, Field::HeaderKey(index), name) {
+        return false;
+    }
+    if let Some(old_key) = old_key {
+        if let Some(value) = secrets.remove(&old_key) {
+            secrets.insert(header_key(&request.id, name), value);
+        }
+    }
+    true
+}
+
+/// Removes a header, and forgets its Secret when it is one. Returns false when there is no header at that index.
+pub fn remove_header_and_secret(request: &mut ApiRequest, secrets: &mut BTreeMap<String, SecretValue>, index: usize) -> bool {
+    let Some(header) = request.headers.get(index) else {
+        return false;
+    };
+    if header.is_secret {
+        secrets.remove(&header_key(&request.id, &header.key));
+    }
+    remove_header(request, index)
+}
+
+/// Fills the value of each Secret header in `sent` from the vault, for sending. `stored` is the Request as the window
+/// holds it, before Variables are applied, so each Secret is looked up under the name it was saved with. `sent` has the
+/// same headers in the same order. Returns true when an enabled Secret header has no stored value.
+pub fn fill_secret_headers(sent: &mut ApiRequest, stored: &ApiRequest, lookup: impl Fn(&str) -> Option<String>) -> bool {
+    let mut missing = false;
+    for (index, header) in stored.headers.iter().enumerate() {
+        if !header.is_secret {
+            continue;
+        }
+        let value = lookup(&header_key(&stored.id, &header.key));
+        if header.enabled && value.is_none() {
+            missing = true;
+        }
+        if let Some(sent_header) = sent.headers.get_mut(index) {
+            sent_header.value = value.unwrap_or_default();
+        }
+    }
+    missing
 }
