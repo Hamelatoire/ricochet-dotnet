@@ -214,3 +214,123 @@ pub fn set_hidden(workspace: &mut Workspace, item_id: &str, hidden: bool) -> boo
 pub fn hidden_count(workspace: &Workspace) -> usize {
     workspace.collections.iter().map(|collection| collection.hidden_item_ids.as_deref().map_or(0, <[String]>::len)).sum()
 }
+
+/// Where a dropped item goes, relative to the item it was dropped on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drop {
+    /// Just before the target, among its siblings.
+    Before,
+    /// Just after the target, among its siblings.
+    After,
+    /// At the end of the target, which must be a Collection or Folder.
+    Into,
+}
+
+/// Moves the item with `source` to where it is dropped on `target`. Returns false, and changes nothing, when the drop
+/// is not allowed. A Collection stays at the top level and can only be dropped before or after another Collection.
+/// An item cannot be dropped on itself, into one of its own Folders, or into a Request.
+pub fn move_item(workspace: &mut Workspace, source: &str, target: &str, drop: Drop) -> bool {
+    if source == target {
+        return false;
+    }
+    if let Some(source_index) = workspace.collections.iter().position(|c| c.id == source) {
+        let Some(target_index) = workspace.collections.iter().position(|c| c.id == target) else {
+            return false;
+        };
+        if drop == Drop::Into {
+            return false;
+        }
+        let collection = workspace.collections.remove(source_index);
+        let index = if source_index < target_index { target_index - 1 } else { target_index };
+        workspace.collections.insert(if drop == Drop::After { index + 1 } else { index }, collection);
+        return true;
+    }
+
+    // Every check happens before anything is taken out, so a refused drop changes nothing.
+    let Some(source_item) = workspace.collections.iter().find_map(|c| find_in(&c.items, source)) else {
+        return false;
+    };
+    if contains(&source_item.children, target) {
+        return false;
+    }
+    let Some(target_item) = workspace.collections.iter().find_map(|c| find_in(&c.items, target)) else {
+        let target_is_collection = workspace.collections.iter().any(|c| c.id == target);
+        if !target_is_collection || drop == Drop::Before || drop == Drop::After {
+            return false;
+        }
+        return move_into_collection(workspace, source, target);
+    };
+    if drop == Drop::Into && target_item.request.is_some() {
+        return false;
+    }
+
+    let Some(moving) = take_item(workspace, source) else {
+        return false;
+    };
+    let placed = place(workspace, target, drop, moving);
+    debug_assert!(placed, "the target was checked above");
+    true
+}
+
+fn move_into_collection(workspace: &mut Workspace, source: &str, target: &str) -> bool {
+    let Some(moving) = take_item(workspace, source) else {
+        return false;
+    };
+    match workspace.collections.iter_mut().find(|c| c.id == target) {
+        Some(collection) => {
+            collection.items.push(moving);
+            true
+        }
+        None => false,
+    }
+}
+
+fn find_in<'a>(items: &'a [CollectionItem], id: &str) -> Option<&'a CollectionItem> {
+    for item in items {
+        if item.id == id {
+            return Some(item);
+        }
+        if let Some(found) = find_in(&item.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Takes the item out of the workspace, wherever it is inside a Collection.
+fn take_item(workspace: &mut Workspace, id: &str) -> Option<CollectionItem> {
+    workspace.collections.iter_mut().find_map(|collection| remove_from(&mut collection.items, id))
+}
+
+/// Places the item next to or inside the target. Returns false when the target is not found.
+fn place(workspace: &mut Workspace, target: &str, drop: Drop, item: CollectionItem) -> bool {
+    let mut item = Some(item);
+    for collection in workspace.collections.iter_mut() {
+        if let Some(done) = place_in(&mut collection.items, target, drop, &mut item) {
+            return done;
+        }
+    }
+    false
+}
+
+/// `Some(true)` when placed here, `Some(false)` when the target is here but cannot take the item, `None` when the
+/// target is not under these siblings. The item is taken out of `item` when it is placed.
+fn place_in(siblings: &mut Vec<CollectionItem>, target: &str, drop: Drop, item: &mut Option<CollectionItem>) -> Option<bool> {
+    if let Some(index) = siblings.iter().position(|s| s.id == target) {
+        let Some(moving) = item.take() else {
+            return Some(false);
+        };
+        match drop {
+            Drop::Before => siblings.insert(index, moving),
+            Drop::After => siblings.insert(index + 1, moving),
+            Drop::Into => siblings[index].children.push(moving),
+        }
+        return Some(true);
+    }
+    for sibling in siblings.iter_mut() {
+        if let Some(done) = place_in(&mut sibling.children, target, drop, item) {
+            return Some(done);
+        }
+    }
+    None
+}

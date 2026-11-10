@@ -156,3 +156,42 @@ fn hiding_leaves_the_tree_and_showing_brings_it_back() {
     assert_eq!(workspace.collections[0].hidden_item_ids, None);
     assert_eq!(hidden_count(&workspace), 0);
 }
+
+#[test]
+fn an_item_moves_before_after_or_into_a_folder_and_a_refused_drop_changes_nothing() {
+    use ricochet_app::tree_edit::{Drop, move_item};
+    let mut workspace = workspace();
+    // Move Top after Folder: the Collection now lists Folder, then Top.
+    assert!(move_item(&mut workspace, "top", "folder", Drop::After));
+    assert_eq!(labels(&workspace), vec![(0, "C".to_string()), (1, "Folder".to_string()), (2, "Inner".to_string()), (1, "Top".to_string())]);
+    // Move Top into Folder, at its end.
+    assert!(move_item(&mut workspace, "top", "folder", Drop::Into));
+    assert_eq!(labels(&workspace), vec![(0, "C".to_string()), (1, "Folder".to_string()), (2, "Inner".to_string()), (2, "Top".to_string())]);
+    // Move Inner before Folder, at the top level.
+    assert!(move_item(&mut workspace, "inner", "folder", Drop::Before));
+    assert_eq!(labels(&workspace), vec![(0, "C".to_string()), (1, "Inner".to_string()), (1, "Folder".to_string()), (2, "Top".to_string())]);
+}
+
+#[test]
+fn a_drop_into_a_request_or_into_its_own_folder_is_refused_and_nothing_moves() {
+    use ricochet_app::tree_edit::{Drop, move_item};
+    let mut workspace = workspace();
+    let before = labels(&workspace);
+    assert!(!move_item(&mut workspace, "folder", "inner", Drop::Into), "a Folder cannot go inside its own child");
+    assert!(!move_item(&mut workspace, "folder", "folder", Drop::Before), "an item cannot be dropped on itself");
+    assert!(!move_item(&mut workspace, "top", "inner", Drop::Into), "a Request cannot take children");
+    assert!(!move_item(&mut workspace, "top", "missing", Drop::Before));
+    assert_eq!(labels(&workspace), before);
+}
+
+#[test]
+fn a_collection_only_moves_beside_another_collection() {
+    use ricochet_app::tree_edit::{Drop, move_item};
+    let mut workspace = workspace();
+    workspace.collections.push(Collection { id: "d".into(), name: "D".into(), ..Default::default() });
+    assert!(!move_item(&mut workspace, "c", "top", Drop::Before));
+    assert!(!move_item(&mut workspace, "c", "d", Drop::Into));
+    assert!(move_item(&mut workspace, "c", "d", Drop::After));
+    let order: Vec<&str> = workspace.collections.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(order, vec!["d", "c"]);
+}
