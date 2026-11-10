@@ -9,11 +9,15 @@ use gpui::{
     actions, div, prelude::*, px, rgb, size,
 };
 use ricochet_app::edit::{self, Field, set_secret};
-use ricochet_core::personal_state::default_personal_directory;
 use ricochet_core::secrets::{self, SecretValue, SecretVault, auth_key};
 use std::collections::BTreeMap;
 use ricochet_app::json_color::{SpanKind, color_line};
-use ricochet_app::request_view::{RecentSend, RecentSends, UrlSegment, query_params, url_segments};
+use ricochet_app::request_view::{UrlSegment, query_params, url_segments};
+use ricochet_core::history;
+use ricochet_core::models::HistoryEntry;
+use ricochet_core::personal_state::default_personal_directory;
+use chrono::Local;
+use std::path::PathBuf;
 use ricochet_app::scope::variables_in_scope;
 use ricochet_app::shell::{ShellModel, folder_from};
 use ricochet_app::state::AppState;
@@ -32,6 +36,8 @@ actions!(ricochet, [Save, SendRequest]);
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
 const DISPLAY_LINES: usize = 1_500;
+/// How many History entries the sidebar lists. The file keeps up to MAX_HISTORY.
+const HISTORY_SHOWN: usize = 40;
 /// Width of one space of JSON indent.
 const INDENT_STEP: f32 = 7.5;
 
@@ -187,7 +193,12 @@ struct Shell {
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
     responses: HashMap<String, ResponseView>,
-    recent: RecentSends,
+    /// Every send, newest first. Kept in the personal folder as history.json (see ricochet_core::history).
+    history: Vec<HistoryEntry>,
+    /// False when history.json could not be read at start, so it is not written over.
+    history_readable: bool,
+    /// The personal folder, where history.json is kept. None when there is none.
+    personal_dir: Option<PathBuf>,
     request_tab: RequestTab,
     response_tab: ResponseTab,
     /// The Workspace's `.env` Variables, read at start and again before each send.
@@ -198,6 +209,12 @@ impl Shell {
     fn new(model: ShellModel, store: Option<WorkspaceFolder>, vault: VaultState, cx: &mut Context<Self>) -> Self {
         let state = AppState::for_workspace(&model.workspace);
         let dot_env = read_dot_env(&model);
+        let personal_dir = default_personal_directory();
+        let (history, history_readable) = match personal_dir.as_deref().map(history::load) {
+            Some(Ok(entries)) => (entries, true),
+            Some(Err(_)) => (Vec::new(), false),
+            None => (Vec::new(), true),
+        };
         let search = cx.new(|cx| TextInput::new("", "Search requests", cx));
         let search_subscription = cx.subscribe(&search, |this: &mut Shell, input, _: &Changed, cx| {
             this.search_text = input.read(cx).text().to_string();
@@ -207,7 +224,8 @@ impl Shell {
             model,
             store,
             inputs: None,
-            notice: None,
+            notice: (!history_readable)
+                .then(|| ("Your history could not be read, so it will not be saved this time.".to_string(), true)),
             vault,
             search,
             search_text: String::new(),
@@ -216,7 +234,9 @@ impl Shell {
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
-            recent: RecentSends::default(),
+            history,
+            history_readable,
+            personal_dir,
             request_tab: RequestTab::Headers,
             response_tab: ResponseTab::Body,
             dot_env,
@@ -470,7 +490,7 @@ impl Shell {
         let Some(request) = find_request(&self.model.workspace, &id) else {
             return;
         };
-        let (name, method) = (request.name.clone(), request.method.clone());
+        let history_copy = history::redacted(request);
         let (sent, missing_secret) = self.with_secrets(variables::apply(request, &self.scope_for(&id)));
         if self.vault.problem.is_some() || missing_secret {
             self.notice = Some((
@@ -494,11 +514,25 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let outcome = work.await;
             this.update(cx, |shell, cx| {
-                let (status_code, elapsed_ms) = match &outcome {
-                    Ok(sent) => (Some(sent.response.status_code), sent.response.elapsed.as_millis()),
-                    Err(_) => (None, 0),
+                let entry = HistoryEntry {
+                    request: history_copy.clone(),
+                    status_code: match &outcome {
+                        Ok(sent) => Some(i32::from(sent.response.status_code)),
+                        Err(_) => None,
+                    },
+                    elapsed_ms: match &outcome {
+                        Ok(sent) => i64::try_from(sent.response.elapsed.as_millis()).unwrap_or(i64::MAX),
+                        Err(_) => 0,
+                    },
+                    at: Local::now().fixed_offset(),
+                    collection_id: None,
+                    certificates_unverified: match &outcome {
+                        Ok(sent) if sent.response.certificates_unverified => Some(true),
+                        _ => None,
+                    },
                 };
-                shell.recent.record(RecentSend { request_id: id.clone(), name, method, status_code, elapsed_ms });
+                history::record(&mut shell.history, entry);
+                shell.save_history();
                 let view = match outcome {
                     Ok(sent) => ResponseView::Done(sent),
                     Err(message) => ResponseView::Failed(message),
@@ -626,14 +660,15 @@ impl Shell {
             )
     }
 
-    fn recent_row(&self, index: usize, send: &RecentSend, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let id = send.request_id.clone();
-        let (status, color) = match send.status_code {
-            Some(code) => (code.to_string(), status_color(code)),
+    fn history_row(&self, index: usize, entry: &HistoryEntry, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let id = entry.request.id.clone();
+        let (status, color) = match entry.status_code {
+            Some(code) => (code.to_string(), status_color(u16::try_from(code).unwrap_or(0))),
             None => ("ERR".to_string(), ERROR),
         };
+        let when = entry.at.format("%H:%M:%S").to_string();
         div()
-            .id(SharedString::from(format!("recent-{index}")))
+            .id(SharedString::from(format!("history-{index}")))
             .flex()
             .flex_row()
             .items_center()
@@ -651,8 +686,22 @@ impl Shell {
                 }
             }))
             .child(div().w(px(28.0)).flex_none().font_weight(FontWeight::SEMIBOLD).text_color(rgb(color)).child(status))
-            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(rgb(MUTED)).child(send.name.clone()))
-            .child(div().flex_none().text_color(rgb(FAINT)).child(format!("{} ms", send.elapsed_ms)))
+            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(rgb(MUTED)).child(entry.request.name.clone()))
+            .child(div().flex_none().text_color(rgb(FAINT)).child(when))
+            .child(div().flex_none().text_color(rgb(FAINT)).child(format!("{} ms", entry.elapsed_ms)))
+    }
+
+    /// Writes history.json. Nothing is written when the file could not be read at start, or there is no folder.
+    fn save_history(&mut self) {
+        if !self.history_readable {
+            return;
+        }
+        let Some(dir) = self.personal_dir.clone() else {
+            return;
+        };
+        if let Err(error) = history::save(&dir, &self.history) {
+            self.notice = Some((format!("The history could not be saved: {error}"), true));
+        }
     }
 
     fn section_label(text: &'static str) -> gpui::Div {
@@ -690,13 +739,13 @@ impl Shell {
             column = column.child(div().px_2().text_xs().text_color(rgb(WARNING)).child(text));
         }
 
-        let recent = self.recent.entries();
-        if !recent.is_empty() {
-            let rows: Vec<_> = recent.iter().enumerate().map(|(index, send)| self.recent_row(index, send, cx)).collect();
+        let shown: Vec<&HistoryEntry> = self.history.iter().take(HISTORY_SHOWN).collect();
+        if !shown.is_empty() {
+            let rows: Vec<_> = shown.iter().enumerate().map(|(index, entry)| self.history_row(index, entry, cx)).collect();
             column = column
                 .child(div().h(px(1.0)).flex_none().bg(rgb(BORDER)))
-                .child(Self::section_label("Recent sends").pt_1())
-                .child(div().id("recent-sends").max_h(px(200.0)).flex().flex_col().overflow_y_scroll().children(rows));
+                .child(Self::section_label("History").pt_1())
+                .child(div().id("history").max_h(px(200.0)).flex().flex_col().overflow_y_scroll().children(rows));
         }
         column
     }

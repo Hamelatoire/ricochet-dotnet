@@ -4650,6 +4650,7 @@ dependencies = [
 name = "ricochet-app"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "gpui",
  "pretty_assertions",
  "ricochet-core",
