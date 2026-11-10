@@ -3,7 +3,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pretty_assertions::assert_eq;
-use ricochet_app::edit::{Field, rename_request, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, find_request_mut, next_method, remove_check, remove_header, set_field, toggle_check, toggle_header, toggle_key_in_query};
+use ricochet_app::edit::{Field, set_secret, rename_request, add_header, add_check, cycle_auth_kind, cycle_check_op, cycle_check_source, cycle_method, find_request_mut, next_method, remove_check, remove_header, set_field, toggle_check, toggle_header, toggle_key_in_query};
 use ricochet_app::shell::ShellModel;
 use ricochet_app::state::AppState;
 use ricochet_core::models::{ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
@@ -241,4 +241,17 @@ fn a_rename_sets_the_item_name_and_the_request_name_together() {
     assert!(!rename_request(&mut workspace, "inner", "Inner, renamed"), "the same name changes nothing");
     assert!(!rename_request(&mut workspace, "folder", "Only a Request can be renamed here"));
     assert!(!rename_request(&mut workspace, "missing", "x"));
+}
+
+#[test]
+fn a_typed_secret_is_stored_and_an_empty_one_removes_it() {
+    use ricochet_core::secrets::{SecretValue, auth_key};
+    let mut secrets = std::collections::BTreeMap::new();
+    let key = auth_key("r1", "token");
+    assert!(set_secret(&mut secrets, &key, "tok-1"));
+    assert!(!set_secret(&mut secrets, &key, "tok-1"), "the same value changes nothing");
+    assert_eq!(secrets.get(&key), Some(&SecretValue::new("tok-1")));
+    assert!(set_secret(&mut secrets, &key, ""));
+    assert!(secrets.is_empty());
+    assert!(!set_secret(&mut secrets, &key, ""));
 }

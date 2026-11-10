@@ -41,10 +41,15 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// Drawn in place of each character of a masked field, so a Secret is never shown on screen.
+const BULLET: char = '\u{2022}';
+
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
+    /// Shows a bullet for each character. The text itself is unchanged, so the caller reads the real value.
+    masked: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -56,11 +61,19 @@ pub struct TextInput {
 impl EventEmitter<Changed> for TextInput {}
 
 impl TextInput {
+    /// A field whose text is drawn as bullets, for a Secret.
+    pub fn new_masked(content: impl Into<SharedString>, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
+        let mut input = Self::new(content, placeholder, cx);
+        input.masked = true;
+        input
+    }
+
     pub fn new(content: impl Into<SharedString>, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             content: content.into(),
             placeholder: placeholder.into(),
+            masked: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -191,7 +204,17 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        let display = line.closest_index_for_x(position.x - bounds.left());
+        self.from_display(display)
+    }
+
+    /// The offset in the text of a byte offset in the drawn line. The same, unless the field is masked.
+    fn from_display(&self, display: usize) -> usize {
+        if !self.masked {
+            return display;
+        }
+        let characters = display / BULLET.len_utf8();
+        self.content.char_indices().nth(characters).map_or(self.content.len(), |(index, _)| index)
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -395,8 +418,16 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let is_placeholder = content.is_empty();
-        let (display_text, text_color) =
-            if is_placeholder { (input.placeholder.clone(), rgb(PLACEHOLDER).into()) } else { (content, style.color) };
+        let masked = input.masked;
+        let (display_text, text_color): (SharedString, _) = if is_placeholder {
+            (input.placeholder.clone(), rgb(PLACEHOLDER).into())
+        } else if masked {
+            (SharedString::from(BULLET.to_string().repeat(content.chars().count())), style.color)
+        } else {
+            (content.clone(), style.color)
+        };
+        // The byte offset in the drawn line of an offset in the text.
+        let to_display = |index: usize| if masked { content[..index].chars().count() * BULLET.len_utf8() } else { index };
 
         let run = TextRun {
             len: display_text.len(),
@@ -406,7 +437,7 @@ impl Element for TextElement {
             underline: None,
             strikethrough: None,
         };
-        let runs = match input.marked_range.as_ref().filter(|_| !is_placeholder) {
+        let runs = match input.marked_range.as_ref().filter(|_| !is_placeholder && !masked) {
             Some(marked_range) => vec![
                 TextRun { len: marked_range.start, ..run.clone() },
                 TextRun {
@@ -425,7 +456,7 @@ impl Element for TextElement {
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line = window.text_system().shape_line(display_text, font_size, &runs, None);
 
-        let x_for = |index: usize| if is_placeholder { px(0.) } else { line.x_for_index(index) };
+        let x_for = |index: usize| if is_placeholder { px(0.) } else { line.x_for_index(to_display(index)) };
         let (selection, cursor) = if selected_range.is_empty() {
             let caret = Bounds::new(point(bounds.left() + x_for(cursor), bounds.top()), size(px(1.5), bounds.bottom() - bounds.top()));
             (None, Some(fill(caret, rgb(CARET))))

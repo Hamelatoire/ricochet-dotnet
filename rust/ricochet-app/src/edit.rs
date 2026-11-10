@@ -233,3 +233,15 @@ pub fn remove_check(request: &mut ApiRequest, index: usize) -> bool {
     }
     true
 }
+
+/// Stores a Secret typed in the window. Empty text removes it. Returns true when the stored value changed.
+pub fn set_secret(secrets: &mut std::collections::BTreeMap<String, ricochet_core::secrets::SecretValue>, key: &str, text: &str) -> bool {
+    if text.is_empty() {
+        return secrets.remove(key).is_some();
+    }
+    if secrets.get(key).is_some_and(|value| value.expose() == text) {
+        return false;
+    }
+    secrets.insert(key.to_string(), ricochet_core::secrets::SecretValue::new(text));
+    true
+}

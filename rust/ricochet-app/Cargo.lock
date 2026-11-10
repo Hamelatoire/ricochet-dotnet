@@ -4610,6 +4610,7 @@ dependencies = [
  "sha2 0.11.1",
  "url",
  "uuid",
+ "windows 0.57.0",
  "zip",
 ]
 

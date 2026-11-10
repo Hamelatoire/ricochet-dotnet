@@ -8,7 +8,10 @@ use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Render, SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, div, prelude::*, px, rgb, size,
 };
-use ricochet_app::edit::{self, Field};
+use ricochet_app::edit::{self, Field, set_secret};
+use ricochet_core::personal_state::default_personal_directory;
+use ricochet_core::secrets::{self, SecretValue, SecretVault, auth_key};
+use std::collections::BTreeMap;
 use ricochet_app::json_color::{SpanKind, color_line};
 use ricochet_app::request_view::{RecentSend, RecentSends, UrlSegment, query_params, url_segments};
 use ricochet_app::scope::variables_in_scope;
@@ -154,6 +157,10 @@ struct RequestInputs {
     /// The username of Basic auth, and the name of an API key's parameter. Neither is a Secret.
     auth_username: Entity<TextInput>,
     auth_key_name: Entity<TextInput>,
+    /// Masked fields for the auth Secrets. None when this system has no vault, or the vault could not be read.
+    auth_token: Option<Entity<TextInput>>,
+    auth_password: Option<Entity<TextInput>>,
+    auth_key_value: Option<Entity<TextInput>>,
     /// One (name, value) pair per header, in the Request's order.
     headers: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     /// One (path, expected) pair per check, in the Request's order.
@@ -168,6 +175,8 @@ struct Shell {
     inputs: Option<RequestInputs>,
     /// The outcome of the last save, shown in the status bar. The flag is true for a problem.
     notice: Option<(String, bool)>,
+    /// The Secrets vault for this system, the Secrets read from it, and why it could not be used, if it could not.
+    vault: VaultState,
     focus_handle: FocusHandle,
     state: AppState,
     /// The latest response of each Request sent in this window, by Request id. Kept in memory only.
@@ -180,7 +189,7 @@ struct Shell {
 }
 
 impl Shell {
-    fn new(model: ShellModel, store: Option<WorkspaceFolder>, cx: &mut Context<Self>) -> Self {
+    fn new(model: ShellModel, store: Option<WorkspaceFolder>, vault: VaultState, cx: &mut Context<Self>) -> Self {
         let state = AppState::for_workspace(&model.workspace);
         let dot_env = read_dot_env(&model);
         Self {
@@ -188,6 +197,7 @@ impl Shell {
             store,
             inputs: None,
             notice: None,
+            vault,
             focus_handle: cx.focus_handle(),
             state,
             responses: HashMap::new(),
@@ -278,6 +288,9 @@ impl Shell {
                 )
             })
             .collect();
+        let auth_token = self.make_secret_input(auth_key(&request.id, "token"), "Token", &mut subscriptions, cx);
+        let auth_password = self.make_secret_input(auth_key(&request.id, "password"), "Password", &mut subscriptions, cx);
+        let auth_key_value = self.make_secret_input(auth_key(&request.id, "keyValue"), "Value", &mut subscriptions, cx);
         let body = cx.new(|cx| TextArea::new(request.body.clone(), "Request body", cx));
         subscriptions.push(cx.subscribe(&body, |this: &mut Shell, input, _: &Changed, cx| {
             let text = input.read(cx).text().to_string();
@@ -294,6 +307,9 @@ impl Shell {
             body,
             auth_username,
             auth_key_name,
+            auth_token,
+            auth_password,
+            auth_key_value,
             headers,
             checks,
             _subscriptions: subscriptions,
@@ -342,6 +358,16 @@ impl Shell {
             self.notice = Some(("Nothing to save.".to_string(), false));
             return;
         }
+        if let Some(problem) = self.vault.problem.clone() {
+            self.notice = Some((format!("Nothing was saved. {problem}"), true));
+            return;
+        }
+        if let Some(vault) = self.vault.vault.as_ref() {
+            if let Err(error) = vault.save(&self.vault.secrets) {
+                self.notice = Some((format!("Nothing was saved. {}", error.message()), true));
+                return;
+            }
+        }
         if store.has_outside_changes() {
             let text = "The folder changed on disk since it was opened, so nothing was saved.";
             self.notice = Some((text.to_string(), true));
@@ -360,6 +386,58 @@ impl Shell {
         });
     }
 
+    /// A masked field for one Secret, holding its current value. None when no vault can hold it.
+    fn make_secret_input(
+        &self,
+        key: String,
+        placeholder: &'static str,
+        subscriptions: &mut Vec<Subscription>,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<TextInput>> {
+        if self.vault.vault.is_none() || self.vault.problem.is_some() {
+            return None;
+        }
+        let current = self.vault.secrets.get(&key).map(|value| value.expose().to_string()).unwrap_or_default();
+        let input = cx.new(|cx| TextInput::new_masked(current, placeholder, cx));
+        subscriptions.push(cx.subscribe(&input, move |this: &mut Shell, input, _: &Changed, cx| {
+            let text = input.read(cx).text().to_string();
+            this.set_secret_text(cx, &key, &text);
+        }));
+        Some(input)
+    }
+
+    /// Stores a typed Secret. It is saved with the next save, and the item is marked unsaved.
+    fn set_secret_text(&mut self, cx: &mut Context<Self>, key: &str, text: &str) {
+        if set_secret(&mut self.vault.secrets, key, text) {
+            if let Some(item_id) = self.state.selected_item().map(str::to_string) {
+                self.state.mark_unsaved(&item_id);
+            }
+            self.notice = None;
+            cx.notify();
+        }
+    }
+
+    /// A copy of the Request with its auth Secrets filled in, for sending. Returns whether a Secret the auth kind
+    /// needs is not stored. The stored Request is never changed.
+    fn with_secrets(&self, mut request: ApiRequest) -> (ApiRequest, bool) {
+        let id = request.id.clone();
+        let lookup = |field: &str| self.vault.secrets.get(&auth_key(&id, field)).map(|value| value.expose().to_string());
+        let mut missing = false;
+        if let Some(auth) = request.auth.as_mut() {
+            let (field, target) = match auth.kind.as_str() {
+                ricochet_core::models::auth_kinds::BEARER => ("token", &mut auth.token),
+                ricochet_core::models::auth_kinds::BASIC => ("password", &mut auth.password),
+                ricochet_core::models::auth_kinds::API_KEY => ("keyValue", &mut auth.key_value),
+                _ => return (request, false),
+            };
+            match lookup(field) {
+                Some(value) => *target = value,
+                None => missing = true,
+            }
+        }
+        (request, missing)
+    }
+
     /// Sends the selected Request off the UI thread, with its Variables resolved the way the C# app layers them.
     /// A placeholder with no value is sent as written, and the response pane names it.
     fn send_selected(&mut self, cx: &mut Context<Self>) {
@@ -374,7 +452,13 @@ impl Shell {
             return;
         };
         let (name, method) = (request.name.clone(), request.method.clone());
-        let sent = variables::apply(request, &self.scope_for(&id));
+        let (sent, missing_secret) = self.with_secrets(variables::apply(request, &self.scope_for(&id)));
+        if self.vault.problem.is_some() || missing_secret {
+            self.notice = Some((
+                "A secret this request needs is not stored, so it was sent without it.".to_string(),
+                true,
+            ));
+        }
         let unresolved = variables::find_placeholders(&sent);
 
         self.responses.insert(id.clone(), ResponseView::Sending);
@@ -842,10 +926,24 @@ impl Shell {
             }))
     }
 
-    /// A value that is a Secret: shown masked, never typed into the window (ADR 0092 is not built).
+    /// A value that is a Secret: shown masked. Read-only when there is no vault to type it into.
     fn secret_row(label: &'static str, is_set: bool) -> gpui::Div {
-        let value = if is_set { "•••••• (a Secret, not editable here)" } else { "Not set" };
+        let value = if is_set { "•••••• (kept in the secrets vault)" } else { "Not set" };
         pair_row(label.to_string(), value.to_string(), !is_set)
+    }
+
+    /// A Secret's masked field when there is one, else its read-only row.
+    fn secret_field(label: &'static str, input: Option<&Entity<TextInput>>, is_set: bool) -> gpui::Div {
+        match input {
+            Some(input) => div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_4()
+                .child(div().w(px(220.0)).flex_none().font_family(MONO).text_color(rgb(TEXT)).child(label))
+                .child(Self::input_cell(input).flex_1()),
+            None => Self::secret_row(label, is_set),
+        }
     }
 
     /// The auth kind, and the fields that kind uses. Secrets are masked; the others can be edited.
@@ -892,19 +990,23 @@ impl Shell {
             .child(muted_note(auth_label(request)));
 
         match (auth.kind.as_str(), inputs) {
-            (auth_kinds::BEARER, _) => {
-                section = section.child(Self::secret_row("Token", !auth.token.is_empty()));
+            (auth_kinds::BEARER, inputs) => {
+                section = section.child(Self::secret_field(
+                    "Token",
+                    inputs.and_then(|inputs| inputs.auth_token.as_ref()),
+                    !auth.token.is_empty(),
+                ));
             }
             (auth_kinds::BASIC, Some(inputs)) => {
                 section = section
                     .child(pair_row("Username".to_string(), String::new(), false).child(Self::input_cell(&inputs.auth_username).flex_1()))
-                    .child(Self::secret_row("Password", !auth.password.is_empty()));
+                    .child(Self::secret_field("Password", inputs.auth_password.as_ref(), !auth.password.is_empty()));
             }
             (auth_kinds::API_KEY, Some(inputs)) => {
                 let placement = if auth.key_in_query { "Query string" } else { "Header" };
                 section = section
                     .child(div().flex().flex_row().gap_3().child(Self::input_cell(&inputs.auth_key_name).flex_1()))
-                    .child(Self::secret_row("Value", !auth.key_value.is_empty()))
+                    .child(Self::secret_field("Value", inputs.auth_key_value.as_ref(), !auth.key_value.is_empty()))
                     .child(
                         div()
                             .flex()
@@ -1271,6 +1373,32 @@ impl Shell {
     }
 }
 
+/// The Secrets for this run: the vault, the Secrets read from it, and the reason the vault cannot be used, if it cannot.
+/// When there is a problem, nothing is saved, so the vault is never written over.
+struct VaultState {
+    vault: Option<Box<dyn SecretVault>>,
+    secrets: BTreeMap<String, SecretValue>,
+    problem: Option<String>,
+}
+
+/// Opens the vault in the personal folder, and reads the Secrets from it.
+fn open_vault() -> VaultState {
+    let Some(personal) = default_personal_directory() else {
+        return VaultState {
+            vault: None,
+            secrets: BTreeMap::new(),
+            problem: Some("No personal folder is available, so secrets cannot be stored.".to_string()),
+        };
+    };
+    match secrets::default_vault(&personal) {
+        None => VaultState { vault: None, secrets: BTreeMap::new(), problem: None },
+        Some(vault) => match vault.load() {
+            Ok(secrets) => VaultState { vault: Some(vault), secrets, problem: None },
+            Err(error) => VaultState { vault: Some(vault), secrets: BTreeMap::new(), problem: Some(error.message().to_string()) },
+        },
+    }
+}
+
 fn read_dot_env(model: &ShellModel) -> Vec<KeyValue> {
     model.folder_path().and_then(|folder| dotenv::read(folder).ok()).map(|result| result.variables).unwrap_or_default()
 }
@@ -1312,6 +1440,7 @@ impl Render for Shell {
 fn main() {
     let folder = folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
     let (model, store) = ShellModel::open(folder);
+    let vault = open_vault();
 
     Application::new().run(move |cx: &mut App| {
         text_input::bind_keys(cx);
@@ -1329,7 +1458,7 @@ fn main() {
                 ..Default::default()
             },
             move |window, cx| {
-                let shell = cx.new(move |cx| Shell::new(model, store, cx));
+                let shell = cx.new(move |cx| Shell::new(model, store, vault, cx));
                 window.focus(&shell.read(cx).focus_handle);
                 shell
             },
