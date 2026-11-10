@@ -2,7 +2,7 @@
 //! without a window. Secret values are never edited here: a Secret header's value is left alone (ADR 0092 is not
 //! built, so nothing in this app may put a Secret into a Workspace file).
 
-use ricochet_core::models::{ApiRequest, CollectionItem, KeyValue, Workspace};
+use ricochet_core::models::{ApiRequest, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
 
 /// The methods the method button steps through, in order.
 pub const METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -19,7 +19,15 @@ pub enum Field {
     Url,
     HeaderKey(usize),
     HeaderValue(usize),
+    /// The username of Basic auth. Not a Secret.
+    AuthUsername,
+    /// The name of the parameter that an API key goes in. Not a Secret.
+    AuthKeyName,
 }
+
+/// The auth kinds the window offers, in the order the kind button steps through them. The signing kinds are not
+/// offered, because they need Secrets.
+pub const AUTH_KINDS: [&str; 4] = [auth_kinds::NONE, auth_kinds::BEARER, auth_kinds::BASIC, auth_kinds::API_KEY];
 
 /// The Request held by the sidebar item with this id, for changing.
 pub fn find_request_mut<'a>(workspace: &'a mut Workspace, item_id: &str) -> Option<&'a mut ApiRequest> {
@@ -51,6 +59,8 @@ pub fn set_field(request: &mut ApiRequest, field: Field, text: &str) -> bool {
             Some(header) if !header.is_secret => &mut header.value,
             _ => return false,
         },
+        Field::AuthUsername => &mut request.auth.get_or_insert_with(RequestAuth::default).username,
+        Field::AuthKeyName => &mut request.auth.get_or_insert_with(RequestAuth::default).key_name,
     };
     if target == text {
         return false;
@@ -88,4 +98,19 @@ pub fn toggle_header(request: &mut ApiRequest, index: usize) -> bool {
         }
         None => false,
     }
+}
+
+/// Moves the auth kind to the next one in [`AUTH_KINDS`]. A kind outside the list, such as a signing kind, goes to
+/// the first one. Settings of the other kinds are kept, so switching back loses nothing.
+pub fn cycle_auth_kind(request: &mut ApiRequest) {
+    let current = request.auth.as_ref().map_or(auth_kinds::NONE, |auth| auth.kind.as_str());
+    let index = AUTH_KINDS.iter().position(|kind| *kind == current);
+    let next = AUTH_KINDS[index.map_or(0, |index| (index + 1) % AUTH_KINDS.len())];
+    request.auth.get_or_insert_with(RequestAuth::default).kind = next.to_string();
+}
+
+/// Turns the API key's query-string placement on or off. Creates the auth settings when there are none.
+pub fn toggle_key_in_query(request: &mut ApiRequest) {
+    let auth = request.auth.get_or_insert_with(RequestAuth::default);
+    auth.key_in_query = !auth.key_in_query;
 }

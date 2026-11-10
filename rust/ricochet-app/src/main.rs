@@ -149,6 +149,9 @@ struct RequestInputs {
     url: Entity<TextInput>,
     /// The Request's body, as a multi-line field.
     body: Entity<TextArea>,
+    /// The username of Basic auth, and the name of an API key's parameter. Neither is a Secret.
+    auth_username: Entity<TextInput>,
+    auth_key_name: Entity<TextInput>,
     /// One (name, value) pair per header, in the Request's order.
     headers: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
@@ -239,6 +242,13 @@ impl Shell {
                 )
             })
             .collect();
+        let (auth_username_text, auth_key_name_text) = request
+            .auth
+            .as_ref()
+            .map(|auth| (auth.username.clone(), auth.key_name.clone()))
+            .unwrap_or_default();
+        let auth_username = Self::make_input(Field::AuthUsername, auth_username_text, "Username", &mut subscriptions, cx);
+        let auth_key_name = Self::make_input(Field::AuthKeyName, auth_key_name_text, "Parameter name", &mut subscriptions, cx);
         let body = cx.new(|cx| TextArea::new(request.body.clone(), "Request body", cx));
         subscriptions.push(cx.subscribe(&body, |this: &mut Shell, input, _: &Changed, cx| {
             let text = input.read(cx).text().to_string();
@@ -248,7 +258,15 @@ impl Shell {
                 changed
             });
         }));
-        self.inputs = Some(RequestInputs { item_id, url, body, headers, _subscriptions: subscriptions });
+        self.inputs = Some(RequestInputs {
+            item_id,
+            url,
+            body,
+            auth_username,
+            auth_key_name,
+            headers,
+            _subscriptions: subscriptions,
+        });
     }
 
     fn make_input(
@@ -793,6 +811,101 @@ impl Shell {
             }))
     }
 
+    /// A value that is a Secret: shown masked, never typed into the window (ADR 0092 is not built).
+    fn secret_row(label: &'static str, is_set: bool) -> gpui::Div {
+        let value = if is_set { "•••••• (a Secret, not editable here)" } else { "Not set" };
+        pair_row(label.to_string(), value.to_string(), !is_set)
+    }
+
+    /// The auth kind, and the fields that kind uses. Secrets are masked; the others can be edited.
+    fn auth_editor(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
+        let auth = request.auth.clone().unwrap_or_default();
+        let inputs = self.inputs.as_ref();
+        let kind_label = match auth.kind.as_str() {
+            auth_kinds::NONE => "No auth",
+            auth_kinds::BEARER => "Bearer token",
+            auth_kinds::BASIC => "Basic",
+            auth_kinds::API_KEY => "API key",
+            _ => "Other (not editable here)",
+        };
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .child(div().text_xs().text_color(rgb(FAINT)).child("Type"))
+                    .child(
+                        div()
+                            .id("auth-kind")
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgb(BORDER))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(ROW_HOVER)))
+                            .child(kind_label)
+                            .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                this.change_request(cx, |request| {
+                                    edit::cycle_auth_kind(request);
+                                    true
+                                });
+                            })),
+                    ),
+            )
+            .child(muted_note(auth_label(request)));
+
+        match (auth.kind.as_str(), inputs) {
+            (auth_kinds::BEARER, _) => {
+                section = section.child(Self::secret_row("Token", !auth.token.is_empty()));
+            }
+            (auth_kinds::BASIC, Some(inputs)) => {
+                section = section
+                    .child(pair_row("Username".to_string(), String::new(), false).child(Self::input_cell(&inputs.auth_username).flex_1()))
+                    .child(Self::secret_row("Password", !auth.password.is_empty()));
+            }
+            (auth_kinds::API_KEY, Some(inputs)) => {
+                let placement = if auth.key_in_query { "Query string" } else { "Header" };
+                section = section
+                    .child(div().flex().flex_row().gap_3().child(Self::input_cell(&inputs.auth_key_name).flex_1()))
+                    .child(Self::secret_row("Value", !auth.key_value.is_empty()))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_3()
+                            .child(div().text_xs().text_color(rgb(FAINT)).child("Sent in"))
+                            .child(
+                                div()
+                                    .id("auth-key-placement")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(rgb(BORDER))
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(rgb(ROW_HOVER)))
+                                    .child(placement)
+                                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                        this.change_request(cx, |request| {
+                                            edit::toggle_key_in_query(request);
+                                            true
+                                        });
+                                    })),
+                            ),
+                    );
+            }
+            _ => {}
+        }
+        section
+    }
+
     fn request_section(&self, request: &ApiRequest, cx: &mut Context<Self>) -> gpui::Div {
         let section = div().flex().flex_col().gap_1();
         match self.request_tab {
@@ -804,7 +917,7 @@ impl Shell {
                 section.children(params.into_iter().map(|(key, value)| pair_row(key, value, false)))
             }
             RequestTab::Headers => self.headers_editor(request, cx),
-            RequestTab::Auth => section.child(muted_note(auth_label(request))),
+            RequestTab::Auth => self.auth_editor(request, cx),
             RequestTab::Body => match self.inputs.as_ref() {
                 Some(inputs) => section.child(
                     div()

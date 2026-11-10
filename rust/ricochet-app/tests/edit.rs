@@ -3,10 +3,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pretty_assertions::assert_eq;
-use ricochet_app::edit::{Field, add_header, cycle_method, find_request_mut, next_method, remove_header, set_field, toggle_header};
+use ricochet_app::edit::{Field, add_header, cycle_auth_kind, cycle_method, find_request_mut, next_method, remove_header, set_field, toggle_header, toggle_key_in_query};
 use ricochet_app::shell::ShellModel;
 use ricochet_app::state::AppState;
-use ricochet_core::models::{ApiRequest, Collection, CollectionItem, KeyValue, Workspace};
+use ricochet_core::models::{ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, Workspace, auth_kinds};
 use ricochet_core::store::WorkspaceFolder;
 
 fn request() -> ApiRequest {
@@ -154,4 +154,43 @@ fn walk(root: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
     }
     files.sort();
     files
+}
+
+#[test]
+fn the_auth_kind_steps_through_the_offered_kinds() {
+    let mut request = request();
+    assert!(request.auth.is_none());
+    let mut seen = Vec::new();
+    for _ in 0..5 {
+        cycle_auth_kind(&mut request);
+        seen.push(request.auth.as_ref().unwrap().kind.clone());
+    }
+    assert_eq!(seen, vec!["bearer", "basic", "apikey", "none", "bearer"]);
+}
+
+#[test]
+fn a_signing_kind_moves_to_the_first_offered_kind() {
+    let mut request = request();
+    request.auth = Some(RequestAuth { kind: auth_kinds::AWS_SIG_V4.to_string(), ..Default::default() });
+    cycle_auth_kind(&mut request);
+    assert_eq!(request.auth.unwrap().kind, auth_kinds::NONE);
+}
+
+#[test]
+fn the_username_and_key_name_are_editable_and_create_the_settings_when_missing() {
+    let mut request = request();
+    assert!(set_field(&mut request, Field::AuthUsername, "alice"));
+    assert!(set_field(&mut request, Field::AuthKeyName, "X-Api-Key"));
+    let auth = request.auth.unwrap();
+    assert_eq!((auth.username.as_str(), auth.key_name.as_str()), ("alice", "X-Api-Key"));
+    assert_eq!(auth.kind, auth_kinds::NONE, "editing a field does not change the kind");
+}
+
+#[test]
+fn the_query_placement_of_an_api_key_can_be_toggled() {
+    let mut request = request();
+    toggle_key_in_query(&mut request);
+    assert!(request.auth.as_ref().unwrap().key_in_query);
+    toggle_key_in_query(&mut request);
+    assert!(!request.auth.as_ref().unwrap().key_in_query);
 }
