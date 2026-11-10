@@ -396,7 +396,11 @@ pub fn variables_of<'a>(workspace: &'a Workspace, item_id: &str) -> Option<&'a [
     if let Some(collection) = workspace.collections.iter().find(|collection| collection.id == item_id) {
         return Some(&collection.variables);
     }
-    workspace.collections.iter().find_map(|collection| folder_variables(&collection.items, item_id))
+    workspace
+        .collections
+        .iter()
+        .find_map(|collection| folder_variables(&collection.items, item_id))
+        .or_else(|| workspace.environments.iter().find(|environment| environment.id == item_id).map(|environment| environment.variables.as_slice()))
 }
 
 fn folder_variables<'a>(items: &'a [CollectionItem], item_id: &str) -> Option<&'a [KeyValue]> {
@@ -413,6 +417,9 @@ fn folder_variables<'a>(items: &'a [CollectionItem], item_id: &str) -> Option<&'
 
 /// The Variables of the Collection or Folder with this id, for changing. None for a Request or an unknown id.
 pub fn variables_mut<'a>(workspace: &'a mut Workspace, item_id: &str) -> Option<&'a mut Vec<KeyValue>> {
+    if let Some(index) = workspace.environments.iter().position(|environment| environment.id == item_id) {
+        return Some(&mut workspace.environments[index].variables);
+    }
     if let Some(index) = workspace.collections.iter().position(|collection| collection.id == item_id) {
         return Some(&mut workspace.collections[index].variables);
     }
@@ -471,4 +478,31 @@ pub fn toggle_variable(variables: &mut [KeyValue], index: usize) -> bool {
         }
         None => false,
     }
+}
+
+/// Adds an Environment with this name, made unique among the Environments, and returns its id.
+pub fn new_environment(workspace: &mut Workspace, name: &str) -> String {
+    let name = crate::tree_edit::unique_name(name, workspace.environments.iter().map(|environment| environment.name.as_str()));
+    let environment = ricochet_core::models::ApiEnvironment { name, ..Default::default() };
+    let id = environment.id.clone();
+    workspace.environments.push(environment);
+    id
+}
+
+/// Renames the Environment with this id. Returns false, and changes nothing, when there is none or the name is the same.
+pub fn rename_environment(workspace: &mut Workspace, id: &str, name: &str) -> bool {
+    match workspace.environments.iter_mut().find(|environment| environment.id == id) {
+        Some(environment) if environment.name != name => {
+            environment.name = name.to_string();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Removes the Environment with this id. Returns false when there is none.
+pub fn delete_environment(workspace: &mut Workspace, id: &str) -> bool {
+    let before = workspace.environments.len();
+    workspace.environments.retain(|environment| environment.id != id);
+    workspace.environments.len() != before
 }

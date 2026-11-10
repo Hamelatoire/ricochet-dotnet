@@ -182,6 +182,8 @@ struct RequestInputs {
 /// The name and value fields of a selected Collection's or Folder's Variables, one pair per variable in order.
 struct ContainerInputs {
     item_id: String,
+    /// The name field, for an Environment. None for a Collection or Folder.
+    name: Option<Entity<TextInput>>,
     rows: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
 }
@@ -210,6 +212,8 @@ struct Shell {
     tree_target: Option<String>,
     /// The fields of the selected Collection's or Folder's Variables. None when a Request, or nothing, is selected.
     container_inputs: Option<ContainerInputs>,
+    /// The Environment open in the editor, or None. Set from the Environment menu, and cleared when a Request is picked.
+    editing_environment: Option<String>,
     /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
     renaming: Option<(String, Entity<TextInput>, Subscription)>,
     /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
@@ -266,6 +270,7 @@ impl Shell {
             confirm_delete: None,
             tree_target: None,
             container_inputs: None,
+            editing_environment: None,
             renaming: None,
             show_hidden: false,
             focus_handle: cx.focus_handle(),
@@ -747,6 +752,7 @@ impl Shell {
                     this.state.toggle_collapsed(&id);
                 }
                 this.tree_target = Some(id.clone());
+                this.editing_environment = None;
                 this.renaming = None;
                 this.confirm_delete = None;
                 cx.notify();
@@ -785,6 +791,7 @@ impl Shell {
             .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
                 if find_request(&this.model.workspace, &id).is_some() {
                     this.state.pick_request(&id);
+                    this.editing_environment = None;
                     this.tree_target = None;
                     cx.notify();
                 }
@@ -845,6 +852,7 @@ impl Shell {
         }
         self.state.mark_unsaved(&id);
         self.state.pick_request(&id);
+        self.editing_environment = None;
         self.tree_target = Some(id);
         self.confirm_delete = None;
         self.notice = None;
@@ -1120,6 +1128,7 @@ impl Shell {
                     .child(if self.state.is_unsaved(id) { format!("{label} •") } else { label })
                     .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
                         this.state.activate_tab(&show_id);
+                        this.editing_environment = None;
                         this.tree_target = None;
                         cx.notify();
                     })),
@@ -1698,11 +1707,7 @@ impl Shell {
 
     /// Rebuilds the variable fields when another Collection or Folder is selected, and clears them for a Request.
     fn ensure_container_inputs(&mut self, cx: &mut Context<Self>) {
-        let selected = self
-            .selected_kind()
-            .filter(|(_, kind)| matches!(kind, RowKind::Collection | RowKind::Folder))
-            .map(|(id, _)| id);
-        let Some(item_id) = selected else {
+        let Some(item_id) = self.container_target() else {
             self.container_inputs = None;
             return;
         };
@@ -1711,6 +1716,23 @@ impl Shell {
         }
         let variables: Vec<KeyValue> = edit::variables_of(&self.model.workspace, &item_id).map(<[KeyValue]>::to_vec).unwrap_or_default();
         let mut subscriptions = Vec::new();
+        let is_environment = self.editing_environment.as_deref() == Some(item_id.as_str());
+        let name = is_environment.then(|| {
+            let current = self.model.workspace.environments.iter().find(|environment| environment.id == item_id).map(|environment| environment.name.clone());
+            let input = cx.new(|cx| TextInput::new(current.unwrap_or_default(), "Environment name", cx));
+            subscriptions.push(cx.subscribe(&input, |this: &mut Shell, input, _: &Changed, cx| {
+                let text = input.read(cx).text().to_string();
+                let Some(id) = this.editing_environment.clone() else {
+                    return;
+                };
+                if edit::rename_environment(&mut this.model.workspace, &id, &text) {
+                    this.state.mark_unsaved(&id);
+                    this.notice = None;
+                    cx.notify();
+                }
+            }));
+            input
+        });
         let mut rows = Vec::new();
         for (index, variable) in variables.iter().enumerate() {
             let name = cx.new(|cx| TextInput::new(variable.key.clone(), "Name", cx));
@@ -1725,7 +1747,38 @@ impl Shell {
             }));
             rows.push((name, value));
         }
-        self.container_inputs = Some(ContainerInputs { item_id, rows, _subscriptions: subscriptions });
+        self.container_inputs = Some(ContainerInputs { item_id, name, rows, _subscriptions: subscriptions });
+    }
+
+    /// The Collection, Folder or Environment the editor shows: the Environment open in the editor, else the sidebar's
+    /// Collection or Folder. None when a Request is selected.
+    fn container_target(&self) -> Option<String> {
+        if let Some(id) = self.editing_environment.as_ref() {
+            if edit::variables_of(&self.model.workspace, id).is_some() {
+                return Some(id.clone());
+            }
+        }
+        self.selected_kind().filter(|(_, kind)| matches!(kind, RowKind::Collection | RowKind::Folder)).map(|(id, _)| id)
+    }
+
+    /// Deletes the Environment on the second click: the first only asks.
+    fn delete_environment_click(&mut self, cx: &mut Context<Self>, id: &str) {
+        if self.confirm_delete.as_deref() != Some(id) {
+            self.confirm_delete = Some(id.to_string());
+            cx.notify();
+            return;
+        }
+        self.confirm_delete = None;
+        if edit::delete_environment(&mut self.model.workspace, id) {
+            self.state.mark_unsaved(id);
+            if self.state.active_environment_id() == Some(id) {
+                self.state.set_active_environment(None);
+            }
+            self.editing_environment = None;
+            self.container_inputs = None;
+            self.notice = None;
+        }
+        cx.notify();
     }
 
     /// Changes the name or value of one variable as the user types.
@@ -1762,10 +1815,23 @@ impl Shell {
     /// The pane for a selected Collection or Folder: its name, and its Variables with an on and off switch and a
     /// remove mark on each row, then a row to add one. None when a Request or nothing is selected.
     fn container_pane(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        let (item_id, _) = self.selected_kind().filter(|(_, kind)| matches!(kind, RowKind::Collection | RowKind::Folder))?;
+        let item_id = self.container_target()?;
         let inputs = self.container_inputs.as_ref().filter(|inputs| inputs.item_id == item_id)?;
         let variables: &[KeyValue] = edit::variables_of(&self.model.workspace, &item_id).unwrap_or_default();
         let title = build_tree(&self.model.workspace, true).into_iter().find(|row| row.id == item_id).map(|row| row.label).unwrap_or_default();
+        let heading = match inputs.name.as_ref() {
+            Some(name) => Self::input_cell(name).text_lg().font_weight(FontWeight::SEMIBOLD),
+            None => div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title),
+        };
+        let delete_environment = inputs.name.is_some().then(|| {
+            let armed = self.confirm_delete.as_deref() == Some(item_id.as_str());
+            let id = item_id.clone();
+            Self::small_button(SharedString::from("env-delete"), if armed { "Delete environment?" } else { "Delete environment" }.to_string())
+                .when(armed, |button| button.text_color(rgb(ERROR)).border_color(rgb(ERROR)))
+                .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    this.delete_environment_click(cx, &id);
+                }))
+        });
 
         let mut list = div().flex().flex_col().gap_1();
         for (index, (variable, (name_input, value_input))) in variables.iter().zip(&inputs.rows).enumerate() {
@@ -1805,10 +1871,11 @@ impl Shell {
                 .flex_col()
                 .gap_2()
                 .p_3()
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+                .child(heading)
                 .child(muted_note("These Variables apply to the Requests inside this item. A Variable that is off is not used."))
                 .child(list.id("container-variables").max_h(px(360.0)).overflow_y_scroll())
-                .child(add),
+                .child(add)
+                .children(delete_environment),
         )
     }
 
@@ -2024,7 +2091,45 @@ impl Shell {
                 .border_1()
                 .border_color(rgb(BORDER))
                 .bg(rgb(CHROME_BG))
-                .children(rows),
+                .children(rows)
+                .child(
+                    div()
+                        .id("env-new")
+                        .px_3()
+                        .py_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_color(rgb(ACCENT))
+                        .hover(|style| style.bg(rgb(ROW_HOVER)))
+                        .child("+ New environment")
+                        .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                            let id = edit::new_environment(&mut this.model.workspace, "New environment");
+                            this.state.mark_unsaved(&id);
+                            this.editing_environment = Some(id);
+                            this.container_inputs = None;
+                            this.environment_menu_open = false;
+                            this.notice = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .id("env-edit")
+                        .px_3()
+                        .py_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_color(rgb(ACCENT))
+                        .hover(|style| style.bg(rgb(ROW_HOVER)))
+                        .child("Edit environments")
+                        .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                            let first = this.model.workspace.environments.first().map(|environment| environment.id.clone());
+                            this.editing_environment = this.state.active_environment_id().map(str::to_string).or(first);
+                            this.container_inputs = None;
+                            this.environment_menu_open = false;
+                            cx.notify();
+                        })),
+                ),
         )
     }
 
