@@ -32,6 +32,7 @@ use ricochet_core::send::{ApiResponse, RequestSender};
 use ricochet_core::response_compare::{self, DiffKind, ResponseInput};
 use ricochet_core::response_examples;
 use ricochet_core::curl;
+use ricochet_core::postman;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
@@ -1171,6 +1172,64 @@ impl Shell {
         cx.notify();
     }
 
+    /// Asks for a Postman export and imports it: its Collection, Environment or globals are added to the Workspace,
+    /// and the Workspace is saved with the next save. Nothing is written by the import itself.
+    fn import_postman(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose a Postman export".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let file_name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            this.update(cx, |shell, cx| match std::fs::read_to_string(&path) {
+                Ok(text) => shell.finish_postman_import(&text, &file_name, cx),
+                Err(error) => {
+                    shell.notice = Some((format!("The file could not be read: {error}"), true));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_postman_import(&mut self, text: &str, file_name: &str, cx: &mut Context<Self>) {
+        match postman::import(text, file_name) {
+            Ok(result) => {
+                if let Some(collection) = result.collection {
+                    let id = collection.id.clone();
+                    self.model.workspace.collections.push(collection);
+                    self.state.mark_unsaved(&id);
+                }
+                if let Some(environment) = result.environment {
+                    let id = environment.id.clone();
+                    self.model.workspace.environments.push(environment);
+                    self.state.mark_unsaved(&id);
+                }
+                if let Some(globals) = result.globals {
+                    self.model.workspace.globals.extend(globals);
+                }
+                let problems = result.issues.len();
+                let text = if problems == 0 {
+                    format!("{} Save to keep it.", result.summary)
+                } else {
+                    format!("{} {problems} item(s) could not be carried over. Save to keep the import.", result.summary)
+                };
+                self.notice = Some((text, problems > 0));
+            }
+            Err(error) => self.notice = Some((format!("The file could not be imported: {error}"), true)),
+        }
+        cx.notify();
+    }
+
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
     fn open_prompt(&mut self, cx: &mut Context<Self>, id: &str, prompts: &[variables::PromptVariable]) {
         let rows = prompts
@@ -1449,6 +1508,7 @@ impl Shell {
         let mut row = div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .flex_none()
             .gap_1()
             .px_1()
@@ -1472,6 +1532,9 @@ impl Shell {
                     cx.notify();
                 },
             )));
+        row = row.child(Self::small_button(SharedString::from("tree-import"), "Import".to_string()).on_click(cx.listener(
+            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.import_postman(cx),
+        )));
         if let Some((_, input, _)) = self.renaming.as_ref() {
             row = div().flex().flex_col().gap_1().child(row).child(
                 div()
