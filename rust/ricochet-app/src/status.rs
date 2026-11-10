@@ -53,3 +53,40 @@ pub fn read_branch(folder: &Path) -> Option<String> {
     };
     status_from_output(head.as_deref(), short_head.as_deref(), None).map(|status| status.branch)
 }
+
+/// How far the branch is from its upstream, as `(ahead, behind)`, read with git. None when git is not available, there
+/// is no upstream, or HEAD is detached. The counts are as of what git last fetched.
+pub fn read_sync(folder: &Path) -> Option<(i32, i32)> {
+    let run = |args: &[&str]| -> Option<String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(folder)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let head = run(&["rev-parse", "--abbrev-ref", "HEAD"]);
+    let short = run(&["rev-parse", "--short", "HEAD"]);
+    let counts = run(&["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]);
+    let status = ricochet_core::git_status::status_from_output(head.as_deref(), short.as_deref(), counts.as_deref())?;
+    Some((status.ahead?, status.behind?))
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::read_sync;
+
+    #[test]
+    fn a_folder_that_is_not_a_repository_has_no_sync_counts() {
+        let folder = std::env::temp_dir().join(format!("ricochet-no-git-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        assert_eq!(read_sync(&folder), None);
+        std::fs::remove_dir_all(&folder).ok();
+    }
+}

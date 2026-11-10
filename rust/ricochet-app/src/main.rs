@@ -329,6 +329,8 @@ struct Shell {
     shortcut_sheet_open: bool,
     /// Set by the first Reload click when there are unsaved changes, so the second click reloads.
     reload_armed: bool,
+    /// Commits the branch has that its upstream lacks, and the reverse, from git. None when unknown.
+    sync: Option<(i32, i32)>,
     /// The Collection or Folder being renamed: its id and the field that holds the name. Set by the Rename button.
     renaming: Option<(String, Entity<TextInput>, Subscription)>,
     /// Whether hidden items show in the sidebar, dimmed (ADR 0032).
@@ -354,6 +356,7 @@ struct Shell {
 impl Shell {
     fn new(model: ShellModel, store: Option<WorkspaceFolder>, vault: VaultState, cx: &mut Context<Self>) -> Self {
         let mut state = AppState::for_workspace(&model.workspace);
+        let sync = model.folder.as_deref().and_then(ricochet_app::status::read_sync);
         let dot_env = read_dot_env(&model);
         let personal_dir = default_personal_directory();
         // The Environment chosen last time, if it still exists in the Workspace.
@@ -392,6 +395,7 @@ impl Shell {
             palette: None,
             shortcut_sheet_open: false,
             reload_armed: false,
+            sync,
             renaming: None,
             show_hidden: false,
             focus_handle: cx.focus_handle(),
@@ -1281,6 +1285,7 @@ impl Shell {
                 let folder = self.model.folder.clone();
                 let branch = self.model.status.branch.clone();
                 self.model = ShellModel::from_parts(folder, workspace, issues, branch);
+                self.sync = self.model.folder.as_deref().and_then(ricochet_app::status::read_sync);
                 self.state = AppState::for_workspace(&self.model.workspace);
                 self.inputs = None;
                 self.container_inputs = None;
@@ -2880,7 +2885,10 @@ impl Shell {
             .border_color(rgb(BORDER))
             .text_xs()
             .text_color(rgb(FAINT))
-            .child(format!("Branch: {branch}"))
+            .child(format!(
+                "Branch: {branch}{}",
+                self.sync.map(|(ahead, behind)| format!("  ↑{ahead} ↓{behind}")).unwrap_or_default()
+            ))
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(status.workspace.clone()))
             .children(self.notice.as_ref().map(|(text, is_problem)| {
                 div().flex_none().text_color(rgb(if *is_problem { WARNING } else { SUCCESS })).child(text.clone())
