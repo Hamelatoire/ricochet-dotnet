@@ -9,7 +9,7 @@ use gpui::{
 use ricochet_app::shell::{ShellModel, folder_from};
 use ricochet_app::state::AppState;
 use ricochet_app::tree::{RowKind, TreeRow, find_request};
-use ricochet_core::models::ApiRequest;
+use ricochet_core::models::{ApiRequest, auth_kinds};
 
 const WINDOW_BG: u32 = 0x1b1d22;
 const SIDEBAR_BG: u32 = 0x202328;
@@ -272,11 +272,12 @@ impl Shell {
                                     .child(request.url.clone()),
                             ),
                     )
+                    .child(header_rows(request))
                     .child(
                         div()
                             .text_xs()
                             .text_color(rgb(MUTED))
-                            .child(format!("{} header(s)", request.headers.len())),
+                            .child(format!("Auth: {}", auth_label(request))),
                     );
                 if !request.body.is_empty() {
                     panel = panel.child(
@@ -373,6 +374,44 @@ impl Render for Shell {
                     ),
             )
             .child(self.status_bar())
+    }
+}
+
+/// The Request's headers, one per line. Disabled headers are dimmed, and Secret values are masked, as in the C# app.
+fn header_rows(request: &ApiRequest) -> impl IntoElement + use<> {
+    let mut column = div().flex().flex_col().gap_1().child(
+        div()
+            .text_xs()
+            .text_color(rgb(MUTED))
+            .child(format!("{} header(s)", request.headers.len())),
+    );
+    for header in &request.headers {
+        let value = if header.is_secret { "••••••".to_string() } else { header.value.clone() };
+        let color = if header.enabled { TEXT } else { MUTED };
+        column = column.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_3()
+                .text_color(rgb(color))
+                .child(div().w(px(180.0)).overflow_hidden().whitespace_nowrap().child(header.key.clone()))
+                .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(value)),
+        );
+    }
+    column
+}
+
+/// The auth kind in words. Credentials are never shown, only the kind.
+fn auth_label(request: &ApiRequest) -> &'static str {
+    match request.auth.as_ref().map(|auth| auth.kind.as_str()) {
+        None | Some(auth_kinds::NONE) => "none",
+        Some(auth_kinds::BEARER) => "bearer token (hidden)",
+        Some(auth_kinds::BASIC) => "basic (password hidden)",
+        Some(auth_kinds::API_KEY) => "API key (value hidden)",
+        Some(auth_kinds::DIGEST) => "digest (secret hidden)",
+        Some(auth_kinds::OAUTH1) => "OAuth 1.0 (secrets hidden)",
+        Some(auth_kinds::AWS_SIG_V4) => "AWS SigV4 (secrets hidden)",
+        Some(_) => "unknown kind",
     }
 }
 
