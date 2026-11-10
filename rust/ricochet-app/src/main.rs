@@ -4,8 +4,6 @@
 
 use std::collections::HashMap;
 
-mod text_input;
-
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Render, SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, div, prelude::*, px, rgb, size,
@@ -23,7 +21,8 @@ use ricochet_core::response_status::{ResponseStatusClass, classify};
 use ricochet_core::send::{ApiResponse, RequestSender};
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
-use text_input::{Changed, TextInput};
+use ricochet_app::text_area::{self, TextArea};
+use ricochet_app::text_input::{self, Changed, TextInput};
 
 actions!(ricochet, [Save, SendRequest]);
 
@@ -148,6 +147,8 @@ fn pair_row(key: String, value: String, dimmed: bool) -> gpui::Div {
 struct RequestInputs {
     item_id: String,
     url: Entity<TextInput>,
+    /// The Request's body, as a multi-line field.
+    body: Entity<TextArea>,
     /// One (name, value) pair per header, in the Request's order.
     headers: Vec<(Entity<TextInput>, Entity<TextInput>)>,
     _subscriptions: Vec<Subscription>,
@@ -238,7 +239,16 @@ impl Shell {
                 )
             })
             .collect();
-        self.inputs = Some(RequestInputs { item_id, url, headers, _subscriptions: subscriptions });
+        let body = cx.new(|cx| TextArea::new(request.body.clone(), "Request body", cx));
+        subscriptions.push(cx.subscribe(&body, |this: &mut Shell, input, _: &Changed, cx| {
+            let text = input.read(cx).text().to_string();
+            this.change_request(cx, |request| {
+                let changed = request.body != text;
+                request.body = text;
+                changed
+            });
+        }));
+        self.inputs = Some(RequestInputs { item_id, url, body, headers, _subscriptions: subscriptions });
     }
 
     fn make_input(
@@ -795,17 +805,24 @@ impl Shell {
             }
             RequestTab::Headers => self.headers_editor(request, cx),
             RequestTab::Auth => section.child(muted_note(auth_label(request))),
-            RequestTab::Body => {
-                if request.body.is_empty() {
-                    return section.child(muted_note("No body."));
-                }
-                section.children(request.body.lines().map(|line| {
-                    let colored = color_line(line);
-                    div().flex().flex_row().font_family(MONO).pl(px(INDENT_STEP * colored.indent as f32)).children(
-                        colored.spans.into_iter().map(|span| div().flex_none().text_color(rgb(span_color(span.kind))).child(span.text)),
-                    )
-                }))
-            }
+            RequestTab::Body => match self.inputs.as_ref() {
+                Some(inputs) => section.child(
+                    div()
+                        .id("body-editor")
+                        .w_full()
+                        .min_h(px(120.0))
+                        .max_h(px(260.0))
+                        .p_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(BORDER))
+                        .bg(rgb(FIELD_BG))
+                        .font_family(MONO)
+                        .overflow_y_scroll()
+                        .child(inputs.body.clone()),
+                ),
+                None => section.child(muted_note("Pick a request in the sidebar to edit its body.")),
+            },
             RequestTab::Checks => {
                 let checks = request.assertions.as_deref().unwrap_or(&[]);
                 if checks.is_empty() {
@@ -1042,6 +1059,7 @@ fn main() {
 
     Application::new().run(move |cx: &mut App| {
         text_input::bind_keys(cx);
+        text_area::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new("secondary-s", Save, None),
             KeyBinding::new("secondary-enter", SendRequest, None),
