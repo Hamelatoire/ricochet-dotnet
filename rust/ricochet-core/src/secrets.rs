@@ -201,12 +201,12 @@ pub fn default_vault(personal_directory: &Path) -> Option<Box<dyn SecretVault>> 
     #[cfg(target_os = "macos")]
     {
         let _ = personal_directory;
-        return Some(Box::new(crate::secrets_os::KeychainVault));
+        return Some(Box::new(crate::secrets_os::KeychainVault::ricochet()));
     }
     #[cfg(target_os = "linux")]
     {
         let _ = personal_directory;
-        return Some(Box::new(crate::secrets_os::SecretServiceVault));
+        return Some(Box::new(crate::secrets_os::SecretServiceVault::ricochet()));
     }
     #[allow(unreachable_code)]
     {
