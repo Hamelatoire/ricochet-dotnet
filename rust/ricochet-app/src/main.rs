@@ -45,7 +45,7 @@ use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
-actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
+actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, FindRequest, FocusUrl, SwitchEnvironment, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -298,6 +298,8 @@ struct PromptDialog {
 struct PaletteState {
     input: Entity<TextInput>,
     query: String,
+    /// Opened with Ctrl+P: lists Requests only.
+    requests_only: bool,
     _subscription: Subscription,
 }
 
@@ -1006,8 +1008,8 @@ impl Shell {
         }
     }
 
-    /// Opens the command palette with its filter field focused.
-    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the command palette with its filter field focused. With `requests_only` (Ctrl+P), it offers Requests only.
+    fn open_palette(&mut self, requests_only: bool, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| TextInput::new("", "Type a command or a request name", cx));
         let subscription = cx.subscribe(&input, |this: &mut Shell, input, _: &Changed, cx| {
             let text = input.read(cx).text().to_string();
@@ -1017,7 +1019,7 @@ impl Shell {
             cx.notify();
         });
         input.focus_handle(cx).focus(window);
-        self.palette = Some(PaletteState { input, query: String::new(), _subscription: subscription });
+        self.palette = Some(PaletteState { input, query: String::new(), requests_only, _subscription: subscription });
         cx.notify();
     }
 
@@ -1084,7 +1086,8 @@ impl Shell {
         let Some(query) = self.palette.as_ref().map(|palette| palette.query.clone()) else {
             return;
         };
-        let shown = palette::filter(&palette::entries(&self.model.workspace), &query);
+        let requests_only = self.palette.as_ref().is_some_and(|palette| palette.requests_only);
+        let shown = palette::filter(&palette::entries_for(&self.model.workspace, requests_only), &query);
         self.palette = None;
         let Some(entry) = shown.into_iter().nth(index) else {
             cx.notify();
@@ -1120,7 +1123,7 @@ impl Shell {
     /// The palette: its filter field over the first ten entries it matches. None while it is closed.
     fn palette_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
         let palette = self.palette.as_ref()?;
-        let shown = palette::filter(&palette::entries(&self.model.workspace), &palette.query);
+        let shown = palette::filter(&palette::entries_for(&self.model.workspace, palette.requests_only), &palette.query);
         let rows: Vec<_> = shown
             .iter()
             .take(10)
@@ -3361,7 +3364,10 @@ impl Render for Shell {
             .on_action(cx.listener(|this: &mut Shell, _: &Save, _: &mut Window, cx: &mut Context<Shell>| this.save_workspace(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &NewRequest, _: &mut Window, cx: &mut Context<Shell>| this.add_request(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &OpenPalette, window: &mut Window, cx: &mut Context<Shell>| {
-                this.open_palette(window, cx)
+                this.open_palette(false, window, cx)
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &FindRequest, window: &mut Window, cx: &mut Context<Shell>| {
+                this.open_palette(true, window, cx)
             }))
             .on_action(cx.listener(|this: &mut Shell, _: &ClosePalette, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &CloseTab, _: &mut Window, cx: &mut Context<Shell>| {
@@ -3380,6 +3386,17 @@ impl Render for Shell {
                 this.state.step_tab(-1);
                 this.editing_environment = None;
                 this.tree_target = None;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &FocusUrl, window: &mut Window, cx: &mut Context<Shell>| {
+                if let Some(inputs) = &this.inputs {
+                    window.focus(&inputs.url.focus_handle(cx));
+                    inputs.url.update(cx, |input, cx| input.move_to_end(cx));
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &SwitchEnvironment, _: &mut Window, cx: &mut Context<Shell>| {
+                this.environment_menu_open = true;
                 cx.notify();
             }))
             .on_action(cx.listener(|this: &mut Shell, _: &OpenShortcutSheet, _: &mut Window, cx: &mut Context<Shell>| {
@@ -3432,6 +3449,9 @@ fn main() {
             KeyBinding::new("secondary-s", Save, None),
             KeyBinding::new("secondary-n", NewRequest, None),
             KeyBinding::new("secondary-k", OpenPalette, None),
+            KeyBinding::new("secondary-p", FindRequest, None),
+            KeyBinding::new("secondary-l", FocusUrl, None),
+            KeyBinding::new("secondary-e", SwitchEnvironment, None),
             KeyBinding::new("escape", ClosePalette, None),
             KeyBinding::new("f1", OpenShortcutSheet, None),
             KeyBinding::new("secondary-w", CloseTab, None),
