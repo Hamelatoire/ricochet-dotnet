@@ -116,6 +116,18 @@ fn reads_the_saved_fields_in_camel_case() {
 }
 
 #[test]
+fn a_state_file_from_before_settings_existed_gets_the_settings_defaults() {
+    let dir = TempDir::new("theme-only");
+    write_state(dir.path(), r#"{ "theme": "dark" }"#);
+
+    let loaded = load(dir.path());
+
+    assert_eq!(loaded.issues, vec![]);
+    assert_eq!(loaded.state.theme.as_deref(), Some("dark"));
+    assert_eq!(loaded.state.settings, PersonalSettings::default());
+}
+
+#[test]
 fn unknown_fields_are_ignored() {
     let dir = TempDir::new("unknown");
     write_state(dir.path(), r#"{ "theme": "light", "somethingNew": { "a": 1 } }"#);
