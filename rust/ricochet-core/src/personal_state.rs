@@ -382,3 +382,16 @@ fn update_state(
     fs::write(&temp, text)?;
     fs::rename(&temp, &path)
 }
+
+/// Saves the Workspace folder to open next time in `state.json`, as the C# store does when a folder is opened. None
+/// removes it, so the default folder is used. Only that key changes.
+pub fn save_workspace_folder(personal_directory: &Path, folder: Option<&Path>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| match folder {
+        Some(path) => {
+            object.insert("workspaceFolder".to_string(), serde_json::Value::String(path.to_string_lossy().into_owned()));
+        }
+        None => {
+            object.remove("workspaceFolder");
+        }
+    })
+}
