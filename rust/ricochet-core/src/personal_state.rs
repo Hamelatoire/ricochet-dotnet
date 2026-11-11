@@ -262,6 +262,17 @@ pub fn save_settings(personal_directory: &Path, settings: &PersonalSettings) -> 
     })
 }
 
+/// Saves the theme choice (ADR 0013) in `state.json`: "light", "dark", or None to follow the operating system, which
+/// writes `null` as the C# app does. Only the `theme` key changes; every other key is kept.
+pub fn save_theme(personal_directory: &Path, theme: Option<&str>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| {
+        object.insert(
+            "theme".to_string(),
+            theme.map_or(serde_json::Value::Null, |theme| serde_json::Value::String(theme.to_string())),
+        );
+    })
+}
+
 /// Reads `state.json` as an object, lets `change` edit it, and writes it back through a temporary file. A missing
 /// file starts as an empty object. A file that is not a JSON object is an error, so it is not written over.
 fn update_state(

@@ -6,8 +6,9 @@ use std::collections::HashMap;
 
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Render, SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    actions, div, prelude::*, px, rgb, size,
+    actions, div, prelude::*, px, size,
 };
+use ricochet_app::theme::{ThemeChoice, Tone, rgb};
 use ricochet_app::edit::{self, Field, set_secret};
 use ricochet_core::secrets::{self, SecretValue, SecretVault, auth_key};
 use ricochet_core::external_secrets::ExternalSecretResolver;
@@ -58,22 +59,41 @@ const HISTORY_CONFIRM: &str = "__clear_history__";
 /// Width of one space of JSON indent.
 const INDENT_STEP: f32 = 7.5;
 
-const WINDOW_BG: u32 = 0x1a1c20;
-const CHROME_BG: u32 = 0x1f2227;
-const FIELD_BG: u32 = 0x15171a;
-const BORDER: u32 = 0x2e323a;
-const ROW_HOVER: u32 = 0x2a2e36;
-const ROW_SELECTED: u32 = 0x25354f;
-const ACCENT: u32 = 0x4c8dff;
-const ACCENT_HOVER: u32 = 0x6aa1ff;
-const CHIP_BG: u32 = 0x22344f;
-const CHIP_TEXT: u32 = 0x8ab4ff;
-const TEXT: u32 = 0xe6e8eb;
-const MUTED: u32 = 0x9aa1ab;
-const FAINT: u32 = 0x6b727d;
-const SUCCESS: u32 = 0x6fcf97;
-const WARNING: u32 = 0xf2c94c;
-const ERROR: u32 = 0xeb5757;
+// The colours, as fields of the active theme's palette (ADR 0013). `rgb` draws them from the theme in use now.
+const WINDOW_BG: Tone = |p| p.window_bg;
+const CHROME_BG: Tone = |p| p.chrome_bg;
+const FIELD_BG: Tone = |p| p.field_bg;
+const BORDER: Tone = |p| p.border;
+const ROW_HOVER: Tone = |p| p.row_hover;
+const ROW_SELECTED: Tone = |p| p.row_selected;
+const ACCENT: Tone = |p| p.accent;
+const ACCENT_HOVER: Tone = |p| p.accent_hover;
+const CHIP_BG: Tone = |p| p.chip_bg;
+const CHIP_TEXT: Tone = |p| p.chip_text;
+const TEXT: Tone = |p| p.text;
+const MUTED: Tone = |p| p.muted;
+const FAINT: Tone = |p| p.faint;
+const SUCCESS: Tone = |p| p.success;
+const WARNING: Tone = |p| p.warning;
+const ERROR: Tone = |p| p.error;
+const ON_ACCENT: Tone = |p| p.on_accent;
+const CHIP_UNRESOLVED_BG: Tone = |p| p.chip_unresolved_bg;
+const STATUS_REDIRECT: Tone = |p| p.status_redirect;
+const STATUS_CLIENT_ERROR: Tone = |p| p.status_client_error;
+const METHOD_GET: Tone = |p| p.method_get;
+const METHOD_POST: Tone = |p| p.method_post;
+const METHOD_PUT: Tone = |p| p.method_put;
+const METHOD_PATCH: Tone = |p| p.method_patch;
+const METHOD_DELETE: Tone = |p| p.method_delete;
+const METHOD_OTHER: Tone = |p| p.method_other;
+const JSON_KEY: Tone = |p| p.json_key;
+const JSON_STRING: Tone = |p| p.json_string;
+const JSON_NUMBER: Tone = |p| p.json_number;
+const JSON_LITERAL: Tone = |p| p.json_literal;
+const JSON_PLAIN: Tone = |p| p.json_plain;
+const DIFF_REMOVED_BG: Tone = |p| p.diff_removed_bg;
+const DIFF_ADDED_BG: Tone = |p| p.diff_added_bg;
+const DIFF_CHANGED_BG: Tone = |p| p.diff_changed_bg;
 const SIDEBAR_WIDTH: f32 = 280.0;
 const MONO: &str = "Consolas";
 
@@ -120,34 +140,34 @@ enum RequestTab {
     Captures,
 }
 
-fn status_color(status_code: u16) -> u32 {
+fn status_color(status_code: u16) -> Tone {
     match classify(i32::from(status_code)) {
         ResponseStatusClass::Success => SUCCESS,
-        ResponseStatusClass::Redirect => 0x56b6f2,
-        ResponseStatusClass::ClientError => 0xf2994a,
+        ResponseStatusClass::Redirect => STATUS_REDIRECT,
+        ResponseStatusClass::ClientError => STATUS_CLIENT_ERROR,
         ResponseStatusClass::ServerError => ERROR,
         ResponseStatusClass::Neutral => MUTED,
     }
 }
 
-fn method_color(method: &str) -> u32 {
+fn method_color(method: &str) -> Tone {
     match method {
-        "GET" => SUCCESS,
-        "POST" => WARNING,
-        "PUT" => 0x56b6f2,
-        "PATCH" => 0xbb87f5,
-        "DELETE" => ERROR,
-        _ => MUTED,
+        "GET" => METHOD_GET,
+        "POST" => METHOD_POST,
+        "PUT" => METHOD_PUT,
+        "PATCH" => METHOD_PATCH,
+        "DELETE" => METHOD_DELETE,
+        _ => METHOD_OTHER,
     }
 }
 
-fn span_color(kind: SpanKind) -> u32 {
+fn span_color(kind: SpanKind) -> Tone {
     match kind {
-        SpanKind::Key => CHIP_TEXT,
-        SpanKind::String => SUCCESS,
-        SpanKind::Number => WARNING,
-        SpanKind::Literal => 0xbb87f5,
-        SpanKind::Plain => TEXT,
+        SpanKind::Key => JSON_KEY,
+        SpanKind::String => JSON_STRING,
+        SpanKind::Number => JSON_NUMBER,
+        SpanKind::Literal => JSON_LITERAL,
+        SpanKind::Plain => JSON_PLAIN,
     }
 }
 
@@ -200,10 +220,10 @@ fn compare_view(previous: Option<&ResponseInput>, current: &ResponseInput) -> gp
     }
     for line in comparison.body {
         let (before_bg, after_bg) = match line.kind {
-            DiffKind::Same => (WINDOW_BG, WINDOW_BG),
-            DiffKind::Removed => (0x3d1f24, WINDOW_BG),
-            DiffKind::Added => (WINDOW_BG, 0x1f3d28),
-            DiffKind::Changed => (0x3d3520, 0x3d3520),
+            DiffKind::Same => (WINDOW_BG as Tone, WINDOW_BG as Tone),
+            DiffKind::Removed => (DIFF_REMOVED_BG, WINDOW_BG),
+            DiffKind::Added => (WINDOW_BG, DIFF_ADDED_BG),
+            DiffKind::Changed => (DIFF_CHANGED_BG, DIFF_CHANGED_BG),
         };
         let number = |value: Option<usize>| value.map(|n| n.to_string()).unwrap_or_default();
         view = view.child(
@@ -401,6 +421,9 @@ struct Shell {
     import_report: Option<String>,
     dump_choice: Option<pages::DumpChoice>,
     spec_dialog: Option<pages::SpecDialog>,
+    /// The theme chosen on the Settings page (ADR 0013), and the watch on the system's light or dark setting.
+    theme_choice: ThemeChoice,
+    _appearance_subscription: Option<Subscription>,
 }
 
 impl Shell {
@@ -480,6 +503,8 @@ impl Shell {
             request_tab: RequestTab::Headers,
             response_tab: ResponseTab::Body,
             dot_env,
+            theme_choice: ThemeChoice::from_stored(personal.theme.as_deref()),
+            _appearance_subscription: None,
         }
     }
 
@@ -2219,7 +2244,7 @@ impl Shell {
                             .flex_none()
                             .px_1()
                             .rounded_sm()
-                            .bg(rgb(if resolves { CHIP_BG } else { 0x4a3a1a }))
+                            .bg(rgb(if resolves { CHIP_BG } else { CHIP_UNRESOLVED_BG }))
                             .text_color(rgb(if resolves { CHIP_TEXT } else { WARNING }))
                             .child(name),
                     }))
@@ -2269,7 +2294,7 @@ impl Shell {
                     .items_center()
                     .px_4()
                     .bg(rgb(ACCENT))
-                    .text_color(rgb(0xffffff))
+                    .text_color(rgb(ON_ACCENT))
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(ACCENT_HOVER)))
@@ -3471,7 +3496,14 @@ fn main() {
                 ..Default::default()
             },
             move |window, cx| {
-                let shell = cx.new(move |cx| Shell::new(model, store, vault, cx));
+                let shell = cx.new(|cx| {
+                    let mut shell = Shell::new(model, store, vault, cx);
+                    // System follows the operating system's light or dark setting, also when it changes while open.
+                    shell._appearance_subscription =
+                        Some(cx.observe_window_appearance(window, |shell: &mut Shell, window, cx| shell.apply_theme(window, cx)));
+                    shell.apply_theme(window, cx);
+                    shell
+                });
                 window.focus(&shell.read(cx).focus_handle);
                 shell
             },
