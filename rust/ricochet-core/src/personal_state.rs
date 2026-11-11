@@ -265,6 +265,17 @@ pub fn save_settings(personal_directory: &Path, settings: &PersonalSettings) -> 
     })
 }
 
+/// Saves the theme choice (ADR 0013) in `state.json`: "light", "dark", or None to follow the operating system, which
+/// writes `null` as the C# app does. Only the `theme` key changes; every other key is kept.
+pub fn save_theme(personal_directory: &Path, theme: Option<&str>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| {
+        object.insert(
+            "theme".to_string(),
+            theme.map_or(serde_json::Value::Null, |theme| serde_json::Value::String(theme.to_string())),
+        );
+    })
+}
+
 /// Saves where the main window was (ADR 0068), as `SaveWindow` does in the C# store. Only the `window` key changes. A
 /// placement no real window could have is not saved, so a bad value never replaces a good one.
 pub fn save_window(personal_directory: &Path, placement: &WindowPlacement) -> std::io::Result<()> {

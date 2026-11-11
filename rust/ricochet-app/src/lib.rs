@@ -17,6 +17,7 @@ pub mod shell;
 pub mod state;
 pub mod status;
 pub mod text_area;
+pub mod theme;
 pub mod text_input;
 pub mod text_edit;
 pub mod tree;
