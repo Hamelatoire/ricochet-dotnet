@@ -3440,7 +3440,10 @@ impl Render for Shell {
 }
 
 fn main() {
-    let folder = folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
+    // Crashes are written to a local log only, never sent anywhere (ADR 0088). Set up first, so early crashes are caught too.
+    ricochet_app::crash_report::install(default_personal_directory());
+
+    let folder =folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
     let (model, store) = ShellModel::open(folder);
     let vault = open_vault();
 

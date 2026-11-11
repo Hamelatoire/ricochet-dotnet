@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use gpui::{ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, div, prelude::*, px, rgb};
+use gpui::{App, ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, div, prelude::*, px, rgb};
 use ricochet_app::import_page::{self, Applied};
 use ricochet_app::settings_page::{self, TextSetting};
 use ricochet_app::text_input::{Changed, TextInput};
@@ -222,7 +222,22 @@ impl Shell {
                 s.verify_tls_certificates = !s.verify_tls_certificates
             }),
             "wrap-response" => flip("settings-wrap-response", self.settings.wrap_response, |s| s.wrap_response = !s.wrap_response),
-            "crash-log-folder" => path_text(self.personal_dir.as_deref().map(crash_log::directory_for)),
+            "crash-log-folder" => {
+                let directory = self.personal_dir.as_deref().map(crash_log::directory_for);
+                let mut column = div().flex().flex_col().gap_1().child(path_text(directory.clone()));
+                if let Some(directory) = directory {
+                    // The folder is created first, so it opens even before any crash, as in the C# app.
+                    column = column.child(div().flex().flex_row().child(
+                        Shell::small_button(SharedString::from("settings-open-crash-logs"), "Open crash log folder".to_string()).on_click(
+                            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                                let _ = std::fs::create_dir_all(&directory);
+                                cx.open_with_system(&directory);
+                            },
+                        ),
+                    ));
+                }
+                column.into_any_element()
+            }
             "workspace-folder" => path_text(self.model.folder_path().map(PathBuf::from)),
             _ => return None,
         })
