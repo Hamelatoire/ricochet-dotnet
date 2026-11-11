@@ -45,7 +45,7 @@ use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
-actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, FindRequest, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
+actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, FindRequest, FocusUrl, SwitchEnvironment, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -3388,6 +3388,17 @@ impl Render for Shell {
                 this.tree_target = None;
                 cx.notify();
             }))
+            .on_action(cx.listener(|this: &mut Shell, _: &FocusUrl, window: &mut Window, cx: &mut Context<Shell>| {
+                if let Some(inputs) = &this.inputs {
+                    window.focus(&inputs.url.focus_handle(cx));
+                    inputs.url.update(cx, |input, cx| input.move_to_end(cx));
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &SwitchEnvironment, _: &mut Window, cx: &mut Context<Shell>| {
+                this.environment_menu_open = true;
+                cx.notify();
+            }))
             .on_action(cx.listener(|this: &mut Shell, _: &OpenShortcutSheet, _: &mut Window, cx: &mut Context<Shell>| {
                 this.shortcut_sheet_open = true;
                 cx.notify();
@@ -3439,6 +3450,8 @@ fn main() {
             KeyBinding::new("secondary-n", NewRequest, None),
             KeyBinding::new("secondary-k", OpenPalette, None),
             KeyBinding::new("secondary-p", FindRequest, None),
+            KeyBinding::new("secondary-l", FocusUrl, None),
+            KeyBinding::new("secondary-e", SwitchEnvironment, None),
             KeyBinding::new("escape", ClosePalette, None),
             KeyBinding::new("f1", OpenShortcutSheet, None),
             KeyBinding::new("secondary-w", CloseTab, None),
