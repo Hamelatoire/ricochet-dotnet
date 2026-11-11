@@ -2,6 +2,7 @@
 //! window. The window itself lives in `main.rs`.
 
 pub mod bulk_page;
+pub mod crash_report;
 pub mod mock_page;
 pub mod import_page;
 pub mod edit;
