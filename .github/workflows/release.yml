@@ -89,7 +89,7 @@ jobs:
       - name: Build the Rust beta
         if: runner.os == 'Windows'
         run: |
-          cargo build --release --manifest-path rust/ricochet-app/Cargo.toml
+          cargo build --release --locked --manifest-path rust/ricochet-app/Cargo.toml
           mkdir -p out/rust
           cp rust/ricochet-app/target/release/ricochet-app.exe out/rust/Ricochet-Rust-Beta.exe
 
