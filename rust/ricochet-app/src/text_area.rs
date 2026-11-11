@@ -19,9 +19,6 @@ use crate::text_input::{Backspace, Changed, Copy, Cut, Delete, End, Home, Left, 
 actions!(text_area, [Up, Down, Newline]);
 
 const KEY_CONTEXT: &str = "TextArea";
-const CARET: u32 = 0x4c8dff;
-const SELECTION: u32 = 0x4c8dff55;
-const PLACEHOLDER: u32 = 0x6b727d;
 /// Drawn at the end of a line whose line break is selected, so the selection shows the break.
 const BREAK_WIDTH: f32 = 6.0;
 
@@ -384,7 +381,7 @@ impl Element for TextAreaElement {
             None => bounds,
         };
         let is_placeholder = content.is_empty();
-        let color = if is_placeholder { rgb(PLACEHOLDER).into() } else { style.color };
+        let color = if is_placeholder { rgb(crate::theme::active().placeholder).into() } else { style.color };
 
         let texts: Vec<SharedString> = if is_placeholder {
             vec![placeholder]
@@ -414,11 +411,11 @@ impl Element for TextAreaElement {
         let caret = (!is_placeholder && selected.is_empty()).then(|| {
             let x = bounds.left() + x_at(cursor_row, cursor_column);
             let top = bounds.top() + line_height * cursor_row as f32;
-            fill(Bounds::new(point(x, top), size(px(1.5), line_height)), rgb(CARET))
+            fill(Bounds::new(point(x, top), size(px(1.5), line_height)), rgb(crate::theme::active().caret))
         });
         let caret = caret.or_else(|| {
             (selected.is_empty() && is_placeholder).then(|| {
-                fill(Bounds::new(point(bounds.left(), bounds.top()), size(px(1.5), line_height)), rgb(CARET))
+                fill(Bounds::new(point(bounds.left(), bounds.top()), size(px(1.5), line_height)), rgb(crate::theme::active().caret))
             })
         });
 
@@ -438,7 +435,7 @@ impl Element for TextAreaElement {
                     right += px(BREAK_WIDTH);
                 }
                 let top = bounds.top() + line_height * row as f32;
-                selections.push(fill(Bounds::from_corners(point(left, top), point(right, top + line_height)), rgba(SELECTION)));
+                selections.push(fill(Bounds::from_corners(point(left, top), point(right, top + line_height)), rgba(crate::theme::active().selection)));
             }
         }
 
