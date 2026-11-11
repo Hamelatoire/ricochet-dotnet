@@ -49,8 +49,8 @@ const COLLECTIONS_DIR: &str = "collections";
 const ENVIRONMENTS_DIR: &str = "environments";
 const STATE_FILE_NAME: &str = "state.json";
 const HISTORY_FILE_NAME: &str = "history.json";
-const LEGACY_FILE_NAME: &str = "workspace.json";
-const LEGACY_BACKUP_SUFFIX: &str = ".bak";
+pub(crate) const LEGACY_FILE_NAME: &str = "workspace.json";
+pub(crate) const LEGACY_BACKUP_SUFFIX: &str = ".bak";
 const DEFAULT_FOLDER_NAME: &str = "workspace";
 
 /// A file that could not be used. It stays on disk untouched until someone fixes it.

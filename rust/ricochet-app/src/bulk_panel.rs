@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use gpui::{ClickEvent, Context, Entity, FontWeight, ScrollHandle, SharedString, Window, div, prelude::*, px, rgb};
+use gpui::{ClickEvent, Context, Entity, FontWeight, ScrollHandle, SharedString, Window, div, prelude::*, px};
 use ricochet_app::bulk_page::{self, BulkShared, RunTracker};
 use ricochet_app::text_area::TextArea;
 use ricochet_app::text_input::TextInput;
+use ricochet_app::theme::rgb;
 use ricochet_app::tree::find_request;
 use ricochet_core::bulk_run_progress;
 use ricochet_core::bulk_runner;
