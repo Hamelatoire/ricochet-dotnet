@@ -343,6 +343,22 @@ fn each_id_is_sent_with_the_bearer_token_from_the_active_environment() {
 }
 
 #[test]
+fn an_id_redirected_to_a_page_that_answers_200_is_not_ok() {
+    // As an API that sends a request it refuses to its login page: 302, then the login page answers 200.
+    let to_login = MockReply { headers: vec![KeyValue::new("Location", "/login")], ..reply(302, "") };
+    let site = Site::new(vec![MockRoute::new("GET", "/products/p1/sync", to_login), MockRoute::new("GET", "/login", reply(200, "<html>Sign in</html>"))]);
+    let collection = Collection::default();
+
+    let (results, finished) = collected(&template(&format!("http://127.0.0.1:{}", site.port)), &collection, &ids(&["p1"]), 1);
+
+    assert!(finished);
+    assert!(!results[0].succeeded, "{:?}", results[0]);
+    assert_eq!(results[0].status_code, Some(200));
+    assert_eq!(results[0].detail, format!("Redirected to http://127.0.0.1:{}/login, which answered 200", site.port));
+    assert_eq!(site.finish(), ["/products/p1/sync", "/login"]);
+}
+
+#[test]
 fn an_id_with_a_missing_variable_is_not_sent() {
     let site = Site::new(Vec::new());
     let collection = Collection::default();

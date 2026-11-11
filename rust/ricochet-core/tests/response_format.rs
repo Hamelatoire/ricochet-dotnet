@@ -15,6 +15,7 @@ fn response_bytes(body: &[u8], media_type: Option<&str>, charset: Option<&str>, 
         elapsed: Duration::ZERO,
         truncated,
         certificates_unverified: false,
+        redirected_to: None,
     }
 }
 

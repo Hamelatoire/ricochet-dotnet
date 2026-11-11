@@ -231,8 +231,14 @@ impl<'a> BulkRunner<'a> {
 
         match self.sender.send(&resolved) {
             Ok(response) => {
-                let succeeded = (200..300).contains(&response.status_code);
-                let detail = if succeeded { String::new() } else { snippet(&response.body_text()) };
+                // A redirect is not OK even when the page it leads to answers 2xx: an API that sends a request it
+                // refuses to a login page answers 302, and that page then answers 200 without the work being done.
+                let succeeded = (200..300).contains(&response.status_code) && response.redirected_to.is_none();
+                let detail = match &response.redirected_to {
+                    Some(target) => format!("Redirected to {target}, which answered {}", response.status_code),
+                    None if succeeded => String::new(),
+                    None => snippet(&response.body_text()),
+                };
                 BulkItemResult {
                     id: id.to_string(),
                     status_code: Some(response.status_code),

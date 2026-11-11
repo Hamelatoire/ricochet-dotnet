@@ -136,6 +136,10 @@ pub struct ApiResponse {
     pub truncated: bool,
     /// True when the send skipped certificate checks, so a pass does not prove who the server is.
     pub certificates_unverified: bool,
+    /// Where a followed redirect ended, as scheme, host and path, never the query, which can hold a key. None when
+    /// the response came from the address that was sent. A redirect can mean the request never reached its handler,
+    /// such as an API sending an unauthenticated request to its login page.
+    pub redirected_to: Option<String>,
 }
 
 impl ApiResponse {
@@ -234,6 +238,7 @@ impl RequestSender {
         let started = Instant::now();
 
         let response = send_with_auth(client, request, timeout, cancel)?;
+        let redirected_to = redirect_target(&request.url, response.url());
         let status = response.status();
         let headers = collect_headers(response.headers());
         let (media_type, charset) = content_type_parts(response.headers());
@@ -249,8 +254,18 @@ impl RequestSender {
             elapsed: started.elapsed(),
             truncated,
             certificates_unverified: !self.settings.verify_certificates,
+            redirected_to,
         })
     }
+}
+
+/// The scheme, host and path of `answered`, when they differ from those of the URL that was sent. The query is left
+/// out of both the comparison and the result, so a key added to the query, or one in the target, is never shown.
+fn redirect_target(sent: &str, answered: &Url) -> Option<String> {
+    let without_query = |url: &Url| format!("{}://{}{}", url.scheme(), url.host_str().unwrap_or(""), url.port().map(|p| format!(":{p}")).unwrap_or_default()) + url.path();
+    let sent = Url::parse(sent.trim()).ok()?;
+    let answered_text = without_query(answered);
+    (without_query(&sent) != answered_text).then_some(answered_text)
 }
 
 /// The cookies kept for one run (ADR 0012), in memory only. Dropping it drops them.
