@@ -218,7 +218,7 @@ pub fn default_personal_directory() -> Option<PathBuf> {
 }
 
 /// The per-user app data folder, as .NET's `SpecialFolder.ApplicationData` gives it on each system.
-fn app_data_directory() -> Option<PathBuf> {
+pub(crate) fn app_data_directory() -> Option<PathBuf> {
     if cfg!(windows) {
         return std::env::var_os("APPDATA").filter(|value| !value.is_empty()).map(PathBuf::from);
     }

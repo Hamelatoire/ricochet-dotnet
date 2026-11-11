@@ -17,6 +17,7 @@ use ricochet_app::request_view::{UrlSegment, query_params, url_segments};
 use ricochet_core::history;
 use ricochet_core::models::HistoryEntry;
 use ricochet_core::personal_state::{self, default_personal_directory};
+use ricochet_core::plain_text_copies::{PlainTextCopies, default_old_app_copy};
 use chrono::Local;
 use std::path::PathBuf;
 use ricochet_app::scope::{self, variables_in_scope};
@@ -399,6 +400,13 @@ struct Shell {
     settings_panel: Option<pages::SettingsPanel>,
     /// What the last import did, shown until it is closed.
     import_report: Option<String>,
+    /// Where old plain-text copies of this person's data may be. None when there is no personal folder.
+    copies: Option<PlainTextCopies>,
+    /// The copies shown in the warning, found at start. Empty once deleted or dismissed until the next launch.
+    copies_shown: Vec<PathBuf>,
+    /// Set by the first click on Delete; a second click within a few seconds deletes. Counts arms, so a late reset
+    /// from an earlier click does not cancel a newer one.
+    copies_armed: Option<u64>,
     dump_choice: Option<pages::DumpChoice>,
     spec_dialog: Option<pages::SpecDialog>,
 }
@@ -410,6 +418,7 @@ impl Shell {
         let dot_env = read_dot_env(&model);
         let personal_dir = default_personal_directory();
         let personal = personal_dir.as_deref().map(|dir| personal_state::load(dir).state).unwrap_or_default();
+        let copies = personal_dir.as_deref().map(|dir| PlainTextCopies::new(dir, default_old_app_copy()));
         let mut sender = RequestSender::new();
         let settings = personal.settings.sender_settings();
         let personal_settings = personal.settings.clone();
@@ -447,6 +456,9 @@ impl Shell {
             connection_problem,
             settings_panel: None,
             import_report: None,
+            copies_shown: copies.as_ref().map(PlainTextCopies::find).unwrap_or_default(),
+            copies,
+            copies_armed: None,
             dump_choice: None,
             spec_dialog: None,
             vault,
@@ -1343,6 +1355,99 @@ impl Shell {
                 .child(Self::small_button(SharedString::from("reload-folder"), "Reload".to_string()).on_click(cx.listener(
                     |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.reload_from_disk(cx),
                 ))),
+        )
+    }
+
+    /// Deletes the copies the warning lists, on the second click within a few seconds: the first only asks, because
+    /// deleting cannot be undone. Only the listed files that are still copies are deleted, then the list is found again.
+    fn delete_plain_text_copies(&mut self, cx: &mut Context<Self>) {
+        let Some(copies) = self.copies.clone() else {
+            return;
+        };
+        if self.copies_armed.is_none() {
+            let arm = self.copies_armed_count();
+            self.copies_armed = Some(arm);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
+                let _ = this.update(cx, |shell, cx| {
+                    if shell.copies_armed == Some(arm) {
+                        shell.copies_armed = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+            cx.notify();
+            return;
+        }
+        self.copies_armed = None;
+        let problems = copies.delete(&self.copies_shown);
+        self.copies_shown = copies.find();
+        if !problems.is_empty() {
+            self.notice = Some((format!("Some copies could not be deleted:
+{}", problems.join("
+")), true));
+        }
+        cx.notify();
+    }
+
+    /// A number for the next arm of Delete, different from any arm still waiting to reset.
+    fn copies_armed_count(&self) -> u64 {
+        static ARMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        ARMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A warning, shown while old plain-text copies that may hold credentials are found, listing them, with Delete and
+    /// Dismiss. Dismiss hides it until the next launch. None when there are none.
+    fn plain_text_copies_banner(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if self.copies_shown.is_empty() {
+            return None;
+        }
+        let armed = self.copies_armed.is_some();
+        let list = self.copies_shown.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join("
+");
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .mx_3()
+                .mt_2()
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(WARNING))
+                .bg(rgb(CHROME_BG))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(div().text_xs().text_color(rgb(WARNING)).child(
+                            "Old plain-text copies of your data may still hold credentials. Your work has been moved, so you can delete them.",
+                        ))
+                        .child(div().text_xs().font_family(MONO).text_color(rgb(MUTED)).whitespace_normal().child(list)),
+                )
+                .child(
+                    Self::small_button(
+                        SharedString::from("delete-plain-text-copies"),
+                        if armed { "Delete permanently?" } else { "Delete these copies" }.to_string(),
+                    )
+                    .when(armed, |button| button.text_color(rgb(ERROR)).border_color(rgb(ERROR)))
+                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.delete_plain_text_copies(cx)
+                    })),
+                )
+                .child(Self::small_button(SharedString::from("dismiss-plain-text-copies"), "Dismiss".to_string()).on_click(
+                    cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.copies_shown.clear();
+                        this.copies_armed = None;
+                        cx.notify();
+                    }),
+                )),
         )
     }
 
@@ -3420,6 +3525,7 @@ impl Render for Shell {
                         .flex_col()
                         .overflow_hidden()
                         .child(self.tab_strip(cx))
+                        .children(self.plain_text_copies_banner(cx))
                         .child(self.request_pane(url_focused, cx))
                         .child(self.response_pane(cx)),
                 ),
