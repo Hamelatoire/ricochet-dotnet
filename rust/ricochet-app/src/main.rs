@@ -1,6 +1,7 @@
 // The Ricochet window (ADR 0091): a top bar with Save and the Environment, a sidebar of Collections and recent sends, a request
 // pane with a URL bar and section tabs, a response pane and a status bar. Reads a Workspace folder from the first
-// argument or RICOCHET_DATA. The URL, method and headers can be edited and saved; the body and auth are read-only.
+// argument, else the folder opened last time, else RICOCHET_DATA; the Settings page opens or copies another one.
+// The URL, method and headers can be edited and saved; the body and auth are read-only.
 
 use std::collections::HashMap;
 
@@ -20,7 +21,7 @@ use ricochet_core::personal_state::{self, default_personal_directory};
 use chrono::Local;
 use std::path::PathBuf;
 use ricochet_app::scope::{self, variables_in_scope};
-use ricochet_app::shell::{ShellModel, folder_from};
+use ricochet_app::shell::{ShellModel, start_folder};
 use ricochet_app::state::AppState;
 use ricochet_app::status::NO_ENVIRONMENT;
 use ricochet_app::tree::{RowKind, TreeRow, build_tree, build_tree_folded, filter_rows, find_request};
@@ -3440,7 +3441,10 @@ impl Render for Shell {
 }
 
 fn main() {
-    let folder = folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
+    // The argument, else the folder opened last time (state.json), else RICOCHET_DATA.
+    let remembered = default_personal_directory().and_then(|dir| personal_state::load(&dir).state.workspace_folder);
+    let (folder, start_note) =
+        start_folder(std::env::args().nth(1).as_deref(), remembered.as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
     let (model, store) = ShellModel::open(folder);
     let vault = open_vault();
 
@@ -3471,7 +3475,13 @@ fn main() {
                 ..Default::default()
             },
             move |window, cx| {
-                let shell = cx.new(move |cx| Shell::new(model, store, vault, cx));
+                let shell = cx.new(move |cx| {
+                    let mut shell = Shell::new(model, store, vault, cx);
+                    if let Some(note) = start_note {
+                        shell.notice = Some((note, true));
+                    }
+                    shell
+                });
                 window.focus(&shell.read(cx).focus_handle);
                 shell
             },

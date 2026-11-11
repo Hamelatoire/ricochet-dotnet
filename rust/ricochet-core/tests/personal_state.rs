@@ -289,3 +289,20 @@ fn a_timeout_or_size_below_one_falls_back_to_the_default() {
     let sender = settings.sender_settings();
     assert_eq!(sender, ricochet_core::send::SenderSettings::default());
 }
+
+#[test]
+fn the_workspace_folder_is_saved_and_removed_keeping_other_keys() {
+    let dir = TempDir::new("workspace-folder");
+    write_state(dir.path(), r#"{ "theme": "dark", "workspaceFolder": "old" }"#);
+    let folder = dir.path().join("shared");
+
+    save_workspace_folder(dir.path(), Some(&folder)).unwrap();
+    let state = load(dir.path()).state;
+    assert_eq!(state.workspace_folder.as_deref(), Some(folder.to_string_lossy().as_ref()));
+    assert_eq!(state.theme.as_deref(), Some("dark"));
+
+    save_workspace_folder(dir.path(), None).unwrap();
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    assert!(!text.contains("workspaceFolder"), "{text}");
+    assert!(text.contains("\"theme\": \"dark\""), "{text}");
+}
