@@ -143,6 +143,12 @@ enum RequestTab {
     Captures,
 }
 
+/// The first line of a name, so a multi-line name (often an imported Postman description) fits a fixed-height row.
+fn one_line(text: &str) -> String {
+    let first = text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or("");
+    if text.trim().len() > first.len() { format!("{first} …") } else { first.to_string() }
+}
+
 fn status_color(status_code: u16) -> Tone {
     match classify(i32::from(status_code)) {
         ResponseStatusClass::Success => SUCCESS,
@@ -1072,11 +1078,11 @@ impl Shell {
             .child(
                 div()
                     .flex_1()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
+                    .min_w_0()
+                    .truncate()
                     .text_color(rgb(text_color))
                     .font_weight(label_weight)
-                    .child(row.label.clone()),
+                    .child(one_line(&row.label)),
             )
     }
 
@@ -1108,7 +1114,7 @@ impl Shell {
                 }
             }))
             .child(div().w(px(28.0)).flex_none().font_weight(FontWeight::SEMIBOLD).text_color(rgb(color)).child(status))
-            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(rgb(MUTED)).child(entry.request.name.clone()))
+            .child(div().flex_1().min_w_0().truncate().text_color(rgb(MUTED)).child(one_line(&entry.request.name)))
             .child(div().flex_none().text_color(rgb(FAINT)).child(when))
             .child(div().flex_none().text_color(rgb(FAINT)).child(format!("{} ms", entry.elapsed_ms)))
     }
@@ -2196,7 +2202,7 @@ impl Shell {
     }
 
     fn request_name(&self, id: &str) -> String {
-        find_request(&self.model.workspace, id).map(|request| request.name.clone()).unwrap_or_else(|| id.to_string())
+        find_request(&self.model.workspace, id).map(|request| one_line(&request.name)).unwrap_or_else(|| id.to_string())
     }
 
     /// One tab: its Request's name, which shows it, and a close mark. The label and the mark are separate clicks.
@@ -3062,8 +3068,13 @@ impl Shell {
 
     fn request_pane(&self, url_focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let pane = div().flex_1().min_h_0().flex().flex_col().gap_2().p_3();
+        // Without a folder the Workspace can still hold imported Requests and Environments; those stay editable, and
+        // the status bar says there is nowhere to save. Only an empty Workspace shows the error in place of the editor.
+        let workspace = &self.model.workspace;
         if let Some(error) = &self.model.error {
-            return pane.child(div().text_color(rgb(WARNING)).child(error.clone()));
+            if workspace.collections.is_empty() && workspace.environments.is_empty() {
+                return pane.child(div().text_color(rgb(WARNING)).child(error.clone()));
+            }
         }
         if let Some(container) = self.container_pane(cx) {
             return container;
