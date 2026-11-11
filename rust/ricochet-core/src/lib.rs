@@ -41,6 +41,7 @@ pub mod history;
 pub mod secrets;
 pub mod secrets_os;
 pub mod external_secrets;
+pub mod workspace_secrets;
 pub mod send;
 pub mod response_format;
 pub mod response_examples;
