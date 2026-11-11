@@ -21,7 +21,7 @@ cargo build --release --manifest-path rust/ricochet-app/Cargo.toml
 
 - The three crates under `rust/` are not a Cargo workspace, so pass `--manifest-path` or run Cargo inside the crate.
 - `ricochet-core` and `ricochet-cli` have tests, and so does `ricochet-app` for the logic behind the window. Check changes to what the window draws in the running app.
-- `.github/workflows/rust-vault.yml` tests the Secret vault on each OS, and it needs a Secret Service on Linux.
+- The core tests include the Secret vault tests, which use each OS's real store. `pr.yml` runs them on Linux inside a session bus with an unlocked keyring.
 - No linter or formatter is configured.
 
 ## Architecture
