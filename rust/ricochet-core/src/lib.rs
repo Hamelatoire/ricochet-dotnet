@@ -51,3 +51,4 @@ pub mod bulk_run_progress;
 pub mod personal_state;
 pub mod personal_secrets;
 pub mod git_branch;
+pub mod plain_text_copies;

@@ -5,7 +5,8 @@
 //!
 //! Failures, as in C#: a missing or unreadable file gives the defaults. A file that is not valid JSON, or has a
 //! value of the wrong type, is moved beside the original as `state.json.corrupt-<timestamp>`, reported as an issue,
-//! and the defaults are used. Saves (`save_active_environment`, `save_settings`) change only their own key.
+//! and the defaults are used. Saves (`save_active_environment`, `save_settings`, `save_window`, `save_panels`,
+//! `save_open_tabs`) change only their own keys.
 //!
 //! Not ported yet: the old app's copy of `workspace.json` that the store adopts on first run.
 
@@ -73,17 +74,18 @@ impl PersonalSettings {
 }
 
 /// Where a bulk run stopped, so it can resume after the last id it processed.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BulkProgress {
     pub request_id: String,
     pub ids: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_id: Option<String>,
     pub processed: i32,
 }
 
 /// Where the main window was. Size and position are the normal (not maximised) bounds.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WindowPlacement {
     pub x: i32,
@@ -108,10 +110,12 @@ impl WindowPlacement {
 }
 
 /// The sidebar width and request pane height (ADR 0043). Each is optional, so one can be kept when the other is damaged.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PanelLayout {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sidebar_width: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub request_height: Option<f64>,
 }
 
@@ -218,7 +222,7 @@ pub fn default_personal_directory() -> Option<PathBuf> {
 }
 
 /// The per-user app data folder, as .NET's `SpecialFolder.ApplicationData` gives it on each system.
-fn app_data_directory() -> Option<PathBuf> {
+pub(crate) fn app_data_directory() -> Option<PathBuf> {
     if cfg!(windows) {
         return std::env::var_os("APPDATA").filter(|value| !value.is_empty()).map(PathBuf::from);
     }
@@ -262,6 +266,93 @@ pub fn save_settings(personal_directory: &Path, settings: &PersonalSettings) -> 
     })
 }
 
+/// Saves where a Request's bulk run got to in `state.json`, as `SetBulkProgress` does in the C# store. The entry for
+/// the same Request is replaced, and every other Request's entry and every other key is kept.
+pub fn save_bulk_progress(personal_directory: &Path, progress: &BulkProgress) -> std::io::Result<()> {
+    let value = serde_json::to_value(progress).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    update_state(personal_directory, |object| {
+        let mut entries = match object.remove("bulk") {
+            Some(serde_json::Value::Array(entries)) => entries,
+            _ => Vec::new(),
+        };
+        entries.retain(|entry| entry.get("requestId").and_then(serde_json::Value::as_str) != Some(progress.request_id.as_str()));
+        entries.push(value);
+        object.insert("bulk".to_string(), serde_json::Value::Array(entries));
+    })
+}
+
+/// The bulk run log in the personal folder. Kept on this machine only.
+pub const BULK_LOG_FILE_NAME: &str = "bulk-log.txt";
+
+/// Adds lines to `bulk-log.txt`, each after the local time, as `AppendBulkLog` does in the C# store. The file is only
+/// ever appended to.
+pub fn append_bulk_log(personal_directory: &Path, lines: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    if lines.is_empty() {
+        return Ok(());
+    }
+    fs::create_dir_all(personal_directory)?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let text: String = lines.iter().map(|line| format!("{stamp}  {line}\n")).collect();
+    let mut file = fs::OpenOptions::new().create(true).append(true).open(personal_directory.join(BULK_LOG_FILE_NAME))?;
+    file.write_all(text.as_bytes())
+}
+
+/// Saves the theme choice (ADR 0013) in `state.json`: "light", "dark", or None to follow the operating system, which
+/// writes `null` as the C# app does. Only the `theme` key changes; every other key is kept.
+pub fn save_theme(personal_directory: &Path, theme: Option<&str>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| {
+        object.insert(
+            "theme".to_string(),
+            theme.map_or(serde_json::Value::Null, |theme| serde_json::Value::String(theme.to_string())),
+        );
+    })
+}
+
+/// Saves where the main window was (ADR 0068), as `SaveWindow` does in the C# store. Only the `window` key changes. A
+/// placement no real window could have is not saved, so a bad value never replaces a good one.
+pub fn save_window(personal_directory: &Path, placement: &WindowPlacement) -> std::io::Result<()> {
+    if !placement.is_reasonable() {
+        return Ok(());
+    }
+    let value = to_json(placement)?;
+    update_state(personal_directory, |object| {
+        object.insert("window".to_string(), value);
+    })
+}
+
+/// Saves the sidebar width and request pane height (ADR 0043), as `SavePanels` does in the C# store. Damaged values
+/// are dropped first, as `sanitized` decides. Only the `panels` key changes.
+pub fn save_panels(personal_directory: &Path, layout: &PanelLayout) -> std::io::Result<()> {
+    let value = to_json(&layout.sanitized())?;
+    update_state(personal_directory, |object| {
+        object.insert("panels".to_string(), value);
+    })
+}
+
+/// Saves which Requests are open as tabs, in order, and the one showing (ADR 0041), as `SetOpenTabs` does in the C#
+/// store. With no tabs open both keys are removed, as the C# store leaves them out, so they add nothing to the file.
+/// Only the `openTabs` and `activeTab` keys change.
+pub fn save_open_tabs(personal_directory: &Path, open_tabs: &[String], active_tab: Option<&str>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| {
+        if open_tabs.is_empty() {
+            object.remove("openTabs");
+            object.remove("activeTab");
+            return;
+        }
+        let ids = open_tabs.iter().cloned().map(serde_json::Value::String).collect();
+        object.insert("openTabs".to_string(), serde_json::Value::Array(ids));
+        match active_tab {
+            Some(id) => object.insert("activeTab".to_string(), serde_json::Value::String(id.to_string())),
+            None => object.remove("activeTab"),
+        };
+    })
+}
+
+fn to_json(value: &impl Serialize) -> std::io::Result<serde_json::Value> {
+    serde_json::to_value(value).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
 /// Reads `state.json` as an object, lets `change` edit it, and writes it back through a temporary file. A missing
 /// file starts as an empty object. A file that is not a JSON object is an error, so it is not written over.
 fn update_state(
@@ -290,4 +381,17 @@ fn update_state(
     let temp = personal_directory.join(format!("{STATE_FILE_NAME}.tmp"));
     fs::write(&temp, text)?;
     fs::rename(&temp, &path)
+}
+
+/// Saves the Workspace folder to open next time in `state.json`, as the C# store does when a folder is opened. None
+/// removes it, so the default folder is used. Only that key changes.
+pub fn save_workspace_folder(personal_directory: &Path, folder: Option<&Path>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| match folder {
+        Some(path) => {
+            object.insert("workspaceFolder".to_string(), serde_json::Value::String(path.to_string_lossy().into_owned()));
+        }
+        None => {
+            object.remove("workspaceFolder");
+        }
+    })
 }

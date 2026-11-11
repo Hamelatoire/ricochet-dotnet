@@ -289,3 +289,101 @@ fn a_timeout_or_size_below_one_falls_back_to_the_default() {
     let sender = settings.sender_settings();
     assert_eq!(sender, ricochet_core::send::SenderSettings::default());
 }
+
+#[test]
+fn saving_bulk_progress_replaces_that_requests_entry_and_keeps_the_rest() {
+    let dir = TempDir::new("bulk-save");
+    write_state(
+        dir.path(),
+        r#"{"theme":"dark","bulk":[{"requestId":"a","ids":"1\n2","lastId":"1","processed":1},{"requestId":"b","ids":"x","processed":0}]}"#,
+    );
+
+    let progress = BulkProgress { request_id: "a".into(), ids: "1\n2\n3".into(), last_id: None, processed: 0 };
+    save_bulk_progress(dir.path(), &progress).unwrap();
+
+    let state = load(dir.path()).state;
+    assert_eq!(state.theme.as_deref(), Some("dark"));
+    assert_eq!(state.bulk.len(), 2);
+    assert_eq!(state.bulk.iter().find(|p| p.request_id == "a"), Some(&progress));
+    assert!(state.bulk.iter().any(|p| p.request_id == "b"));
+    // A missing last id is left out of the file, as the C# store writes it.
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    assert!(!text.contains("lastId\": null"), "{text}");
+}
+
+#[test]
+fn saving_bulk_progress_with_no_state_file_starts_one() {
+    let dir = TempDir::new("bulk-new");
+    let progress = BulkProgress { request_id: "a".into(), ids: "1".into(), last_id: Some("1".into()), processed: 1 };
+    save_bulk_progress(dir.path(), &progress).unwrap();
+    assert_eq!(load(dir.path()).state.bulk, vec![progress]);
+}
+
+#[test]
+fn bulk_log_lines_are_appended_after_a_time() {
+    let dir = TempDir::new("bulk-log");
+    append_bulk_log(dir.path(), &["a first".to_string()]).unwrap();
+    append_bulk_log(dir.path(), &["a second".to_string(), "a third".to_string()]).unwrap();
+    append_bulk_log(dir.path(), &[]).unwrap();
+    let text = fs::read_to_string(dir.path().join(BULK_LOG_FILE_NAME)).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].ends_with("  a first"), "{}", lines[0]);
+    assert!(lines[2].ends_with("  a third"));
+    assert_eq!(lines[1].len(), "yyyy-mm-dd hh:mm:ss  a second".len());
+}
+
+#[test]
+fn the_workspace_folder_is_saved_and_removed_keeping_other_keys() {
+    let dir = TempDir::new("workspace-folder");
+    write_state(dir.path(), r#"{ "theme": "dark", "workspaceFolder": "old" }"#);
+    let folder = dir.path().join("shared");
+
+    save_workspace_folder(dir.path(), Some(&folder)).unwrap();
+    let state = load(dir.path()).state;
+    assert_eq!(state.workspace_folder.as_deref(), Some(folder.to_string_lossy().as_ref()));
+    assert_eq!(state.theme.as_deref(), Some("dark"));
+
+    save_workspace_folder(dir.path(), None).unwrap();
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    assert!(!text.contains("workspaceFolder"), "{text}");
+    assert!(text.contains("\"theme\": \"dark\""), "{text}");
+}
+
+#[test]
+fn saving_the_theme_changes_only_the_theme_key() {
+    let dir = TempDir::new("theme");
+    write_state(dir.path(), r#"{"activeEnvironmentId":"prod","futureKey":{"kept":true},"settings":{"requestTimeoutSeconds":5}}"#);
+
+    save_theme(dir.path(), Some("light")).unwrap();
+
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(saved["theme"], serde_json::json!("light"));
+    assert_eq!(saved["activeEnvironmentId"], serde_json::json!("prod"));
+    assert_eq!(saved["futureKey"], serde_json::json!({ "kept": true }));
+    assert_eq!(saved["settings"], serde_json::json!({ "requestTimeoutSeconds": 5 }));
+    assert_eq!(load(dir.path()).state.theme.as_deref(), Some("light"));
+}
+
+#[test]
+fn saving_no_theme_writes_null_so_the_system_is_followed() {
+    let dir = TempDir::new("theme-none");
+
+    save_theme(dir.path(), Some("dark")).unwrap();
+    save_theme(dir.path(), None).unwrap();
+
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(saved["theme"], serde_json::Value::Null);
+    assert_eq!(load(dir.path()).state.theme, None);
+}
+
+#[test]
+fn saving_the_theme_leaves_a_file_that_is_not_an_object_alone() {
+    let dir = TempDir::new("theme-bad");
+    write_state(dir.path(), "[1, 2]");
+
+    assert!(save_theme(dir.path(), Some("dark")).is_err());
+    assert_eq!(fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap(), "[1, 2]");
+}

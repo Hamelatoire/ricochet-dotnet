@@ -7,8 +7,9 @@
 //! A file that fails to parse (for example, one with merge conflict markers) or is not recognised is reported and
 //! left exactly as it is.
 //!
-//! Not ported yet: watching the folder for outside changes, the Secret split (`WorkspaceSecrets`), opening another
-//! folder (`OpenFolder`), the old app's plain-text copies, and the personal Settings, theme, window and tab fields.
+//! Not ported yet: watching the folder for outside changes, the Secret split (`WorkspaceSecrets`),
+//! `WorkspaceStore.OpenFolder` (the app opens folders itself, and copies with `copy_into_empty_folder`), the old
+//! app's plain-text copies, and the personal Settings, theme, window and tab fields.
 //! Those fields are kept as raw JSON in `state.json`, so a save never drops them.
 //!
 //! Secrets: this module writes what it is given. Until the Secret split is ported, callers must not pass a Workspace
@@ -49,8 +50,8 @@ const COLLECTIONS_DIR: &str = "collections";
 const ENVIRONMENTS_DIR: &str = "environments";
 const STATE_FILE_NAME: &str = "state.json";
 const HISTORY_FILE_NAME: &str = "history.json";
-const LEGACY_FILE_NAME: &str = "workspace.json";
-const LEGACY_BACKUP_SUFFIX: &str = ".bak";
+pub(crate) const LEGACY_FILE_NAME: &str = "workspace.json";
+pub(crate) const LEGACY_BACKUP_SUFFIX: &str = ".bak";
 const DEFAULT_FOLDER_NAME: &str = "workspace";
 
 /// A file that could not be used. It stays on disk untouched until someone fixes it.
@@ -237,6 +238,39 @@ fn normalize_request(mut request: ApiRequest) -> ApiRequest {
 /// Mirrors `WorkspaceFolder.LooksLikeWorkspace`: the marker file exists, or the collections folder does.
 pub fn looks_like_workspace(root: &Path) -> bool {
     root.join(MARKER_FILE_NAME).is_file() || root.join("collections").is_dir()
+}
+
+/// True when the folder has nothing in it. A folder that does not exist yet counts as empty, so it can be created.
+///
+/// # Errors
+/// When the folder exists but cannot be listed, or the path is a file.
+pub fn is_empty_folder(path: &Path) -> io::Result<bool> {
+    match fs::read_dir(path) {
+        Ok(mut entries) => Ok(entries.next().is_none()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// Copies a Workspace into an empty folder, as a new Workspace with its own id and the `.gitignore` (ADR 0031), and
+/// hands back the store for the new folder. The Workspace it came from is not touched. Mirrors the copy in C#
+/// `WorkspaceStore.OpenFolder`, but writes only into an empty folder, so nobody's files are mixed in with it.
+///
+/// The Workspace must not hold Secret values, because they would be written to the folder as plain text.
+///
+/// # Errors
+/// When the folder is not empty, or cannot be created or written.
+pub fn copy_into_empty_folder(path: &Path, workspace: &Workspace) -> io::Result<WorkspaceFolder> {
+    if !is_empty_folder(path)? {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} is not empty, so the workspace was not copied there. Choose an empty folder.", path.display()),
+        ));
+    }
+    let mut folder = WorkspaceFolder::new(path);
+    folder.load()?;
+    folder.save(workspace)?;
+    Ok(folder)
 }
 
 /// The shareable part of a Workspace, as one file per item. See docs/adr/0003-git-friendly-workspace-files.md.

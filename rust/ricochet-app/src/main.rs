@@ -1,13 +1,15 @@
 // The Ricochet window (ADR 0091): a top bar with Save and the Environment, a sidebar of Collections and recent sends, a request
 // pane with a URL bar and section tabs, a response pane and a status bar. Reads a Workspace folder from the first
-// argument or RICOCHET_DATA. The URL, method and headers can be edited and saved; the body and auth are read-only.
+// argument, else the folder opened last time, else RICOCHET_DATA; the Settings page opens or copies another one.
+// The URL, method and headers can be edited and saved; the body and auth are read-only.
 
 use std::collections::HashMap;
 
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Render, SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    actions, div, prelude::*, px, rgb, size,
+    actions, div, prelude::*, px, size,
 };
+use ricochet_app::theme::{ThemeChoice, Tone, rgb};
 use ricochet_app::edit::{self, Field, set_secret};
 use ricochet_core::secrets::{self, SecretValue, SecretVault, auth_key};
 use ricochet_core::external_secrets::ExternalSecretResolver;
@@ -16,12 +18,14 @@ use ricochet_app::json_color::{SpanKind, color_line};
 use ricochet_app::request_view::{UrlSegment, query_params, url_segments};
 use ricochet_core::history;
 use ricochet_core::models::HistoryEntry;
-use ricochet_core::personal_state::{self, default_personal_directory};
+use ricochet_core::personal_state::{self, PanelLayout, default_personal_directory};
+use ricochet_core::plain_text_copies::{PlainTextCopies, default_old_app_copy};
 use chrono::Local;
 use std::path::PathBuf;
 use ricochet_app::scope::{self, variables_in_scope};
-use ricochet_app::shell::{ShellModel, folder_from};
+use ricochet_app::shell::{ShellModel, start_folder};
 use ricochet_app::state::AppState;
+use ricochet_app::memory::{self, ScreenArea};
 use ricochet_app::status::NO_ENVIRONMENT;
 use ricochet_app::tree::{RowKind, TreeRow, build_tree, build_tree_folded, filter_rows, find_request};
 use ricochet_app::tree_edit;
@@ -35,16 +39,17 @@ use ricochet_core::response_examples;
 use ricochet_core::curl;
 use ricochet_core::collection_runner::{self, CollectionRunner, RunOptions};
 use ricochet_app::exports::{self, ExportFormat};
-use ricochet_app::bulk_page::{self, BulkShared};
 use ricochet_app::mock_page::{self, MockLog};
 use ricochet_core::mock_server::MockServer;
-use ricochet_core::bulk_runner;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
+mod bulk_panel;
 mod pages;
+
+use bulk_panel::BulkPanel;
 
 actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, FindRequest, FocusUrl, SwitchEnvironment, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
 
@@ -58,23 +63,41 @@ const HISTORY_CONFIRM: &str = "__clear_history__";
 /// Width of one space of JSON indent.
 const INDENT_STEP: f32 = 7.5;
 
-const WINDOW_BG: u32 = 0x1a1c20;
-const CHROME_BG: u32 = 0x1f2227;
-const FIELD_BG: u32 = 0x15171a;
-const BORDER: u32 = 0x2e323a;
-const ROW_HOVER: u32 = 0x2a2e36;
-const ROW_SELECTED: u32 = 0x25354f;
-const ACCENT: u32 = 0x4c8dff;
-const ACCENT_HOVER: u32 = 0x6aa1ff;
-const CHIP_BG: u32 = 0x22344f;
-const CHIP_TEXT: u32 = 0x8ab4ff;
-const TEXT: u32 = 0xe6e8eb;
-const MUTED: u32 = 0x9aa1ab;
-const FAINT: u32 = 0x6b727d;
-const SUCCESS: u32 = 0x6fcf97;
-const WARNING: u32 = 0xf2c94c;
-const ERROR: u32 = 0xeb5757;
-const SIDEBAR_WIDTH: f32 = 280.0;
+// The colours, as fields of the active theme's palette (ADR 0013). `rgb` draws them from the theme in use now.
+const WINDOW_BG: Tone = |p| p.window_bg;
+const CHROME_BG: Tone = |p| p.chrome_bg;
+const FIELD_BG: Tone = |p| p.field_bg;
+const BORDER: Tone = |p| p.border;
+const ROW_HOVER: Tone = |p| p.row_hover;
+const ROW_SELECTED: Tone = |p| p.row_selected;
+const ACCENT: Tone = |p| p.accent;
+const ACCENT_HOVER: Tone = |p| p.accent_hover;
+const CHIP_BG: Tone = |p| p.chip_bg;
+const CHIP_TEXT: Tone = |p| p.chip_text;
+const TEXT: Tone = |p| p.text;
+const MUTED: Tone = |p| p.muted;
+const FAINT: Tone = |p| p.faint;
+const SUCCESS: Tone = |p| p.success;
+const WARNING: Tone = |p| p.warning;
+const ERROR: Tone = |p| p.error;
+const ON_ACCENT: Tone = |p| p.on_accent;
+const CHIP_UNRESOLVED_BG: Tone = |p| p.chip_unresolved_bg;
+const STATUS_REDIRECT: Tone = |p| p.status_redirect;
+const STATUS_CLIENT_ERROR: Tone = |p| p.status_client_error;
+const METHOD_GET: Tone = |p| p.method_get;
+const METHOD_POST: Tone = |p| p.method_post;
+const METHOD_PUT: Tone = |p| p.method_put;
+const METHOD_PATCH: Tone = |p| p.method_patch;
+const METHOD_DELETE: Tone = |p| p.method_delete;
+const METHOD_OTHER: Tone = |p| p.method_other;
+const JSON_KEY: Tone = |p| p.json_key;
+const JSON_STRING: Tone = |p| p.json_string;
+const JSON_NUMBER: Tone = |p| p.json_number;
+const JSON_LITERAL: Tone = |p| p.json_literal;
+const JSON_PLAIN: Tone = |p| p.json_plain;
+const DIFF_REMOVED_BG: Tone = |p| p.diff_removed_bg;
+const DIFF_ADDED_BG: Tone = |p| p.diff_added_bg;
+const DIFF_CHANGED_BG: Tone = |p| p.diff_changed_bg;
 const MONO: &str = "Consolas";
 
 /// What the response pane shows for a Request: a send in flight, the answer, the reason it failed, or that the
@@ -120,34 +143,34 @@ enum RequestTab {
     Captures,
 }
 
-fn status_color(status_code: u16) -> u32 {
+fn status_color(status_code: u16) -> Tone {
     match classify(i32::from(status_code)) {
         ResponseStatusClass::Success => SUCCESS,
-        ResponseStatusClass::Redirect => 0x56b6f2,
-        ResponseStatusClass::ClientError => 0xf2994a,
+        ResponseStatusClass::Redirect => STATUS_REDIRECT,
+        ResponseStatusClass::ClientError => STATUS_CLIENT_ERROR,
         ResponseStatusClass::ServerError => ERROR,
         ResponseStatusClass::Neutral => MUTED,
     }
 }
 
-fn method_color(method: &str) -> u32 {
+fn method_color(method: &str) -> Tone {
     match method {
-        "GET" => SUCCESS,
-        "POST" => WARNING,
-        "PUT" => 0x56b6f2,
-        "PATCH" => 0xbb87f5,
-        "DELETE" => ERROR,
-        _ => MUTED,
+        "GET" => METHOD_GET,
+        "POST" => METHOD_POST,
+        "PUT" => METHOD_PUT,
+        "PATCH" => METHOD_PATCH,
+        "DELETE" => METHOD_DELETE,
+        _ => METHOD_OTHER,
     }
 }
 
-fn span_color(kind: SpanKind) -> u32 {
+fn span_color(kind: SpanKind) -> Tone {
     match kind {
-        SpanKind::Key => CHIP_TEXT,
-        SpanKind::String => SUCCESS,
-        SpanKind::Number => WARNING,
-        SpanKind::Literal => 0xbb87f5,
-        SpanKind::Plain => TEXT,
+        SpanKind::Key => JSON_KEY,
+        SpanKind::String => JSON_STRING,
+        SpanKind::Number => JSON_NUMBER,
+        SpanKind::Literal => JSON_LITERAL,
+        SpanKind::Plain => JSON_PLAIN,
     }
 }
 
@@ -200,10 +223,10 @@ fn compare_view(previous: Option<&ResponseInput>, current: &ResponseInput) -> gp
     }
     for line in comparison.body {
         let (before_bg, after_bg) = match line.kind {
-            DiffKind::Same => (WINDOW_BG, WINDOW_BG),
-            DiffKind::Removed => (0x3d1f24, WINDOW_BG),
-            DiffKind::Added => (WINDOW_BG, 0x1f3d28),
-            DiffKind::Changed => (0x3d3520, 0x3d3520),
+            DiffKind::Same => (WINDOW_BG as Tone, WINDOW_BG as Tone),
+            DiffKind::Removed => (DIFF_REMOVED_BG, WINDOW_BG),
+            DiffKind::Added => (WINDOW_BG, DIFF_ADDED_BG),
+            DiffKind::Changed => (DIFF_CHANGED_BG, DIFF_CHANGED_BG),
         };
         let number = |value: Option<usize>| value.map(|n| n.to_string()).unwrap_or_default();
         view = view.child(
@@ -307,19 +330,6 @@ struct PaletteState {
     _subscription: Subscription,
 }
 
-/// The bulk run panel while it is open: the pasted ids, and the run in progress or the last run.
-struct BulkPanel {
-    item_id: String,
-    input: Entity<TextArea>,
-    /// The progress of the latest run. None before the first run.
-    shared: Option<std::sync::Arc<BulkShared>>,
-    /// How many ids a stopped run finished, in a row from the first, so Resume can continue after them.
-    resume_offset: usize,
-    /// How many ids the latest run skipped at the start, because it was a resume.
-    run_offset: usize,
-    error: Option<String>,
-}
-
 /// The mock server page while it is open. The server itself keeps running when the page is closed.
 struct MockPanel {
     port: Entity<TextArea>,
@@ -356,11 +366,15 @@ struct Shell {
     prompt: Option<PromptDialog>,
     /// The command palette, or None while it is closed.
     palette: Option<PaletteState>,
-    /// The bulk run panel, or None while it is closed.
+    /// The bulk run panel, or None before it is first opened. It is kept while hidden, so a run keeps going.
     bulk: Option<BulkPanel>,
-    /// The mock server of the saved response examples, running or not.
+    /// Where each Request's bulk run got to, from state.json (ADR 0015).
+    bulk_progress: Vec<personal_state::BulkProgress>,
+    /// The mock server of the saved response examples or a loaded OpenAPI description, running or not.
     mock: MockServer,
     mock_log: MockLog,
+    /// The OpenAPI description the mock server answers from instead of the saved examples, or None (ADR 0027).
+    mock_description: Option<mock_page::MockDescription>,
     /// The mock server page, or None while it is closed.
     mock_panel: Option<MockPanel>,
     /// Whether the keyboard shortcut sheet is open (F1 or Ctrl+/).
@@ -399,8 +413,44 @@ struct Shell {
     settings_panel: Option<pages::SettingsPanel>,
     /// What the last import did, shown until it is closed.
     import_report: Option<String>,
+    /// Where old plain-text copies of this person's data may be. None when there is no personal folder.
+    copies: Option<PlainTextCopies>,
+    /// The copies shown in the warning, found at start. Empty once deleted or dismissed until the next launch.
+    copies_shown: Vec<PathBuf>,
+    /// Set by the first click on Delete; a second click within a few seconds deletes. Counts arms, so a late reset
+    /// from an earlier click does not cancel a newer one.
+    copies_armed: Option<u64>,
     dump_choice: Option<pages::DumpChoice>,
     spec_dialog: Option<pages::SpecDialog>,
+    /// The theme chosen on the Settings page (ADR 0013), and the watch on the system's light or dark setting.
+    theme_choice: ThemeChoice,
+    _appearance_subscription: Option<Subscription>,
+    /// The sidebar's width, dragged by its edge and kept in state.json (ADR 0043).
+    sidebar_width: f32,
+    /// The request pane's height, dragged by the edge above the response. None sizes it to its content until the
+    /// edge is first dragged.
+    request_height: Option<f32>,
+    /// The open tabs and the active tab as last saved in state.json, so a save happens only when they change.
+    saved_tabs: (Vec<String>, Option<String>),
+    /// Counts window moves and resizes, so only the last of a burst saves the placement.
+    window_moves: u64,
+    _bounds_subscription: Option<Subscription>,
+}
+
+/// The panel edge being dragged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelEdge {
+    Sidebar,
+    Request,
+}
+
+/// What is drawn under the pointer while a panel edge is dragged: nothing, as the panel itself moves.
+struct EdgeDrag;
+
+impl Render for EdgeDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
 }
 
 impl Shell {
@@ -410,17 +460,21 @@ impl Shell {
         let dot_env = read_dot_env(&model);
         let personal_dir = default_personal_directory();
         let personal = personal_dir.as_deref().map(|dir| personal_state::load(dir).state).unwrap_or_default();
+        let copies = personal_dir.as_deref().map(|dir| PlainTextCopies::new(dir, default_old_app_copy()));
         let mut sender = RequestSender::new();
         let settings = personal.settings.sender_settings();
         let personal_settings = personal.settings.clone();
         let certificate_warning = settings.certificate_warning();
         let connection_problem = sender.configure(settings);
         // The Environment chosen last time, if it still exists in the Workspace.
-        if let Some(id) = personal.active_environment_id {
+        if let Some(id) = personal.active_environment_id.clone() {
             if model.workspace.environments.iter().any(|environment| environment.id == id) {
                 state.set_active_environment(Some(&id));
             }
         }
+        // The tabs open last time, skipping Requests that are gone (ADR 0041).
+        let saved_tabs = (personal.open_tabs(), personal.active_tab.clone());
+        state.restore_tabs(&model.workspace, &saved_tabs.0, saved_tabs.1.as_deref());
         let (history, history_readable) = match personal_dir.as_deref().map(history::load) {
             Some(Ok(entries)) => (entries, true),
             Some(Err(_)) => (Vec::new(), false),
@@ -447,8 +501,16 @@ impl Shell {
             connection_problem,
             settings_panel: None,
             import_report: None,
+            copies_shown: copies.as_ref().map(PlainTextCopies::find).unwrap_or_default(),
+            copies,
+            copies_armed: None,
             dump_choice: None,
             spec_dialog: None,
+            sidebar_width: memory::DEFAULT_SIDEBAR_WIDTH,
+            request_height: None,
+            saved_tabs,
+            window_moves: 0,
+            _bounds_subscription: None,
             vault,
             search,
             search_text: String::new(),
@@ -462,8 +524,10 @@ impl Shell {
             prompt: None,
             palette: None,
             bulk: None,
+            bulk_progress: personal.bulk.clone(),
             mock: MockServer::new(),
             mock_log: MockLog::default(),
+            mock_description: None,
             mock_panel: None,
             shortcut_sheet_open: false,
             reload_armed: false,
@@ -480,6 +544,8 @@ impl Shell {
             request_tab: RequestTab::Headers,
             response_tab: ResponseTab::Body,
             dot_env,
+            theme_choice: ThemeChoice::from_stored(personal.theme.as_deref()),
+            _appearance_subscription: None,
         }
     }
 
@@ -1077,11 +1143,9 @@ impl Shell {
     fn close_palette(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.mock_panel = None;
-        // Closing the bulk panel stops a run still going; ids already in flight finish.
-        if let Some(panel) = self.bulk.take() {
-            if let Some(shared) = panel.shared {
-                shared.stop.store(true, std::sync::atomic::Ordering::SeqCst);
-            }
+        // Hiding the bulk panel leaves a run going, as closing the C# bulk page does. Stop ends it.
+        if let Some(panel) = self.bulk.as_mut() {
+            panel.hide();
         }
         self.shortcut_sheet_open = false;
         self.settings_panel = None;
@@ -1126,6 +1190,7 @@ impl Shell {
             div()
                 .id("shortcut-sheet")
                 .absolute()
+                .occlude()
                 .top(px(60.0))
                 .left(px(160.0))
                 .w(px(640.0))
@@ -1201,6 +1266,7 @@ impl Shell {
             div()
                 .id("palette")
                 .absolute()
+                .occlude()
                 .top(px(90.0))
                 .left(px(360.0))
                 .w(px(520.0))
@@ -1305,7 +1371,10 @@ impl Shell {
                 let branch = self.model.status.branch.clone();
                 self.model = ShellModel::from_parts(folder, workspace, issues, branch);
                 self.sync = self.model.folder.as_deref().and_then(ricochet_app::status::read_sync);
+                let open_tabs = self.state.open_tabs().to_vec();
+                let active_tab = self.state.active_tab().map(str::to_string);
                 self.state = AppState::for_workspace(&self.model.workspace);
+                self.state.restore_tabs(&self.model.workspace, &open_tabs, active_tab.as_deref());
                 self.inputs = None;
                 self.container_inputs = None;
                 self.editing_environment = None;
@@ -1327,6 +1396,7 @@ impl Shell {
             div()
                 .id("outside-change")
                 .absolute()
+                .occlude()
                 .top(px(48.0))
                 .right(px(12.0))
                 .flex()
@@ -1343,6 +1413,101 @@ impl Shell {
                 .child(Self::small_button(SharedString::from("reload-folder"), "Reload".to_string()).on_click(cx.listener(
                     |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.reload_from_disk(cx),
                 ))),
+        )
+    }
+
+    /// Deletes the copies the warning lists, on the second click within a few seconds: the first only asks, because
+    /// deleting cannot be undone. Only the listed files that are still copies are deleted, then the list is found again.
+    fn delete_plain_text_copies(&mut self, cx: &mut Context<Self>) {
+        let Some(copies) = self.copies.clone() else {
+            return;
+        };
+        if self.copies_armed.is_none() {
+            let arm = self.copies_armed_count();
+            self.copies_armed = Some(arm);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
+                let _ = this.update(cx, |shell, cx| {
+                    if shell.copies_armed == Some(arm) {
+                        shell.copies_armed = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+            cx.notify();
+            return;
+        }
+        self.copies_armed = None;
+        let problems = copies.delete(&self.copies_shown);
+        self.copies_shown = copies.find();
+        if !problems.is_empty() {
+            self.notice = Some((format!("Some copies could not be deleted:
+{}", problems.join("
+")), true));
+        }
+        cx.notify();
+    }
+
+    /// A number for the next arm of Delete, different from any arm still waiting to reset.
+    fn copies_armed_count(&self) -> u64 {
+        static ARMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        ARMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A warning, shown while old plain-text copies that may hold credentials are found, listing them, with Delete and
+    /// Dismiss. Dismiss hides it until the next launch. None when there are none.
+    fn plain_text_copies_banner(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if self.copies_shown.is_empty() {
+            return None;
+        }
+        let armed = self.copies_armed.is_some();
+        let list = self.copies_shown.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join("
+");
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .mx_3()
+                .mt_2()
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(WARNING))
+                .bg(rgb(CHROME_BG))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(div().text_xs().text_color(rgb(WARNING)).child(
+                            "Old plain-text copies of your data may still hold credentials. Your work has been moved, so you can delete them.",
+                        ))
+                        .child(div().text_xs().font_family(MONO).text_color(rgb(MUTED)).whitespace_normal().child(list)),
+                )
+                .child(
+                    Self::small_button(
+                        SharedString::from("delete-plain-text-copies"),
+                        if armed { "Delete permanently?" } else { "Delete these copies" }.to_string(),
+                    )
+                    .flex_none()
+                    .when(armed, |button| button.text_color(rgb(ERROR)).border_color(rgb(ERROR)))
+                    .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.delete_plain_text_copies(cx)
+                    })),
+                )
+                .child(Self::small_button(SharedString::from("dismiss-plain-text-copies"), "Dismiss".to_string()).flex_none().on_click(
+                    cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                        this.copies_shown.clear();
+                        this.copies_armed = None;
+                        cx.notify();
+                    }),
+                )),
         )
     }
 
@@ -1446,12 +1611,14 @@ impl Shell {
                 return;
             }
         };
-        let table = mock_page::table_of(&self.model.workspace);
-        if table.is_empty() {
-            panel.error = Some("There are no saved examples to answer with. Use Save example on a response first.".to_string());
-            cx.notify();
-            return;
-        }
+        let table = match mock_page::start_table(&self.model.workspace, self.mock_description.as_ref()) {
+            Ok(table) => table,
+            Err(error) => {
+                panel.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
         let sink = self.mock_log.clone();
         match self.mock.start(port, table, move |entry| sink.push(entry)) {
             Ok(()) => panel.error = None,
@@ -1479,13 +1646,57 @@ impl Shell {
         cx.notify();
     }
 
+    /// Asks for an OpenAPI description file and answers from it. The file is only read, and nothing is sent anywhere.
+    fn load_mock_description(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose an OpenAPI 3 description in JSON".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            this.update(cx, |shell, cx| {
+                let loaded = mock_page::read_description(&path);
+                shell.apply_mock_source(loaded.map(Some), cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Switches the mock server to a loaded description, or back to the saved examples with `Ok(None)`. A running
+    /// server answers from the new routes at once. On an error the current source stays and the panel shows why.
+    fn apply_mock_source(&mut self, source: Result<Option<mock_page::MockDescription>, String>, cx: &mut Context<Self>) {
+        let error = match source {
+            Ok(description) => {
+                self.mock_description = description;
+                if self.mock.is_running() {
+                    self.mock.update_routes(mock_page::active_table(&self.model.workspace, self.mock_description.as_ref()));
+                }
+                None
+            }
+            Err(error) => Some(error),
+        };
+        if let Some(panel) = self.mock_panel.as_mut() {
+            panel.error = error;
+        }
+        cx.notify();
+    }
+
     /// The mock server page: the port, a Start or Stop button, and the latest answered requests. None while closed.
     fn mock_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
         let panel = self.mock_panel.as_ref()?;
         let running = self.mock.is_running();
+        let source = mock_page::source_text(&self.model.workspace, self.mock_description.as_ref());
         let status = match self.mock.address() {
-            Some(address) => format!("Running at http://{address}. {} route(s).", mock_page::table_of(&self.model.workspace).len()),
-            None => "Stopped.".to_string(),
+            Some(address) => format!("Running at http://{address}. {source}."),
+            None => format!("Stopped. {source}."),
         };
         let lines: Vec<_> = self
             .mock_log
@@ -1505,6 +1716,7 @@ impl Shell {
             div()
                 .id("mock-panel")
                 .absolute()
+                .occlude()
                 .top(px(70.0))
                 .left(px(300.0))
                 .w(px(640.0))
@@ -1517,7 +1729,22 @@ impl Shell {
                 .border_color(rgb(BORDER))
                 .bg(rgb(CHROME_BG))
                 .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Mock server"))
-                .child(muted_note("Answers requests on this computer with the saved response examples, matched by method and path. Press Escape to close; the server keeps running."))
+                .child(muted_note("Answers requests on this computer with the saved response examples, or with a loaded OpenAPI description, matched by method and path. Press Escape to close; the server keeps running."))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .child(Self::small_button(SharedString::from("mock-load"), "Load OpenAPI file…".to_string()).on_click(cx.listener(
+                            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.load_mock_description(cx),
+                        )))
+                        .children(self.mock_description.is_some().then(|| {
+                            Self::small_button(SharedString::from("mock-examples"), "Use saved examples".to_string()).on_click(cx.listener(
+                                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.apply_mock_source(Ok(None), cx),
+                            ))
+                        })),
+                )
                 .child(
                     div()
                         .flex()
@@ -1553,166 +1780,6 @@ impl Shell {
                         ))),
                 )
                 .child(div().text_sm().text_color(rgb(MUTED)).child(status))
-                .children(panel.error.clone().map(|error| div().text_sm().text_color(rgb(ERROR)).child(error)))
-                .children(lines),
-        )
-    }
-
-    /// Opens the bulk run panel for the selected Request.
-    fn open_bulk(&mut self, cx: &mut Context<Self>) {
-        let selected = self.state.selected_item().map(str::to_string);
-        let Some(item_id) = selected.filter(|id| find_request(&self.model.workspace, id).is_some()) else {
-            self.notice = Some(("Pick a request to run it for each id.".to_string(), true));
-            cx.notify();
-            return;
-        };
-        let input = cx.new(|cx| TextArea::new(String::new(), "Paste one id per line", cx));
-        self.bulk = Some(BulkPanel { item_id, input, shared: None, resume_offset: 0, run_offset: 0, error: None });
-        cx.notify();
-    }
-
-    /// Starts the run for the pasted ids, from the first, or after the ids a stopped run finished. The run is on a
-    /// background thread, and the window refreshes while it goes. Ids are sent one after another.
-    fn start_bulk(&mut self, resume: bool, cx: &mut Context<Self>) {
-        let Some(panel) = self.bulk.as_mut() else {
-            return;
-        };
-        if panel.shared.as_ref().is_some_and(|shared| !shared.done.load(std::sync::atomic::Ordering::SeqCst)) {
-            return;
-        }
-        let all_ids = bulk_runner::parse_ids(&panel.input.read(cx).text().to_string());
-        let offset = if resume { panel.resume_offset.min(all_ids.len()) } else { 0 };
-        let ids: Vec<String> = all_ids[offset..].to_vec();
-        if ids.is_empty() {
-            panel.error = Some("Paste at least one id.".to_string());
-            cx.notify();
-            return;
-        }
-        let shared = std::sync::Arc::new(BulkShared::default());
-        panel.shared = Some(shared.clone());
-        panel.run_offset = offset;
-        panel.error = None;
-        let item_id = panel.item_id.clone();
-        let workspace = self.model.workspace.clone();
-        let environment = self.state.active_environment_id().map(str::to_string);
-        let worker = shared.clone();
-        let sender = self.sender.clone();
-        let work = cx.background_executor().spawn(async move {
-            bulk_page::run(&workspace, &item_id, environment.as_deref(), &ids, "", 1, &sender, &worker)
-        });
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
-                let done = shared.done.load(std::sync::atomic::Ordering::SeqCst);
-                this.update(cx, |_, cx| cx.notify()).ok();
-                if done {
-                    break;
-                }
-            }
-            let outcome = work.await;
-            this.update(cx, |shell, cx| {
-                if let Some(panel) = shell.bulk.as_mut() {
-                    panel.resume_offset = panel.run_offset + bulk_page::finished_prefix(&shared.results());
-                    match outcome {
-                        Err(error) => panel.error = Some(error),
-                        Ok(true) => panel.resume_offset = 0,
-                        Ok(false) => {}
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    /// The bulk run panel: the id box, the buttons, a progress line, and the latest results. None while it is closed.
-    fn bulk_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
-        let panel = self.bulk.as_ref()?;
-        let results = panel.shared.as_ref().map(|shared| shared.results()).unwrap_or_default();
-        let running = panel.shared.as_ref().is_some_and(|shared| !shared.done.load(std::sync::atomic::Ordering::SeqCst));
-        let total = bulk_runner::parse_ids(&panel.input.read(cx).text().to_string()).len();
-        let failed = bulk_page::failed(&results);
-        let summary = if panel.shared.is_some() {
-            format!("{} of {total} done, {failed} failed.", results.len() + panel.run_offset)
-        } else {
-            format!("{total} id(s) pasted.")
-        };
-        let lines: Vec<_> = results
-            .iter()
-            .rev()
-            .take(12)
-            .map(|result| {
-                div().text_xs().font_family(MONO).text_color(rgb(if result.succeeded { SUCCESS } else { ERROR })).child(result.log_line())
-            })
-            .collect();
-        let can_resume = !running && panel.resume_offset > 0;
-        Some(
-            div()
-                .id("bulk-panel")
-                .absolute()
-                .top(px(70.0))
-                .left(px(300.0))
-                .w(px(640.0))
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_4()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(BORDER))
-                .bg(rgb(CHROME_BG))
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Bulk run"))
-                .child(muted_note("Sends the request once for each id, replacing {{id}} in it. Press Escape to close."))
-                .child(
-                    div()
-                        .id("bulk-ids")
-                        .min_h(px(80.0))
-                        .max_h(px(160.0))
-                        .p_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(BORDER))
-                        .bg(rgb(FIELD_BG))
-                        .font_family(MONO)
-                        .overflow_y_scroll()
-                        .child(panel.input.clone()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(
-                            Self::small_button(SharedString::from("bulk-start"), "Start".to_string())
-                                .when(running, |button| button.opacity(0.4))
-                                .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                                    this.start_bulk(false, cx)
-                                })),
-                        )
-                        .children(can_resume.then(|| {
-                            Self::small_button(SharedString::from("bulk-resume"), format!("Resume after {}", panel.resume_offset)).on_click(
-                                cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                                    this.start_bulk(true, cx)
-                                }),
-                            )
-                        }))
-                        .children(running.then(|| {
-                            Self::small_button(SharedString::from("bulk-stop"), "Stop".to_string()).on_click(cx.listener(
-                                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                                    if let Some(shared) = this.bulk.as_ref().and_then(|panel| panel.shared.as_ref()) {
-                                        shared.stop.store(true, std::sync::atomic::Ordering::SeqCst);
-                                    }
-                                    cx.notify();
-                                },
-                            ))
-                        }))
-                        .child(Self::small_button(SharedString::from("bulk-close"), "Close".to_string()).on_click(cx.listener(
-                            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx),
-                        ))),
-                )
-                .child(div().text_sm().text_color(rgb(MUTED)).child(summary))
                 .children(panel.error.clone().map(|error| div().text_sm().text_color(rgb(ERROR)).child(error)))
                 .children(lines),
         )
@@ -1767,6 +1834,7 @@ impl Shell {
             div()
                 .id("prompt-dialog")
                 .absolute()
+                .occlude()
                 .top(px(120.0))
                 .left(px(440.0))
                 .w(px(480.0))
@@ -2083,7 +2151,7 @@ impl Shell {
         let rows: Vec<_> = shown.iter().map(|row| self.tree_row(row, cx)).collect();
 
         let mut column = div()
-            .w(px(SIDEBAR_WIDTH))
+            .w(px(self.sidebar_width))
             .flex_none()
             .h_full()
             .flex()
@@ -2219,7 +2287,7 @@ impl Shell {
                             .flex_none()
                             .px_1()
                             .rounded_sm()
-                            .bg(rgb(if resolves { CHIP_BG } else { 0x4a3a1a }))
+                            .bg(rgb(if resolves { CHIP_BG } else { CHIP_UNRESOLVED_BG }))
                             .text_color(rgb(if resolves { CHIP_TEXT } else { WARNING }))
                             .child(name),
                     }))
@@ -2269,7 +2337,7 @@ impl Shell {
                     .items_center()
                     .px_4()
                     .bg(rgb(ACCENT))
-                    .text_color(rgb(0xffffff))
+                    .text_color(rgb(ON_ACCENT))
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(ACCENT_HOVER)))
@@ -2994,7 +3062,7 @@ impl Shell {
     }
 
     fn request_pane(&self, url_focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let pane = div().flex_none().flex().flex_col().gap_2().p_3();
+        let pane = div().flex_1().min_h_0().flex().flex_col().gap_2().p_3();
         if let Some(error) = &self.model.error {
             return pane.child(div().text_color(rgb(WARNING)).child(error.clone()));
         }
@@ -3047,7 +3115,14 @@ impl Shell {
                 )))
                 .child(self.request_tab_button(RequestTab::Captures, format!("Captures {captures}"), cx)),
         )
-        .child(self.request_section(request, cx).id("request-section").max_h(px(220.0)).overflow_y_scroll().py_1())
+        .child({
+            let section = self.request_section(request, cx).id("request-section").overflow_y_scroll().py_1();
+            // A dragged pane gives the section all the room left; otherwise it grows with its content up to a limit.
+            match self.request_height {
+                Some(_) => section.flex_1().min_h_0(),
+                None => section.max_h(px(220.0)),
+            }
+        })
     }
 
     fn response_tab_button(&self, tab: ResponseTab, label: String, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -3217,6 +3292,7 @@ impl Shell {
             div()
                 .id("environment-menu")
                 .absolute()
+                .occlude()
                 .top(px(44.0))
                 .right(px(12.0))
                 .w(px(240.0))
@@ -3352,8 +3428,106 @@ fn read_dot_env(model: &ShellModel) -> Vec<KeyValue> {
     model.folder_path().and_then(|folder| dotenv::read(folder).ok()).map(|result| result.variables).unwrap_or_default()
 }
 
+/// Remembering where the person left off (ADR 0041, ADR 0043, ADR 0068): the tabs, the panel sizes and the window.
+impl Shell {
+    /// Restores the saved panel sizes, clamped to the window as it opens, and starts saving the window's placement when
+    /// it moves or is resized, and when it closes.
+    fn remember_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let personal = self.personal_dir.as_deref().map(|dir| personal_state::load(dir).state).unwrap_or_default();
+        let size = window.bounds().size;
+        let (sidebar, request) = memory::restored_panels(personal.panels().as_ref(), f32::from(size.width), f32::from(size.height));
+        if let Some(width) = sidebar {
+            self.sidebar_width = width;
+        }
+        self.request_height = request;
+
+        self._bounds_subscription = Some(cx.observe_window_bounds(window, |this: &mut Shell, window: &mut Window, cx: &mut Context<Shell>| {
+            // A move or resize sends many changes; only the last one of a burst is saved, half a second after it.
+            this.window_moves += 1;
+            let moves = this.window_moves;
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
+                this.update_in(cx, |shell: &mut Shell, window: &mut Window, _: &mut Context<Shell>| {
+                    if shell.window_moves == moves
+                        && let Some(dir) = shell.personal_dir.as_deref()
+                    {
+                        personal_state::save_window(dir, &current_placement(window)).ok();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }));
+
+        let personal_dir = self.personal_dir.clone();
+        window.on_window_should_close(cx, move |window, _| {
+            if let Some(dir) = personal_dir.as_deref() {
+                personal_state::save_window(dir, &current_placement(window)).ok();
+            }
+            true
+        });
+    }
+
+    /// Saves the sidebar width and request pane height, after an edge is let go. The request height is saved only once
+    /// it has been dragged, so an untouched pane keeps sizing to its content.
+    fn save_panels(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = self.personal_dir.clone() else {
+            return;
+        };
+        let layout = PanelLayout { sidebar_width: Some(f64::from(self.sidebar_width)), request_height: self.request_height.map(f64::from) };
+        if let Err(error) = personal_state::save_panels(&dir, &layout) {
+            self.notice = Some((format!("The panel sizes could not be saved: {error}"), true));
+        }
+        cx.notify();
+    }
+
+    /// Saves the open tabs and the active tab when they differ from what was saved last (ADR 0041).
+    fn save_tabs_if_changed(&mut self) {
+        let current = (self.state.open_tabs().to_vec(), self.state.active_tab().map(str::to_string));
+        if current == self.saved_tabs {
+            return;
+        }
+        if let Some(dir) = self.personal_dir.as_deref() {
+            personal_state::save_open_tabs(dir, &current.0, current.1.as_deref()).ok();
+        }
+        self.saved_tabs = current;
+    }
+
+    /// A thin edge between two panels that is dragged to resize them.
+    fn panel_edge(edge: PanelEdge) -> gpui::Stateful<gpui::Div> {
+        let handle = div()
+            .id(match edge {
+                PanelEdge::Sidebar => "sidebar-edge",
+                PanelEdge::Request => "request-edge",
+            })
+            .flex_none()
+            .hover(|style| style.bg(rgb(BORDER)))
+            .on_drag(edge, |_, _, _, cx| cx.new(|_| EdgeDrag));
+        match edge {
+            PanelEdge::Sidebar => handle.w(px(4.0)).h_full().cursor_col_resize(),
+            PanelEdge::Request => handle.h(px(4.0)).w_full().cursor_row_resize(),
+        }
+    }
+}
+
+/// The window's placement to save: its normal bounds, which a maximised window returns to, and whether it is maximised.
+fn current_placement(window: &Window) -> personal_state::WindowPlacement {
+    let (bounds, is_maximized) = match window.window_bounds() {
+        WindowBounds::Windowed(bounds) | WindowBounds::Fullscreen(bounds) => (bounds, false),
+        WindowBounds::Maximized(bounds) => (bounds, true),
+    };
+    memory::placement(
+        f64::from(f32::from(bounds.origin.x)),
+        f64::from(f32::from(bounds.origin.y)),
+        f64::from(f32::from(bounds.size.width)),
+        f64::from(f32::from(bounds.size.height)),
+        is_maximized,
+    )
+}
+
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.save_tabs_if_changed();
         self.ensure_inputs(cx);
         self.ensure_container_inputs(cx);
         let url_focused = self.inputs.as_ref().is_some_and(|inputs| inputs.url.focus_handle(cx).is_focused(window));
@@ -3413,16 +3587,57 @@ impl Render for Shell {
             .text_sm()
             .child(self.top_bar(cx))
             .child(
-                div().flex().flex_row().flex_1().overflow_hidden().child(self.sidebar(cx)).child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .overflow_hidden()
-                        .child(self.tab_strip(cx))
-                        .child(self.request_pane(url_focused, cx))
-                        .child(self.response_pane(cx)),
-                ),
+                div()
+                    .id("main-columns")
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .overflow_hidden()
+                    .on_drag_move(cx.listener(|this: &mut Shell, event: &gpui::DragMoveEvent<PanelEdge>, _: &mut Window, cx: &mut Context<Shell>| {
+                        if *event.drag(cx) == PanelEdge::Sidebar {
+                            let width = f32::from(event.event.position.x - event.bounds.origin.x);
+                            this.sidebar_width = memory::clamp_sidebar_width(width, f32::from(event.bounds.size.width));
+                            cx.notify();
+                        }
+                    }))
+                    .child(self.sidebar(cx))
+                    .child(Self::panel_edge(PanelEdge::Sidebar))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .child(self.tab_strip(cx))
+                            .children(self.plain_text_copies_banner(cx))
+                            .child(
+                                div()
+                                    .id("request-response")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .flex()
+                                    .flex_col()
+                                    .on_drag_move(cx.listener(
+                                        |this: &mut Shell, event: &gpui::DragMoveEvent<PanelEdge>, _: &mut Window, cx: &mut Context<Shell>| {
+                                            if *event.drag(cx) == PanelEdge::Request {
+                                                let height = f32::from(event.event.position.y - event.bounds.origin.y);
+                                                this.request_height =
+                                                    Some(memory::clamp_request_height(height, f32::from(event.bounds.size.height)));
+                                                cx.notify();
+                                            }
+                                        },
+                                    ))
+                                    .child(
+                                        match self.request_height {
+                                            Some(height) => div().h(px(height)).flex_none().flex().flex_col().overflow_hidden(),
+                                            None => div().flex_none().flex().flex_col(),
+                                        }
+                                        .child(self.request_pane(url_focused, cx)),
+                                    )
+                                    .child(Self::panel_edge(PanelEdge::Request))
+                                    .child(self.response_pane(cx)),
+                            ),
+                    ),
             )
             .child(self.status_bar())
             .children(self.environment_menu(cx))
@@ -3436,14 +3651,48 @@ impl Render for Shell {
             .children(self.import_report_overlay(cx))
             .children(self.shortcut_sheet_overlay())
             .children(self.outside_change_banner(cx))
+            .on_drop(cx.listener(|this: &mut Shell, _: &PanelEdge, _: &mut Window, cx: &mut Context<Shell>| this.save_panels(cx)))
     }
+}
+
+/// The window's bounds and screen from the last run (ADR 0068), when they are reasonable and the title bar would be on
+/// a screen that is still there. Otherwise the default size, centred on the main screen.
+fn restored_window(cx: &App) -> (WindowBounds, Option<gpui::DisplayId>) {
+    let saved = default_personal_directory().and_then(|dir| personal_state::load(&dir).state.window().cloned());
+    let displays = cx.displays();
+    let screens: Vec<ScreenArea> = displays
+        .iter()
+        .map(|display| {
+            let bounds = display.bounds();
+            ScreenArea {
+                x: f64::from(f32::from(bounds.origin.x)),
+                y: f64::from(f32::from(bounds.origin.y)),
+                width: f64::from(f32::from(bounds.size.width)),
+                height: f64::from(f32::from(bounds.size.height)),
+            }
+        })
+        .collect();
+    if let Some(saved) = saved
+        && let Some(index) = memory::screen_for(&saved, &screens)
+    {
+        let bounds = Bounds::new(
+            gpui::point(px(saved.x as f32), px(saved.y as f32)),
+            size(px(saved.width as f32), px(saved.height as f32)),
+        );
+        let window_bounds = if saved.is_maximized { WindowBounds::Maximized(bounds) } else { WindowBounds::Windowed(bounds) };
+        return (window_bounds, Some(displays[index].id()));
+    }
+    (WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(800.)), cx)), None)
 }
 
 fn main() {
     // Crashes are written to a local log only, never sent anywhere (ADR 0088). Set up first, so early crashes are caught too.
     ricochet_app::crash_report::install(default_personal_directory());
 
-    let folder =folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
+    // The argument, else the folder opened last time (state.json), else RICOCHET_DATA.
+    let remembered = default_personal_directory().and_then(|dir| personal_state::load(&dir).state.workspace_folder);
+    let (folder, start_note) =
+        start_folder(std::env::args().nth(1).as_deref(), remembered.as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
     let (model, store) = ShellModel::open(folder);
     let vault = open_vault();
 
@@ -3466,15 +3715,27 @@ fn main() {
             KeyBinding::new("secondary-enter", SendRequest, None),
             KeyBinding::new("enter", SendRequest, Some("TextInput")),
         ]);
-        let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
+        let (window_bounds, display_id) = restored_window(cx);
         cx.open_window(
             WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_bounds: Some(window_bounds),
+                display_id,
                 titlebar: Some(TitlebarOptions { title: Some("Ricochet".into()), ..Default::default() }),
                 ..Default::default()
             },
             move |window, cx| {
-                let shell = cx.new(move |cx| Shell::new(model, store, vault, cx));
+                let shell = cx.new(|cx| {
+                    let mut shell = Shell::new(model, store, vault, cx);
+                    if let Some(note) = start_note {
+                        shell.notice = Some((note, true));
+                    }
+                    // System follows the operating system's light or dark setting, also when it changes while open.
+                    shell._appearance_subscription =
+                        Some(cx.observe_window_appearance(window, |shell: &mut Shell, window, cx| shell.apply_theme(window, cx)));
+                    shell.apply_theme(window, cx);
+                    shell
+                });
+                shell.update(cx, |shell, cx| shell.remember_window(window, cx));
                 window.focus(&shell.read(cx).focus_handle);
                 shell
             },

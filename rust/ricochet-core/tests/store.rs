@@ -834,3 +834,54 @@ fn a_store_saves_only_after_it_has_loaded() {
     assert!(store.save(&store_sample("e1aaaaaaaa")).is_err());
     assert_eq!(store.folder_path(), None);
 }
+
+#[test]
+fn a_copy_into_an_empty_folder_is_a_new_workspace_with_a_gitignore() {
+    let dir = TempDir::new("copy-empty");
+    let target = dir.path().join("new-workspace");
+    let workspace = sample();
+
+    let copied = copy_into_empty_folder(&target, &workspace).unwrap();
+
+    assert!(looks_like_workspace(&target));
+    assert_eq!(fs::read_to_string(target.join(GITIGNORE_FILE_NAME)).unwrap(), GITIGNORE_CONTENT);
+    let (read, issues) = WorkspaceFolder::new(&target).load().unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(read.collections, workspace.collections);
+    assert_eq!(read.environments, workspace.environments);
+    assert!(!copied.has_outside_changes());
+}
+
+#[test]
+fn a_copy_gets_its_own_workspace_id() {
+    let dir = TempDir::new("copy-id");
+    let mut original = WorkspaceFolder::new(dir.path().join("a"));
+    original.load().unwrap();
+    original.save(&sample()).unwrap();
+
+    let copied = copy_into_empty_folder(&dir.path().join("b"), &sample()).unwrap();
+
+    assert!(!copied.id().is_empty());
+    assert_ne!(copied.id(), original.id());
+}
+
+#[test]
+fn a_copy_never_writes_into_a_folder_that_has_files() {
+    let dir = TempDir::new("copy-not-empty");
+    fs::write(dir.path().join("notes.txt"), "mine").unwrap();
+
+    let error = copy_into_empty_folder(dir.path(), &sample()).unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    let names: Vec<_> = fs::read_dir(dir.path()).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("notes.txt")]);
+}
+
+#[test]
+fn an_empty_folder_is_one_with_nothing_in_it_or_not_there_yet() {
+    let dir = TempDir::new("is-empty");
+    assert!(is_empty_folder(dir.path()).unwrap());
+    assert!(is_empty_folder(&dir.path().join("missing")).unwrap());
+    fs::create_dir(dir.path().join("sub")).unwrap();
+    assert!(!is_empty_folder(dir.path()).unwrap());
+}
