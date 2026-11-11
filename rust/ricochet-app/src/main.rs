@@ -358,9 +358,11 @@ struct Shell {
     palette: Option<PaletteState>,
     /// The bulk run panel, or None while it is closed.
     bulk: Option<BulkPanel>,
-    /// The mock server of the saved response examples, running or not.
+    /// The mock server of the saved response examples or a loaded OpenAPI description, running or not.
     mock: MockServer,
     mock_log: MockLog,
+    /// The OpenAPI description the mock server answers from instead of the saved examples, or None (ADR 0027).
+    mock_description: Option<mock_page::MockDescription>,
     /// The mock server page, or None while it is closed.
     mock_panel: Option<MockPanel>,
     /// Whether the keyboard shortcut sheet is open (F1 or Ctrl+/).
@@ -464,6 +466,7 @@ impl Shell {
             bulk: None,
             mock: MockServer::new(),
             mock_log: MockLog::default(),
+            mock_description: None,
             mock_panel: None,
             shortcut_sheet_open: false,
             reload_armed: false,
@@ -1446,12 +1449,14 @@ impl Shell {
                 return;
             }
         };
-        let table = mock_page::table_of(&self.model.workspace);
-        if table.is_empty() {
-            panel.error = Some("There are no saved examples to answer with. Use Save example on a response first.".to_string());
-            cx.notify();
-            return;
-        }
+        let table = match mock_page::start_table(&self.model.workspace, self.mock_description.as_ref()) {
+            Ok(table) => table,
+            Err(error) => {
+                panel.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
         let sink = self.mock_log.clone();
         match self.mock.start(port, table, move |entry| sink.push(entry)) {
             Ok(()) => panel.error = None,
@@ -1479,13 +1484,57 @@ impl Shell {
         cx.notify();
     }
 
+    /// Asks for an OpenAPI description file and answers from it. The file is only read, and nothing is sent anywhere.
+    fn load_mock_description(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose an OpenAPI 3 description in JSON".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            this.update(cx, |shell, cx| {
+                let loaded = mock_page::read_description(&path);
+                shell.apply_mock_source(loaded.map(Some), cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Switches the mock server to a loaded description, or back to the saved examples with `Ok(None)`. A running
+    /// server answers from the new routes at once. On an error the current source stays and the panel shows why.
+    fn apply_mock_source(&mut self, source: Result<Option<mock_page::MockDescription>, String>, cx: &mut Context<Self>) {
+        let error = match source {
+            Ok(description) => {
+                self.mock_description = description;
+                if self.mock.is_running() {
+                    self.mock.update_routes(mock_page::active_table(&self.model.workspace, self.mock_description.as_ref()));
+                }
+                None
+            }
+            Err(error) => Some(error),
+        };
+        if let Some(panel) = self.mock_panel.as_mut() {
+            panel.error = error;
+        }
+        cx.notify();
+    }
+
     /// The mock server page: the port, a Start or Stop button, and the latest answered requests. None while closed.
     fn mock_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
         let panel = self.mock_panel.as_ref()?;
         let running = self.mock.is_running();
+        let source = mock_page::source_text(&self.model.workspace, self.mock_description.as_ref());
         let status = match self.mock.address() {
-            Some(address) => format!("Running at http://{address}. {} route(s).", mock_page::table_of(&self.model.workspace).len()),
-            None => "Stopped.".to_string(),
+            Some(address) => format!("Running at http://{address}. {source}."),
+            None => format!("Stopped. {source}."),
         };
         let lines: Vec<_> = self
             .mock_log
@@ -1517,7 +1566,22 @@ impl Shell {
                 .border_color(rgb(BORDER))
                 .bg(rgb(CHROME_BG))
                 .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Mock server"))
-                .child(muted_note("Answers requests on this computer with the saved response examples, matched by method and path. Press Escape to close; the server keeps running."))
+                .child(muted_note("Answers requests on this computer with the saved response examples, or with a loaded OpenAPI description, matched by method and path. Press Escape to close; the server keeps running."))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .child(Self::small_button(SharedString::from("mock-load"), "Load OpenAPI file…".to_string()).on_click(cx.listener(
+                            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.load_mock_description(cx),
+                        )))
+                        .children(self.mock_description.is_some().then(|| {
+                            Self::small_button(SharedString::from("mock-examples"), "Use saved examples".to_string()).on_click(cx.listener(
+                                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.apply_mock_source(Ok(None), cx),
+                            ))
+                        })),
+                )
                 .child(
                     div()
                         .flex()
