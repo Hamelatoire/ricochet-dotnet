@@ -16,12 +16,13 @@ use ricochet_app::json_color::{SpanKind, color_line};
 use ricochet_app::request_view::{UrlSegment, query_params, url_segments};
 use ricochet_core::history;
 use ricochet_core::models::HistoryEntry;
-use ricochet_core::personal_state::{self, default_personal_directory};
+use ricochet_core::personal_state::{self, PanelLayout, default_personal_directory};
 use chrono::Local;
 use std::path::PathBuf;
 use ricochet_app::scope::{self, variables_in_scope};
 use ricochet_app::shell::{ShellModel, folder_from};
 use ricochet_app::state::AppState;
+use ricochet_app::memory::{self, ScreenArea};
 use ricochet_app::status::NO_ENVIRONMENT;
 use ricochet_app::tree::{RowKind, TreeRow, build_tree, build_tree_folded, filter_rows, find_request};
 use ricochet_app::tree_edit;
@@ -74,7 +75,6 @@ const FAINT: u32 = 0x6b727d;
 const SUCCESS: u32 = 0x6fcf97;
 const WARNING: u32 = 0xf2c94c;
 const ERROR: u32 = 0xeb5757;
-const SIDEBAR_WIDTH: f32 = 280.0;
 const MONO: &str = "Consolas";
 
 /// What the response pane shows for a Request: a send in flight, the answer, the reason it failed, or that the
@@ -401,6 +401,32 @@ struct Shell {
     import_report: Option<String>,
     dump_choice: Option<pages::DumpChoice>,
     spec_dialog: Option<pages::SpecDialog>,
+    /// The sidebar's width, dragged by its edge and kept in state.json (ADR 0043).
+    sidebar_width: f32,
+    /// The request pane's height, dragged by the edge above the response. None sizes it to its content until the
+    /// edge is first dragged.
+    request_height: Option<f32>,
+    /// The open tabs and the active tab as last saved in state.json, so a save happens only when they change.
+    saved_tabs: (Vec<String>, Option<String>),
+    /// Counts window moves and resizes, so only the last of a burst saves the placement.
+    window_moves: u64,
+    _bounds_subscription: Option<Subscription>,
+}
+
+/// The panel edge being dragged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelEdge {
+    Sidebar,
+    Request,
+}
+
+/// What is drawn under the pointer while a panel edge is dragged: nothing, as the panel itself moves.
+struct EdgeDrag;
+
+impl Render for EdgeDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
 }
 
 impl Shell {
@@ -416,11 +442,14 @@ impl Shell {
         let certificate_warning = settings.certificate_warning();
         let connection_problem = sender.configure(settings);
         // The Environment chosen last time, if it still exists in the Workspace.
-        if let Some(id) = personal.active_environment_id {
+        if let Some(id) = personal.active_environment_id.clone() {
             if model.workspace.environments.iter().any(|environment| environment.id == id) {
                 state.set_active_environment(Some(&id));
             }
         }
+        // The tabs open last time, skipping Requests that are gone (ADR 0041).
+        let saved_tabs = (personal.open_tabs(), personal.active_tab.clone());
+        state.restore_tabs(&model.workspace, &saved_tabs.0, saved_tabs.1.as_deref());
         let (history, history_readable) = match personal_dir.as_deref().map(history::load) {
             Some(Ok(entries)) => (entries, true),
             Some(Err(_)) => (Vec::new(), false),
@@ -449,6 +478,11 @@ impl Shell {
             import_report: None,
             dump_choice: None,
             spec_dialog: None,
+            sidebar_width: memory::DEFAULT_SIDEBAR_WIDTH,
+            request_height: None,
+            saved_tabs,
+            window_moves: 0,
+            _bounds_subscription: None,
             vault,
             search,
             search_text: String::new(),
@@ -1305,7 +1339,10 @@ impl Shell {
                 let branch = self.model.status.branch.clone();
                 self.model = ShellModel::from_parts(folder, workspace, issues, branch);
                 self.sync = self.model.folder.as_deref().and_then(ricochet_app::status::read_sync);
+                let open_tabs = self.state.open_tabs().to_vec();
+                let active_tab = self.state.active_tab().map(str::to_string);
                 self.state = AppState::for_workspace(&self.model.workspace);
+                self.state.restore_tabs(&self.model.workspace, &open_tabs, active_tab.as_deref());
                 self.inputs = None;
                 self.container_inputs = None;
                 self.editing_environment = None;
@@ -2083,7 +2120,7 @@ impl Shell {
         let rows: Vec<_> = shown.iter().map(|row| self.tree_row(row, cx)).collect();
 
         let mut column = div()
-            .w(px(SIDEBAR_WIDTH))
+            .w(px(self.sidebar_width))
             .flex_none()
             .h_full()
             .flex()
@@ -2994,7 +3031,7 @@ impl Shell {
     }
 
     fn request_pane(&self, url_focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let pane = div().flex_none().flex().flex_col().gap_2().p_3();
+        let pane = div().flex_1().min_h_0().flex().flex_col().gap_2().p_3();
         if let Some(error) = &self.model.error {
             return pane.child(div().text_color(rgb(WARNING)).child(error.clone()));
         }
@@ -3047,7 +3084,14 @@ impl Shell {
                 )))
                 .child(self.request_tab_button(RequestTab::Captures, format!("Captures {captures}"), cx)),
         )
-        .child(self.request_section(request, cx).id("request-section").max_h(px(220.0)).overflow_y_scroll().py_1())
+        .child({
+            let section = self.request_section(request, cx).id("request-section").overflow_y_scroll().py_1();
+            // A dragged pane gives the section all the room left; otherwise it grows with its content up to a limit.
+            match self.request_height {
+                Some(_) => section.flex_1().min_h_0(),
+                None => section.max_h(px(220.0)),
+            }
+        })
     }
 
     fn response_tab_button(&self, tab: ResponseTab, label: String, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -3352,8 +3396,106 @@ fn read_dot_env(model: &ShellModel) -> Vec<KeyValue> {
     model.folder_path().and_then(|folder| dotenv::read(folder).ok()).map(|result| result.variables).unwrap_or_default()
 }
 
+/// Remembering where the person left off (ADR 0041, ADR 0043, ADR 0068): the tabs, the panel sizes and the window.
+impl Shell {
+    /// Restores the saved panel sizes, clamped to the window as it opens, and starts saving the window's placement when
+    /// it moves or is resized, and when it closes.
+    fn remember_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let personal = self.personal_dir.as_deref().map(|dir| personal_state::load(dir).state).unwrap_or_default();
+        let size = window.bounds().size;
+        let (sidebar, request) = memory::restored_panels(personal.panels().as_ref(), f32::from(size.width), f32::from(size.height));
+        if let Some(width) = sidebar {
+            self.sidebar_width = width;
+        }
+        self.request_height = request;
+
+        self._bounds_subscription = Some(cx.observe_window_bounds(window, |this: &mut Shell, window: &mut Window, cx: &mut Context<Shell>| {
+            // A move or resize sends many changes; only the last one of a burst is saved, half a second after it.
+            this.window_moves += 1;
+            let moves = this.window_moves;
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
+                this.update_in(cx, |shell: &mut Shell, window: &mut Window, _: &mut Context<Shell>| {
+                    if shell.window_moves == moves
+                        && let Some(dir) = shell.personal_dir.as_deref()
+                    {
+                        personal_state::save_window(dir, &current_placement(window)).ok();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }));
+
+        let personal_dir = self.personal_dir.clone();
+        window.on_window_should_close(cx, move |window, _| {
+            if let Some(dir) = personal_dir.as_deref() {
+                personal_state::save_window(dir, &current_placement(window)).ok();
+            }
+            true
+        });
+    }
+
+    /// Saves the sidebar width and request pane height, after an edge is let go. The request height is saved only once
+    /// it has been dragged, so an untouched pane keeps sizing to its content.
+    fn save_panels(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = self.personal_dir.clone() else {
+            return;
+        };
+        let layout = PanelLayout { sidebar_width: Some(f64::from(self.sidebar_width)), request_height: self.request_height.map(f64::from) };
+        if let Err(error) = personal_state::save_panels(&dir, &layout) {
+            self.notice = Some((format!("The panel sizes could not be saved: {error}"), true));
+        }
+        cx.notify();
+    }
+
+    /// Saves the open tabs and the active tab when they differ from what was saved last (ADR 0041).
+    fn save_tabs_if_changed(&mut self) {
+        let current = (self.state.open_tabs().to_vec(), self.state.active_tab().map(str::to_string));
+        if current == self.saved_tabs {
+            return;
+        }
+        if let Some(dir) = self.personal_dir.as_deref() {
+            personal_state::save_open_tabs(dir, &current.0, current.1.as_deref()).ok();
+        }
+        self.saved_tabs = current;
+    }
+
+    /// A thin edge between two panels that is dragged to resize them.
+    fn panel_edge(edge: PanelEdge) -> gpui::Stateful<gpui::Div> {
+        let handle = div()
+            .id(match edge {
+                PanelEdge::Sidebar => "sidebar-edge",
+                PanelEdge::Request => "request-edge",
+            })
+            .flex_none()
+            .hover(|style| style.bg(rgb(BORDER)))
+            .on_drag(edge, |_, _, _, cx| cx.new(|_| EdgeDrag));
+        match edge {
+            PanelEdge::Sidebar => handle.w(px(4.0)).h_full().cursor_col_resize(),
+            PanelEdge::Request => handle.h(px(4.0)).w_full().cursor_row_resize(),
+        }
+    }
+}
+
+/// The window's placement to save: its normal bounds, which a maximised window returns to, and whether it is maximised.
+fn current_placement(window: &Window) -> personal_state::WindowPlacement {
+    let (bounds, is_maximized) = match window.window_bounds() {
+        WindowBounds::Windowed(bounds) | WindowBounds::Fullscreen(bounds) => (bounds, false),
+        WindowBounds::Maximized(bounds) => (bounds, true),
+    };
+    memory::placement(
+        f64::from(f32::from(bounds.origin.x)),
+        f64::from(f32::from(bounds.origin.y)),
+        f64::from(f32::from(bounds.size.width)),
+        f64::from(f32::from(bounds.size.height)),
+        is_maximized,
+    )
+}
+
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.save_tabs_if_changed();
         self.ensure_inputs(cx);
         self.ensure_container_inputs(cx);
         let url_focused = self.inputs.as_ref().is_some_and(|inputs| inputs.url.focus_handle(cx).is_focused(window));
@@ -3413,16 +3555,56 @@ impl Render for Shell {
             .text_sm()
             .child(self.top_bar(cx))
             .child(
-                div().flex().flex_row().flex_1().overflow_hidden().child(self.sidebar(cx)).child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .overflow_hidden()
-                        .child(self.tab_strip(cx))
-                        .child(self.request_pane(url_focused, cx))
-                        .child(self.response_pane(cx)),
-                ),
+                div()
+                    .id("main-columns")
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .overflow_hidden()
+                    .on_drag_move(cx.listener(|this: &mut Shell, event: &gpui::DragMoveEvent<PanelEdge>, _: &mut Window, cx: &mut Context<Shell>| {
+                        if *event.drag(cx) == PanelEdge::Sidebar {
+                            let width = f32::from(event.event.position.x - event.bounds.origin.x);
+                            this.sidebar_width = memory::clamp_sidebar_width(width, f32::from(event.bounds.size.width));
+                            cx.notify();
+                        }
+                    }))
+                    .child(self.sidebar(cx))
+                    .child(Self::panel_edge(PanelEdge::Sidebar))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .child(self.tab_strip(cx))
+                            .child(
+                                div()
+                                    .id("request-response")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .flex()
+                                    .flex_col()
+                                    .on_drag_move(cx.listener(
+                                        |this: &mut Shell, event: &gpui::DragMoveEvent<PanelEdge>, _: &mut Window, cx: &mut Context<Shell>| {
+                                            if *event.drag(cx) == PanelEdge::Request {
+                                                let height = f32::from(event.event.position.y - event.bounds.origin.y);
+                                                this.request_height =
+                                                    Some(memory::clamp_request_height(height, f32::from(event.bounds.size.height)));
+                                                cx.notify();
+                                            }
+                                        },
+                                    ))
+                                    .child(
+                                        match self.request_height {
+                                            Some(height) => div().h(px(height)).flex_none().flex().flex_col().overflow_hidden(),
+                                            None => div().flex_none().flex().flex_col(),
+                                        }
+                                        .child(self.request_pane(url_focused, cx)),
+                                    )
+                                    .child(Self::panel_edge(PanelEdge::Request))
+                                    .child(self.response_pane(cx)),
+                            ),
+                    ),
             )
             .child(self.status_bar())
             .children(self.environment_menu(cx))
@@ -3436,7 +3618,38 @@ impl Render for Shell {
             .children(self.import_report_overlay(cx))
             .children(self.shortcut_sheet_overlay())
             .children(self.outside_change_banner(cx))
+            .on_drop(cx.listener(|this: &mut Shell, _: &PanelEdge, _: &mut Window, cx: &mut Context<Shell>| this.save_panels(cx)))
     }
+}
+
+/// The window's bounds and screen from the last run (ADR 0068), when they are reasonable and the title bar would be on
+/// a screen that is still there. Otherwise the default size, centred on the main screen.
+fn restored_window(cx: &App) -> (WindowBounds, Option<gpui::DisplayId>) {
+    let saved = default_personal_directory().and_then(|dir| personal_state::load(&dir).state.window().cloned());
+    let displays = cx.displays();
+    let screens: Vec<ScreenArea> = displays
+        .iter()
+        .map(|display| {
+            let bounds = display.bounds();
+            ScreenArea {
+                x: f64::from(f32::from(bounds.origin.x)),
+                y: f64::from(f32::from(bounds.origin.y)),
+                width: f64::from(f32::from(bounds.size.width)),
+                height: f64::from(f32::from(bounds.size.height)),
+            }
+        })
+        .collect();
+    if let Some(saved) = saved
+        && let Some(index) = memory::screen_for(&saved, &screens)
+    {
+        let bounds = Bounds::new(
+            gpui::point(px(saved.x as f32), px(saved.y as f32)),
+            size(px(saved.width as f32), px(saved.height as f32)),
+        );
+        let window_bounds = if saved.is_maximized { WindowBounds::Maximized(bounds) } else { WindowBounds::Windowed(bounds) };
+        return (window_bounds, Some(displays[index].id()));
+    }
+    (WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(800.)), cx)), None)
 }
 
 fn main() {
@@ -3463,15 +3676,17 @@ fn main() {
             KeyBinding::new("secondary-enter", SendRequest, None),
             KeyBinding::new("enter", SendRequest, Some("TextInput")),
         ]);
-        let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
+        let (window_bounds, display_id) = restored_window(cx);
         cx.open_window(
             WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_bounds: Some(window_bounds),
+                display_id,
                 titlebar: Some(TitlebarOptions { title: Some("Ricochet".into()), ..Default::default() }),
                 ..Default::default()
             },
             move |window, cx| {
                 let shell = cx.new(move |cx| Shell::new(model, store, vault, cx));
+                shell.update(cx, |shell, cx| shell.remember_window(window, cx));
                 window.focus(&shell.read(cx).focus_handle);
                 shell
             },
