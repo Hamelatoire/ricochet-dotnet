@@ -47,4 +47,5 @@ pub mod collection_runner;
 pub mod bulk_runner;
 pub mod bulk_run_progress;
 pub mod personal_state;
+pub mod personal_secrets;
 pub mod git_branch;
