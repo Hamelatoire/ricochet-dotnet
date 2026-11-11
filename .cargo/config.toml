@@ -1,0 +1,6 @@
+# One build folder for the Rust crates, at rust/target. ricochet-app and ricochet-cli both depend on ricochet-core and
+# share most dependencies, so a shared folder compiles each of them once instead of once per crate. This file sits at
+# the repository root because Cargo reads config from the folder it runs in and its parents, and the README and CI
+# run it from here with --manifest-path.
+[build]
+target-dir = "rust/target"
