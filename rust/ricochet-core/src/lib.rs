@@ -1,6 +1,4 @@
-//! Port of src/Ricochet.Core (ADR 0091). Ported so far: the data model (models), variable resolution
-//! (variables), built-in functions (builtins), and assertions and captures (assertions). Sending, runs, the
-//! workspace store and imports are not ported yet, and the C# app remains the reference for behaviour.
+//! Port of src/Ricochet.Core (ADR 0091). The C# app remains the reference for behaviour.
 
 pub mod assertions;
 pub mod builtins;
@@ -16,6 +14,7 @@ pub mod openapi_export;
 pub mod duplicate;
 pub mod name_filter;
 pub mod postman;
+pub mod postman_test_translator;
 pub mod insomnia;
 pub mod store;
 pub mod openapi;
@@ -39,10 +38,16 @@ pub mod workspace_archive;
 pub mod history;
 pub mod secrets;
 pub mod secrets_os;
+pub mod external_secrets;
+pub mod workspace_secrets;
 pub mod send;
 pub mod response_format;
 pub mod response_examples;
 pub mod collection_runner;
+pub mod data_rows;
+pub mod xunit;
 pub mod bulk_runner;
+pub mod bulk_run_progress;
 pub mod personal_state;
+pub mod personal_secrets;
 pub mod git_branch;

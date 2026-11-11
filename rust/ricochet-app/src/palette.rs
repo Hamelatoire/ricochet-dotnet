@@ -1,6 +1,7 @@
 //! The command palette's entries and how they are filtered (ADR 0091, the C# MainViewModel.Palette). Plain functions on
 //! the Core model, so tests reach them without a window. The window runs the chosen action.
 
+use ricochet_core::command_palette;
 use ricochet_core::models::Workspace;
 
 use crate::tree::{RowKind, build_tree};
@@ -34,6 +35,21 @@ pub struct PaletteEntry {
 
 /// Every entry the palette offers for this Workspace, in a fixed order: commands, Environments, then Requests.
 pub fn entries(workspace: &Workspace) -> Vec<PaletteEntry> {
+    entries_for(workspace, false)
+}
+
+/// The entries for this Workspace. With `requests_only` set (Ctrl+P, the C# Find a request), only the Requests are
+/// offered, as the C# palette does when it is opened that way.
+pub fn entries_for(workspace: &Workspace, requests_only: bool) -> Vec<PaletteEntry> {
+    let mut all = Vec::new();
+    if !requests_only {
+        all.extend(action_entries(workspace));
+    }
+    all.extend(request_entries(workspace));
+    all
+}
+
+fn action_entries(workspace: &Workspace) -> Vec<PaletteEntry> {
     let mut all = vec![
         PaletteEntry { label: "Send request".to_string(), action: PaletteAction::Send },
         PaletteEntry { label: "Save".to_string(), action: PaletteAction::Save },
@@ -52,21 +68,22 @@ pub fn entries(workspace: &Workspace) -> Vec<PaletteEntry> {
             action: PaletteAction::UseEnvironment(Some(environment.id.clone())),
         });
     }
-    for row in build_tree(workspace, false).into_iter().filter(|row| row.kind == RowKind::Request) {
-        all.push(PaletteEntry { label: format!("Open: {}", row.label), action: PaletteAction::OpenRequest(row.id) });
-    }
     all
 }
 
+fn request_entries(workspace: &Workspace) -> Vec<PaletteEntry> {
+    build_tree(workspace, false)
+        .into_iter()
+        .filter(|row| row.kind == RowKind::Request)
+        .map(|row| PaletteEntry { label: format!("Open: {}", row.label), action: PaletteAction::OpenRequest(row.id) })
+        .collect()
+}
+
 /// The entries whose label contains every word of the query, ignoring case. An empty query keeps every entry.
+/// Labels that start with the first word come first, as the C# `CommandPalette.Filter` orders them (ADR 0040).
 pub fn filter(entries: &[PaletteEntry], query: &str) -> Vec<PaletteEntry> {
-    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    entries
-        .iter()
-        .filter(|entry| {
-            let label = entry.label.to_lowercase();
-            words.iter().all(|word| label.contains(word))
-        })
+    command_palette::filter(entries.iter(), query, |entry: &&PaletteEntry| entry.label.as_str())
+        .into_iter()
         .cloned()
         .collect()
 }

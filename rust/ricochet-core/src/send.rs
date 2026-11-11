@@ -2,7 +2,8 @@
 //! response. It uses reqwest with rustls, so no OpenSSL or Schannel is needed, and it trusts the certificates in the
 //! operating system's store, as the C# app does. Certificate checks are on by default (ADR 0079).
 //!
-//! Not ported yet: cancellation, cookies (ADR 0012), automatic decompression, the Windows system proxy (reqwest
+//! Cookies are kept only within one run (`begin_run_cookies`, ADR 0012); single sends from the app keep none.
+//! `send_cancellable` stops a send the person cancels. Not ported yet: automatic decompression, the Windows system proxy (reqwest
 //! reads only the proxy environment variables), PKCS #12 client certificates (.pfx and .p12, which rustls cannot
 //! read), resolving Secret references (ExternalSecrets) and the runner. The C# app stays the reference for those.
 
@@ -10,7 +11,10 @@ use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, Read};
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
+
+use reqwest::cookie::Jar;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -39,11 +43,25 @@ static SCHEME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendError {
     message: String,
+    cancelled: bool,
 }
+
+/// The message of a send the person cancelled.
+pub const CANCELLED_MESSAGE: &str = "Cancelled";
 
 impl SendError {
     fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self { message: message.into(), cancelled: false }
+    }
+
+    fn cancelled() -> Self {
+        Self { message: CANCELLED_MESSAGE.to_string(), cancelled: true }
+    }
+
+    /// True when the send stopped because it was cancelled, not because it failed. The C# app shows "Cancelled"
+    /// and keeps no History entry for it.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
     }
 
     pub fn message(&self) -> &str {
@@ -176,15 +194,50 @@ impl RequestSender {
     /// Returns `SendError` when the Request is invalid (for example a control character, which is refused rather
     /// than removed, ADR 0075), when the settings cannot be used, when the connection fails, or when the timeout passes.
     pub fn send(&self, request: &ApiRequest) -> Result<ApiResponse, SendError> {
+        self.send_cancellable(request, &AtomicBool::new(false))
+    }
+
+    /// `send`, stopped when `cancel` is set. The flag is checked before each request goes out and between chunks of
+    /// the body. Waiting for the server's first answer cannot be interrupted, so a send cancelled then stops when that
+    /// answer comes or the timeout passes, and the caller should stop waiting for it at once.
+    ///
+    /// # Errors
+    /// As `send`, and a `SendError` whose `is_cancelled` is true when the flag was set.
+    pub fn send_cancellable(&self, request: &ApiRequest, cancel: &AtomicBool) -> Result<ApiResponse, SendError> {
         let client = self.client.as_ref().map_err(|problem| SendError::new(problem.clone()))?;
+        self.send_on(client, request, cancel)
+    }
+
+    /// Starts the cookies for one run (ADR 0012). They start empty, live only in the returned value, and are not
+    /// shared with any other run. Dropping it drops them. Mirrors `BeginRunCookies`.
+    pub fn begin_run_cookies(&self) -> RunCookies {
+        let clients = self.client.as_ref().map_err(Clone::clone).and_then(|plain| {
+            let jar = Arc::new(Jar::default());
+            Ok((build_client_with(&self.settings, Some(jar))?, plain.clone()))
+        });
+        RunCookies { clients }
+    }
+
+    /// Sends a Request with the cookies of one run (ADR 0012). A Request that writes its own Cookie header is sent
+    /// without the stored cookies, so they don't add to it.
+    ///
+    /// # Errors
+    /// Same as `send`.
+    pub fn send_in_run(&self, request: &ApiRequest, run: &RunCookies) -> Result<ApiResponse, SendError> {
+        let (with_cookies, without_cookies) = run.clients.as_ref().map_err(|problem| SendError::new(problem.clone()))?;
+        let own_cookie = request.headers.iter().any(|h| h.enabled && h.key.trim().eq_ignore_ascii_case("cookie"));
+        self.send_on(if own_cookie { without_cookies } else { with_cookies }, request, &AtomicBool::new(false))
+    }
+
+    fn send_on(&self, client: &Client, request: &ApiRequest, cancel: &AtomicBool) -> Result<ApiResponse, SendError> {
         let timeout = self.settings.timeout;
         let started = Instant::now();
 
-        let response = send_with_auth(client, request, timeout)?;
+        let response = send_with_auth(client, request, timeout, cancel)?;
         let status = response.status();
         let headers = collect_headers(response.headers());
         let (media_type, charset) = content_type_parts(response.headers());
-        let (body, truncated) = read_body(response, self.settings.max_body_bytes, timeout)?;
+        let (body, truncated) = read_body(response, self.settings.max_body_bytes, timeout, cancel)?;
 
         Ok(ApiResponse {
             status_code: status.as_u16(),
@@ -200,9 +253,25 @@ impl RequestSender {
     }
 }
 
+/// The cookies kept for one run (ADR 0012), in memory only. Dropping it drops them.
+pub struct RunCookies {
+    /// The client that keeps this run's cookies, and the sender's plain client for Requests with their own Cookie
+    /// header. Or the problem that stops every send.
+    clients: Result<(Client, Client), String>,
+}
+
 /// Builds the client for one set of settings. Proxy and certificate problems are returned as text for the user.
 fn build_client(settings: &SenderSettings) -> Result<Client, String> {
-    let mut builder = Client::builder()
+    build_client_with(settings, None)
+}
+
+/// `build_client`, with a cookie jar when `cookies` is given. Without one, no cookies are kept.
+fn build_client_with(settings: &SenderSettings, cookies: Option<Arc<Jar>>) -> Result<Client, String> {
+    let mut builder = Client::builder();
+    if let Some(jar) = cookies {
+        builder = builder.cookie_provider(jar);
+    }
+    builder = builder
         .timeout(settings.timeout)
         .redirect(if settings.follow_redirects { redirect::Policy::default() } else { redirect::Policy::none() })
         .danger_accept_invalid_certs(!settings.verify_certificates);
@@ -273,14 +342,17 @@ fn load_client_certificate(path: &str) -> Result<Option<Identity>, String> {
 
 /// Sends the request. Digest needs the server's challenge first, so a 401 with a Digest challenge is answered with one
 /// more send of the same request (ADR 0024). The request is built again, so the body goes out in full both times.
-fn send_with_auth(client: &Client, request: &ApiRequest, timeout: Duration) -> Result<Response, SendError> {
+fn send_with_auth(client: &Client, request: &ApiRequest, timeout: Duration, cancel: &AtomicBool) -> Result<Response, SendError> {
+    check_cancel(cancel)?;
     let response = build_request(client, request, None)?.send().map_err(|error| transport_error(error, timeout))?;
+    check_cancel(cancel)?;
 
     let Some(challenge) = digest_challenge(request, &response) else {
         return Ok(response);
     };
     drop(response);
 
+    check_cancel(cancel)?;
     build_request(client, request, Some(&challenge))?.send().map_err(|error| transport_error(error, timeout))
 }
 
@@ -480,16 +552,28 @@ fn guess_content_type(body: &str) -> &'static str {
     }
 }
 
-fn read_body(mut response: Response, max_bytes: u64, timeout: Duration) -> Result<(Vec<u8>, bool), SendError> {
+fn read_body(mut response: Response, max_bytes: u64, timeout: Duration, cancel: &AtomicBool) -> Result<(Vec<u8>, bool), SendError> {
     let mut body = Vec::new();
-    (&mut response)
-        .take(max_bytes)
-        .read_to_end(&mut body)
-        .map_err(|error| read_error(error, timeout))?;
+    let mut chunk = vec![0u8; 64 * 1024];
+    // Read in chunks, so a cancel stops a long download between them.
+    while (body.len() as u64) < max_bytes {
+        check_cancel(cancel)?;
+        let room = usize::try_from(max_bytes - body.len() as u64).unwrap_or(usize::MAX).min(chunk.len());
+        match response.read(&mut chunk[..room]) {
+            Ok(0) => break,
+            Ok(read) => body.extend_from_slice(&chunk[..read]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(read_error(error, timeout)),
+        }
+    }
 
     // Truncated only when a byte follows the limit, so a body of exactly the limit is complete.
     let truncated = body.len() as u64 >= max_bytes && has_more(&mut response, timeout)?;
     Ok((body, truncated))
+}
+
+fn check_cancel(cancel: &AtomicBool) -> Result<(), SendError> {
+    if cancel.load(Ordering::SeqCst) { Err(SendError::cancelled()) } else { Ok(()) }
 }
 
 fn has_more(response: &mut Response, timeout: Duration) -> Result<bool, SendError> {

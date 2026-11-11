@@ -16,12 +16,11 @@ use ricochet_core::dotenv;
 use ricochet_core::folder_tags;
 use ricochet_core::models::KeyValue;
 use ricochet_core::send::{RequestSender, SenderSettings};
-use ricochet_core::store::{MARKER_FILE_NAME, WorkspaceFolder};
+use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::xunit;
 
 /// The prefix of environment variables that become Variables for the run (ADR 0021).
 const VARIABLE_PREFIX: &str = "RICOCHET_VAR_";
-const COLLECTIONS_DIR: &str = "collections";
 
 pub const RUN_USAGE: &str = "Ricochet: run a workspace's requests and check their assertions.
 
@@ -43,7 +42,8 @@ Options:
   --xunit <file>         Also write an xUnit XML report.
   --timeout <seconds>    Time limit for each request. Default: 120.
   --bail                 Stop at the first failure.
-  --cookies              Not ported yet. The run refuses it rather than keep no cookies silently.
+  --cookies              Keep cookies between the requests of each run, as a browser does. Cookies are
+                         kept in memory only and are never written to a file. Each run starts with none.
   --insecure             Skip TLS certificate checks. Only for servers you trust, such as a local test server.
   --help                 Show this help.
 
@@ -184,12 +184,6 @@ pub fn run_command(args: &[String]) -> i32 {
 }
 
 fn execute(options: &RunArgs) -> i32 {
-    // Cookies would need a jar in the sender, which the Rust port does not have yet. Refusing is safer than a run
-    // that quietly differs from the app's behaviour.
-    if options.cookies {
-        return cannot_run("--cookies is not ported to the Rust CLI yet, so cookies would not be kept. Run without it, or use the C# CLI.");
-    }
-
     let root = match std::path::absolute(&options.folder) {
         Ok(path) => path,
         Err(error) => return cannot_run(format!("Could not work out the folder \"{}\": {error}", options.folder)),
@@ -217,6 +211,8 @@ fn execute(options: &RunArgs) -> i32 {
         }
         return cannot_run("Some workspace files could not be used. Fix them and run again.");
     }
+    // Secrets are only available on a machine that has them. On CI, this is usually empty.
+    let workspace = crate::commands::with_secrets(&workspace, &folder);
 
     // Lowest priority first: .env, then RICOCHET_VAR_ variables, then --var. Later entries win.
     let dot_env = match dotenv::read(&root) {
@@ -255,6 +251,7 @@ fn execute(options: &RunArgs) -> i32 {
         stop_on_first_failure: options.bail,
         include_tags: folder_tags::normalize(Some(options.tags.clone())).unwrap_or_default(),
         exclude_tags: folder_tags::normalize(Some(options.exclude_tags.clone())).unwrap_or_default(),
+        keep_cookies: options.cookies,
     };
 
     let colors = Colors { enabled: io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() };
@@ -346,7 +343,7 @@ fn variables_from_environment() -> Vec<KeyValue> {
 
 /// A folder is a workspace when it has the marker file or a collections folder, as `WorkspaceFolder.LooksLikeWorkspace`.
 fn looks_like_workspace(root: &Path) -> bool {
-    root.join(MARKER_FILE_NAME).is_file() || root.join(COLLECTIONS_DIR).is_dir()
+    ricochet_core::store::looks_like_workspace(root)
 }
 
 fn cannot_run(message: impl AsRef<str>) -> i32 {

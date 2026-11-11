@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 use std::thread;
 
 use pretty_assertions::assert_eq;
+use ricochet_core::send::RequestSender;
 use ricochet_app::bulk_page::{BulkShared, failed, finished_prefix, run};
 use ricochet_core::bulk_runner::{BulkItemResult, parse_ids};
 use ricochet_core::models::{ApiRequest, Collection, CollectionItem, Workspace};
@@ -38,7 +39,7 @@ fn one_request_is_sent_for_each_pasted_id_and_the_results_are_in_pasted_order() 
     let ids = parse_ids("a\n\n  bad \nc\n");
     assert_eq!(ids, vec!["a", "bad", "c"]);
     let shared = BulkShared::default();
-    let completed = run(&workspace(port), "item", None, &ids, "id", 1, &shared).unwrap();
+    let completed = run(&workspace(port), "item", None, &ids, "id", 1, &RequestSender::new(), &shared).unwrap();
     assert!(completed);
     assert!(shared.done.load(Ordering::SeqCst));
 
@@ -52,7 +53,7 @@ fn one_request_is_sent_for_each_pasted_id_and_the_results_are_in_pasted_order() 
 #[test]
 fn a_request_that_is_not_in_the_workspace_cannot_start_a_run_and_still_marks_it_done() {
     let shared = BulkShared::default();
-    let outcome = run(&workspace(1), "missing", None, &["a".to_string()], "id", 1, &shared);
+    let outcome = run(&workspace(1), "missing", None, &["a".to_string()], "id", 1, &RequestSender::new(), &shared);
     assert!(outcome.is_err());
     assert!(shared.done.load(Ordering::SeqCst));
     assert!(shared.results().is_empty());

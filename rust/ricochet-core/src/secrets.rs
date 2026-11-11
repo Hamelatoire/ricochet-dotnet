@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// The file name of the Secrets, in the personal directory. The same name the C# app uses.
 pub const SECRETS_FILE_NAME: &str = "secrets.dat";
@@ -87,6 +88,28 @@ impl fmt::Display for VaultError {
 pub trait SecretVault {
     fn load(&self) -> Result<BTreeMap<String, SecretValue>, VaultError>;
     fn save(&self, secrets: &BTreeMap<String, SecretValue>) -> Result<(), VaultError>;
+}
+
+/// Keeps Secrets only until the app closes. Used when the OS offers no secure storage (port of `InMemorySecretVault`).
+#[derive(Default)]
+pub struct InMemoryVault {
+    secrets: Mutex<BTreeMap<String, SecretValue>>,
+}
+
+impl SecretVault for InMemoryVault {
+    fn load(&self) -> Result<BTreeMap<String, SecretValue>, VaultError> {
+        Ok(self.secrets.lock().map(|secrets| secrets.clone()).unwrap_or_default())
+    }
+
+    fn save(&self, secrets: &BTreeMap<String, SecretValue>) -> Result<(), VaultError> {
+        match self.secrets.lock() {
+            Ok(mut stored) => {
+                *stored = secrets.clone();
+                Ok(())
+            }
+            Err(_) => Err(VaultError::new("Your secrets could not be saved for this session.")),
+        }
+    }
 }
 
 /// The Secrets file in a personal directory.
@@ -217,8 +240,9 @@ pub fn default_vault(personal_directory: &Path) -> Option<Box<dyn SecretVault>> 
     }
     #[allow(unreachable_code)]
     {
+        // An unknown OS: Secrets last only for this session, as in the C# app.
         let _ = personal_directory;
-        None
+        Some(Box::new(InMemoryVault::default()))
     }
 }
 
@@ -232,6 +256,16 @@ mod tests {
         assert_eq!(format!("{secret:?}"), "SecretValue(<hidden>)");
         assert_eq!(format!("{secret}"), "<hidden>");
         assert_eq!(secret.expose(), "hunter2");
+    }
+
+    #[test]
+    fn the_in_memory_vault_round_trips_for_the_session() {
+        let vault = InMemoryVault::default();
+        assert!(vault.load().unwrap().is_empty());
+        let mut secrets = BTreeMap::new();
+        secrets.insert("k".to_string(), SecretValue::new("v"));
+        vault.save(&secrets).unwrap();
+        assert_eq!(vault.load().unwrap().get("k").map(|value| value.expose()), Some("v"));
     }
 
     #[test]

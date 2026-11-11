@@ -115,6 +115,16 @@ fn hang(_: usize, _: &Seen) -> Option<String> {
     None
 }
 
+/// The mock counts a request after it has answered it, so a test that has its response can still be a moment early.
+/// Waits for the count to reach `expected`, for up to five seconds, before the test checks it.
+fn wait_for_handled(handled: &AtomicUsize, expected: usize) -> usize {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while handled.load(Ordering::SeqCst) < expected && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    handled.load(Ordering::SeqCst)
+}
+
 fn mock(routes: Vec<MockRoute>) -> (MockServer, u16, Arc<AtomicUsize>) {
     let handled = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&handled);
@@ -227,7 +237,7 @@ fn a_url_without_a_scheme_is_sent_as_http() {
     let response = RequestSender::new().send(&get(format!("127.0.0.1:{port}/path"))).unwrap();
 
     assert_eq!(response.status_code, 200);
-    assert_eq!(handled.load(Ordering::SeqCst), 1);
+    assert_eq!(wait_for_handled(&handled, 1), 1);
 }
 
 #[test]
@@ -679,7 +689,7 @@ fn a_proxy_receives_the_request_when_one_is_set() {
     let response = sender.send(&get("http://example.invalid/hello".to_string())).unwrap();
 
     assert_eq!(response.body_text(), "via proxy");
-    assert_eq!(handled.load(Ordering::SeqCst), 1);
+    assert_eq!(wait_for_handled(&handled, 1), 1);
 }
 
 #[test]

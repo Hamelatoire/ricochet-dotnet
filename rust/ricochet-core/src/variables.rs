@@ -1,6 +1,6 @@
 //! Port of the variable part of `VariableResolver.cs` (ADR 0008, 0019, 0020).
-//! Not ported yet: built-in functions such as `{{$guid}}`, external Secret references (ADR 0025),
-//! prompt answers, and the assertions and captures inside a Request. Unknown names are left as written.
+//! External Secret references (ADR 0025) are read by `resolve_references`, just before a send. Unknown names are
+//! left as written.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::OnceLock;
@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use crate::builtins;
+use crate::external_secrets::{self, ExternalSecretResolver};
 use crate::models::{ApiRequest, AuthDetails, Collection, CollectionItem, KeyValue, RequestAuth, auth_kinds};
 
 /// The request to send, and the copy History keeps: placeholders filled in for the send, Variables left as written in History.
@@ -134,6 +135,61 @@ pub fn find_prompt_variables(request: &ApiRequest, variables: &[KeyValue]) -> Ve
     }
 
     found
+}
+
+/// Reads the external Secret references (ADR 0025) that the Request uses, directly or through other Variables, and
+/// returns the Variables with their values added on top. Mirrors `ResolveReferencesAsync`: only the references the
+/// send needs are read, and each value is marked as a Secret so it is masked wherever this send's output is shown.
+///
+/// # Errors
+/// The message to show when a reference could not be read. The Request must not be sent then.
+pub fn resolve_references(
+    request: &ApiRequest,
+    variables: &[KeyValue],
+    secrets: &ExternalSecretResolver,
+) -> Result<Vec<KeyValue>, String> {
+    // The same winner rule `resolve` uses, so the reference read here is the one the Request would send.
+    let mut winners: HashMap<String, &KeyValue> = HashMap::new();
+    for variable in variables {
+        if variable.enabled && !variable.key.is_empty() && !((variable.is_secret || variable.is_prompt) && variable.value.is_empty()) {
+            winners.insert(variable.key.trim().to_string(), variable);
+        }
+    }
+
+    let mut added: Vec<KeyValue> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut pending: VecDeque<String> = find_placeholders(request).into();
+    while let Some(name) = pending.pop_front() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(variable) = winners.get(&name) else { continue };
+        // A prompt Variable is sent with its answer, so its stored value is never read.
+        if variable.is_prompt {
+            continue;
+        }
+        if !external_secrets::reference::is_reference(&variable.value) {
+            for found in placeholder().captures_iter(&variable.value) {
+                pending.push_back(found[1].trim().to_string());
+            }
+            continue;
+        }
+
+        let value = secrets
+            .resolve(&variable.value)
+            .map_err(|error| format!("The secret reference for {name} could not be read. {}", error.message()))?;
+        added.push(KeyValue {
+            key: name,
+            value: value.expose().to_string(),
+            enabled: true,
+            is_secret: true,
+            ..(*variable).clone()
+        });
+    }
+
+    let mut all = variables.to_vec();
+    all.extend(added);
+    Ok(all)
 }
 
 /// Names still written as placeholders in the parts of a Request that will be sent, in order, without repeats.

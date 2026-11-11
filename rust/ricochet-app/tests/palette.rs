@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use ricochet_app::palette::{PaletteAction, entries, filter};
+use ricochet_app::palette::{PaletteAction, entries, entries_for, filter};
 use ricochet_core::models::{ApiEnvironment, ApiRequest, Collection, CollectionItem, Workspace};
 
 fn workspace() -> Workspace {
@@ -50,4 +50,40 @@ fn the_query_keeps_entries_with_every_word_ignoring_case() {
     assert_eq!(shown, vec!["Use environment: Staging"]);
     assert_eq!(filter(&all, "   "), all);
     assert!(filter(&all, "nothing matches this").is_empty());
+}
+
+#[test]
+fn requests_only_offers_just_the_requests() {
+    let labels: Vec<String> = entries_for(&workspace(), true).into_iter().map(|entry| entry.label).collect();
+    assert_eq!(labels, vec!["Open: Status", "Open: List orders"]);
+    assert_eq!(entries_for(&workspace(), false), entries(&workspace()));
+}
+
+#[test]
+fn labels_that_start_with_the_first_word_come_first() {
+    let mut workspace = workspace();
+    let reuse = CollectionItem {
+        id: "reuse".into(),
+        name: "Reuse cache".into(),
+        request: Some(ApiRequest { name: "Reuse cache".into(), ..Default::default() }),
+        ..Default::default()
+    };
+    workspace.collections[0].items.push(reuse);
+
+    let shown: Vec<String> = filter(&entries(&workspace), "use").into_iter().map(|entry| entry.label).collect();
+    assert_eq!(
+        shown,
+        vec![
+            "Use no environment",
+            "Use environment: Staging",
+            "Open: Reuse cache",
+        ]
+    );
+}
+
+#[test]
+fn the_filter_matches_labels_not_collection_names() {
+    // The palette filters on the label, so a Collection name that is not in the label does not match.
+    let all = entries_for(&workspace(), true);
+    assert!(filter(&all, "shop").is_empty());
 }

@@ -10,6 +10,7 @@ use gpui::{
 };
 use ricochet_app::edit::{self, Field, set_secret};
 use ricochet_core::secrets::{self, SecretValue, SecretVault, auth_key};
+use ricochet_core::external_secrets::ExternalSecretResolver;
 use std::collections::BTreeMap;
 use ricochet_app::json_color::{SpanKind, color_line};
 use ricochet_app::request_view::{UrlSegment, query_params, url_segments};
@@ -32,20 +33,20 @@ use ricochet_core::send::{ApiResponse, RequestSender};
 use ricochet_core::response_compare::{self, DiffKind, ResponseInput};
 use ricochet_core::response_examples;
 use ricochet_core::curl;
-use ricochet_core::postman;
 use ricochet_core::collection_runner::{self, CollectionRunner, RunOptions};
 use ricochet_app::exports::{self, ExportFormat};
 use ricochet_app::bulk_page::{self, BulkShared};
 use ricochet_app::mock_page::{self, MockLog};
 use ricochet_core::mock_server::MockServer;
 use ricochet_core::bulk_runner;
-use ricochet_core::insomnia;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
-actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
+mod pages;
+
+actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, FindRequest, FocusUrl, SwitchEnvironment, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
 
 /// How much of a response body the pane draws. The rest is cut, so a large body cannot stall the window.
 const DISPLAY_CHARS: usize = 20_000;
@@ -76,11 +77,14 @@ const ERROR: u32 = 0xeb5757;
 const SIDEBAR_WIDTH: f32 = 280.0;
 const MONO: &str = "Consolas";
 
-/// What the response pane shows for a Request: a send in flight, the answer, or the reason it failed.
+/// What the response pane shows for a Request: a send in flight, the answer, the reason it failed, or that the
+/// person cancelled it.
 enum ResponseView {
-    Sending,
+    /// In flight. Setting the flag cancels it.
+    Sending(std::sync::Arc<std::sync::atomic::AtomicBool>),
     Done(Box<SentResponse>),
     Failed(String),
+    Cancelled,
 }
 
 /// A response with its body already formatted for display, and the placeholders that had no value when it was sent.
@@ -298,6 +302,8 @@ struct PromptDialog {
 struct PaletteState {
     input: Entity<TextInput>,
     query: String,
+    /// Opened with Ctrl+P: lists Requests only.
+    requests_only: bool,
     _subscription: Subscription,
 }
 
@@ -383,6 +389,18 @@ struct Shell {
     response_tab: ResponseTab,
     /// The Workspace's `.env` Variables, read at start and again before each send.
     dot_env: Vec<KeyValue>,
+    /// Sends with this person's settings from state.json (ADR 0007): timeout, redirects, certificate checks, size
+    /// limit, proxy and client certificate. Shared by single sends, collection runs and bulk runs.
+    sender: std::sync::Arc<RequestSender>,
+    /// This person's settings from state.json (ADR 0007). The Settings page changes and saves them.
+    settings: personal_state::PersonalSettings,
+    /// Why the proxy or client certificate cannot be used. Every send fails with it until the settings change.
+    connection_problem: Option<String>,
+    settings_panel: Option<pages::SettingsPanel>,
+    /// What the last import did, shown until it is closed.
+    import_report: Option<String>,
+    dump_choice: Option<pages::DumpChoice>,
+    spec_dialog: Option<pages::SpecDialog>,
 }
 
 impl Shell {
@@ -391,8 +409,14 @@ impl Shell {
         let sync = model.folder.as_deref().and_then(ricochet_app::status::read_sync);
         let dot_env = read_dot_env(&model);
         let personal_dir = default_personal_directory();
+        let personal = personal_dir.as_deref().map(|dir| personal_state::load(dir).state).unwrap_or_default();
+        let mut sender = RequestSender::new();
+        let settings = personal.settings.sender_settings();
+        let personal_settings = personal.settings.clone();
+        let certificate_warning = settings.certificate_warning();
+        let connection_problem = sender.configure(settings);
         // The Environment chosen last time, if it still exists in the Workspace.
-        if let Some(id) = personal_dir.as_deref().and_then(|dir| personal_state::load(dir).state.active_environment_id) {
+        if let Some(id) = personal.active_environment_id {
             if model.workspace.environments.iter().any(|environment| environment.id == id) {
                 state.set_active_environment(Some(&id));
             }
@@ -411,8 +435,20 @@ impl Shell {
             model,
             store,
             inputs: None,
-            notice: (!history_readable)
-                .then(|| ("Your history could not be read, so it will not be saved this time.".to_string(), true)),
+            // A setting that stops every send matters most, then the certificate warning (ADR 0079), then History.
+            notice: connection_problem
+                .clone()
+                .map(|problem| (format!("Requests cannot be sent with your settings: {problem}"), true))
+                .or_else(|| certificate_warning.map(|warning| (warning.to_string(), true)))
+                .or_else(|| (!history_readable)
+                    .then(|| ("Your history could not be read, so it will not be saved this time.".to_string(), true))),
+            sender: std::sync::Arc::new(sender),
+            settings: personal_settings,
+            connection_problem,
+            settings_panel: None,
+            import_report: None,
+            dump_choice: None,
+            spec_dialog: None,
             vault,
             search,
             search_text: String::new(),
@@ -719,28 +755,9 @@ impl Shell {
         }
     }
 
-    /// A copy of the Request with its Secrets filled in, for sending: the Secret headers and the auth Secrets. Returns
-    /// whether a Secret the Request needs is not stored. `stored` is the Request as the window holds it, before
-    /// Variables were applied to `request`. The stored Request is never changed.
-    fn with_secrets(&self, mut request: ApiRequest, stored: &ApiRequest) -> (ApiRequest, bool) {
-        let id = request.id.clone();
-        let lookup = |key: &str| self.vault.secrets.get(key).map(|value| value.expose().to_string());
-        let mut missing = edit::fill_secret_headers(&mut request, stored, lookup);
-        if let Some(auth) = request.auth.as_mut() {
-            let field_and_target = match auth.kind.as_str() {
-                ricochet_core::models::auth_kinds::BEARER => Some(("token", &mut auth.token)),
-                ricochet_core::models::auth_kinds::BASIC => Some(("password", &mut auth.password)),
-                ricochet_core::models::auth_kinds::API_KEY => Some(("keyValue", &mut auth.key_value)),
-                _ => None,
-            };
-            if let Some((field, target)) = field_and_target {
-                match lookup(&auth_key(&id, field)) {
-                    Some(value) => *target = value,
-                    None => missing = true,
-                }
-            }
-        }
-        (request, missing)
+    /// A copy of the Request with its Secrets filled in, for sending. See [`fill_secrets`].
+    fn with_secrets(&self, request: ApiRequest, stored: &ApiRequest) -> (ApiRequest, bool) {
+        fill_secrets(&self.vault.secrets, request, stored)
     }
 
     /// Sends the selected Request off the UI thread, with its Variables resolved the way the C# app layers them.
@@ -759,7 +776,9 @@ impl Shell {
         let Some(id) = self.state.selected_item().map(str::to_string) else {
             return;
         };
-        if matches!(self.responses.get(&id), Some(ResponseView::Sending)) {
+        // While it is in flight, Send is Cancel, as in the C# app.
+        if matches!(self.responses.get(&id), Some(ResponseView::Sending(_))) {
+            self.cancel_send(&id, cx);
             return;
         }
         self.dot_env = read_dot_env(&self.model);
@@ -774,6 +793,16 @@ impl Shell {
         self.send_with(cx, &id, &[]);
     }
 
+    /// Cancels the Request's send in flight. The pane shows "Cancelled" at once; the send stops at its next check,
+    /// and whatever it returns later is dropped.
+    fn cancel_send(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(ResponseView::Sending(cancel)) = self.responses.get(id) {
+            cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.responses.insert(id.to_string(), ResponseView::Cancelled);
+            cx.notify();
+        }
+    }
+
     /// Sends the Request with the answers to its prompt Variables. The answers come after the scope, so they win.
     fn send_with(&mut self, cx: &mut Context<Self>, id: &str, answers: &[KeyValue]) {
         let id = id.to_string();
@@ -784,24 +813,33 @@ impl Shell {
         scope.extend(answers.iter().cloned());
         let history_copy = history::redacted(request);
         let collection_id = scope::collection_of(&self.model.workspace, &id).map(|collection| collection.id.clone());
-        let (sent, missing_secret) = self.with_secrets(variables::apply(request, &scope), request);
+        let (_, missing_secret) = self.with_secrets(variables::apply(request, &scope), request);
         if self.vault.problem.is_some() || missing_secret {
             self.notice = Some((
                 "A secret this request needs is not stored, so it was sent without it.".to_string(),
                 true,
             ));
         }
-        let unresolved = variables::find_placeholders(&sent);
+        let stored = request.clone();
+        let vault_secrets = self.vault.secrets.clone();
+        let sender = self.sender.clone();
 
         // The response being replaced becomes the one the Compare tab compares with.
         if let Some(ResponseView::Done(old)) = self.responses.get(&id) {
             let snapshot = input_of(&old.response);
             self.previous_responses.insert(id.clone(), snapshot);
         }
-        self.responses.insert(id.clone(), ResponseView::Sending);
-        let for_example = (sent.clone(), scope.clone());
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.responses.insert(id.clone(), ResponseView::Sending(cancel.clone()));
+        let flag = cancel.clone();
         let work = cx.background_executor().spawn(async move {
-            RequestSender::new().send(&sent).map_err(|error| error.message().to_string()).map(move |response| {
+            // Secret references are read just before sending, off the UI thread, because a command can take a
+            // while. Only this send uses the values, and they are marked as Secrets so they are masked (ADR 0025).
+            let scope = variables::resolve_references(&stored, &scope, &ExternalSecretResolver::system())?;
+            let (sent, _) = fill_secrets(&vault_secrets, variables::apply(&stored, &scope), &stored);
+            let unresolved = variables::find_placeholders(&sent);
+            let for_example = (sent.clone(), scope);
+            sender.send_cancellable(&sent, &flag).map_err(|error| error.message().to_string()).map(move |response| {
                 let formatted = response_format::format(&response);
                 let mut body: String = formatted.text.chars().take(DISPLAY_CHARS).collect();
                 if body.len() < formatted.text.len() {
@@ -813,6 +851,10 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let outcome = work.await;
             this.update(cx, |shell, cx| {
+                // A cancelled send already shows "Cancelled", and keeps no History entry, as in the C# app.
+                if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
                 let entry = HistoryEntry {
                     request: history_copy.clone(),
                     status_code: match &outcome {
@@ -894,6 +936,16 @@ impl Shell {
                         cx.notify();
                     })),
             )
+            .child(Self::small_button(SharedString::from("open-settings"), "Settings".to_string()).on_click(cx.listener(
+                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                    if this.settings_panel.is_some() {
+                        this.settings_panel = None;
+                        cx.notify();
+                    } else {
+                        this.open_settings(cx);
+                    }
+                },
+            )))
     }
 
     fn tree_row(&self, row: &TreeRow, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -1006,8 +1058,8 @@ impl Shell {
         }
     }
 
-    /// Opens the command palette with its filter field focused.
-    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the command palette with its filter field focused. With `requests_only` (Ctrl+P), it offers Requests only.
+    fn open_palette(&mut self, requests_only: bool, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| TextInput::new("", "Type a command or a request name", cx));
         let subscription = cx.subscribe(&input, |this: &mut Shell, input, _: &Changed, cx| {
             let text = input.read(cx).text().to_string();
@@ -1017,7 +1069,7 @@ impl Shell {
             cx.notify();
         });
         input.focus_handle(cx).focus(window);
-        self.palette = Some(PaletteState { input, query: String::new(), _subscription: subscription });
+        self.palette = Some(PaletteState { input, query: String::new(), requests_only, _subscription: subscription });
         cx.notify();
     }
 
@@ -1032,6 +1084,10 @@ impl Shell {
             }
         }
         self.shortcut_sheet_open = false;
+        self.settings_panel = None;
+        self.spec_dialog = None;
+        self.dump_choice = None;
+        self.import_report = None;
         cx.notify();
     }
 
@@ -1084,7 +1140,8 @@ impl Shell {
         let Some(query) = self.palette.as_ref().map(|palette| palette.query.clone()) else {
             return;
         };
-        let shown = palette::filter(&palette::entries(&self.model.workspace), &query);
+        let requests_only = self.palette.as_ref().is_some_and(|palette| palette.requests_only);
+        let shown = palette::filter(&palette::entries_for(&self.model.workspace, requests_only), &query);
         self.palette = None;
         let Some(entry) = shown.into_iter().nth(index) else {
             cx.notify();
@@ -1120,7 +1177,7 @@ impl Shell {
     /// The palette: its filter field over the first ten entries it matches. None while it is closed.
     fn palette_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
         let palette = self.palette.as_ref()?;
-        let shown = palette::filter(&palette::entries(&self.model.workspace), &palette.query);
+        let shown = palette::filter(&palette::entries_for(&self.model.workspace, palette.requests_only), &palette.query);
         let rows: Vec<_> = shown
             .iter()
             .take(10)
@@ -1231,91 +1288,6 @@ impl Shell {
         cx.notify();
     }
 
-    /// Asks for a Postman export and imports it: its Collection, Environment or globals are added to the Workspace,
-    /// and the Workspace is saved with the next save. Nothing is written by the import itself.
-    fn import_postman(&mut self, cx: &mut Context<Self>) {
-        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose a Postman export".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = picked.await else {
-                return;
-            };
-            let Some(path) = paths.into_iter().next() else {
-                return;
-            };
-            let file_name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-            this.update(cx, |shell, cx| match std::fs::read_to_string(&path) {
-                Ok(text) => shell.finish_import(&text, &file_name, cx),
-                Err(error) => {
-                    shell.notice = Some((format!("The file could not be read: {error}"), true));
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Imports a Postman export, or else an Insomnia export, into the Workspace.
-    fn finish_import(&mut self, text: &str, file_name: &str, cx: &mut Context<Self>) {
-        let postman_error = match postman::import(text, file_name) {
-            Ok(result) => {
-                if let Some(collection) = result.collection {
-                    let id = collection.id.clone();
-                    self.model.workspace.collections.push(collection);
-                    self.state.mark_unsaved(&id);
-                }
-                if let Some(environment) = result.environment {
-                    let id = environment.id.clone();
-                    self.model.workspace.environments.push(environment);
-                    self.state.mark_unsaved(&id);
-                }
-                if let Some(globals) = result.globals {
-                    self.model.workspace.globals.extend(globals);
-                }
-                let problems = result.issues.len();
-                let text = if problems == 0 {
-                    format!("{} Save to keep it.", result.summary)
-                } else {
-                    format!("{} {problems} item(s) could not be carried over. Save to keep the import.", result.summary)
-                };
-                self.notice = Some((text, problems > 0));
-                cx.notify();
-                return;
-            }
-            Err(error) => error,
-        };
-        match insomnia::import(text, file_name) {
-            Ok(result) => {
-                for workspace in result.workspaces {
-                    let id = workspace.collection.id.clone();
-                    self.model.workspace.collections.push(workspace.collection);
-                    self.state.mark_unsaved(&id);
-                    for environment in workspace.environments {
-                        let id = environment.id.clone();
-                        self.model.workspace.environments.push(environment);
-                        self.state.mark_unsaved(&id);
-                    }
-                }
-                let problems = result.issues.len();
-                let text = if problems == 0 {
-                    format!("{} Save to keep it.", result.summary)
-                } else {
-                    format!("{} {problems} item(s) could not be carried over. Save to keep the import.", result.summary)
-                };
-                self.notice = Some((text, problems > 0));
-            }
-            Err(_) => {
-                self.notice = Some((format!("The file is not a Postman or Insomnia export. {postman_error}"), true));
-            }
-        }
-        cx.notify();
-    }
-
     /// Rereads the folder from disk, for when it changed outside the app. Unsaved edits would be lost, so with unsaved
     /// changes the first click only warns, and the second reloads.
     fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
@@ -1388,8 +1360,8 @@ impl Shell {
         let workspace = self.model.workspace.clone();
         self.notice = Some((format!("Running {name}…"), false));
         cx.notify();
+        let sender = self.sender.clone();
         let work = cx.background_executor().spawn(async move {
-            let sender = RequestSender::new();
             let options = RunOptions { collection_name: Some(name), ..Default::default() };
             match CollectionRunner::new(&sender).run(&workspace, &options) {
                 Ok(report) => {
@@ -1624,8 +1596,9 @@ impl Shell {
         let workspace = self.model.workspace.clone();
         let environment = self.state.active_environment_id().map(str::to_string);
         let worker = shared.clone();
+        let sender = self.sender.clone();
         let work = cx.background_executor().spawn(async move {
-            bulk_page::run(&workspace, &item_id, environment.as_deref(), &ids, "", 1, &worker)
+            bulk_page::run(&workspace, &item_id, environment.as_deref(), &ids, "", 1, &sender, &worker)
         });
         cx.spawn(async move |this, cx| {
             loop {
@@ -2069,7 +2042,10 @@ impl Shell {
                 },
             )));
         row = row.child(Self::small_button(SharedString::from("tree-import"), "Import".to_string()).on_click(cx.listener(
-            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.import_postman(cx),
+            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.import_files(cx),
+        )));
+        row = row.child(Self::small_button(SharedString::from("tree-openapi"), "From OpenAPI".to_string()).on_click(cx.listener(
+            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.open_spec_dialog(cx),
         )));
         row = row.child(Self::small_button(SharedString::from("tree-bulk"), "Bulk run".to_string()).on_click(cx.listener(
             |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.open_bulk(cx),
@@ -2220,7 +2196,7 @@ impl Shell {
     /// The method, the URL and the Send button, in one control. The URL shows its placeholders as chips until it is
     /// clicked, and is then a text field showing the text as written.
     fn url_bar(&self, request: &ApiRequest, scope: &[KeyValue], url_focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let sending = matches!(self.selected_response(), Some(ResponseView::Sending));
+        let sending = matches!(self.selected_response(), Some(ResponseView::Sending(_)));
         let url_area = div().id("url-field").flex_1().h_full().flex().flex_row().items_center().px_3().overflow_hidden().font_family(MONO);
         let url_area = match self.inputs.as_ref().filter(|_| url_focused) {
             Some(inputs) => url_area.child(inputs.url.clone()),
@@ -2297,7 +2273,7 @@ impl Shell {
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(ACCENT_HOVER)))
-                    .child(if sending { "Sending…" } else { "Send" })
+                    .child(if sending { "Cancel" } else { "Send" })
                     .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
                         this.send_selected(cx);
                         cx.notify();
@@ -3113,7 +3089,8 @@ impl Shell {
 
         let sent = match self.selected_response() {
             None => return pane.child(muted_note("Send the request to see its response here.")),
-            Some(ResponseView::Sending) => return pane.child(muted_note("Sending…")),
+            Some(ResponseView::Sending(_)) => return pane.child(muted_note("Sending… Press Cancel or Ctrl+Enter to stop.")),
+            Some(ResponseView::Cancelled) => return pane.child(muted_note("Cancelled. Send again to see a response.")),
             Some(ResponseView::Failed(message)) => {
                 return pane.child(div().text_color(rgb(ERROR)).child(format!("The request failed: {message}")));
             }
@@ -3321,6 +3298,30 @@ impl Shell {
     }
 }
 
+/// A copy of the Request with its Secrets filled in, for sending: the Secret headers and the auth Secrets. Returns
+/// whether a Secret the Request needs is not stored. `stored` is the Request as the window holds it, before
+/// Variables were applied to `request`. The stored Request is never changed.
+fn fill_secrets(secrets: &BTreeMap<String, SecretValue>, mut request: ApiRequest, stored: &ApiRequest) -> (ApiRequest, bool) {
+    let id = request.id.clone();
+    let lookup = |key: &str| secrets.get(key).map(|value| value.expose().to_string());
+    let mut missing = edit::fill_secret_headers(&mut request, stored, lookup);
+    if let Some(auth) = request.auth.as_mut() {
+        let field_and_target = match auth.kind.as_str() {
+            ricochet_core::models::auth_kinds::BEARER => Some(("token", &mut auth.token)),
+            ricochet_core::models::auth_kinds::BASIC => Some(("password", &mut auth.password)),
+            ricochet_core::models::auth_kinds::API_KEY => Some(("keyValue", &mut auth.key_value)),
+            _ => None,
+        };
+        if let Some((field, target)) = field_and_target {
+            match lookup(&auth_key(&id, field)) {
+                Some(value) => *target = value,
+                None => missing = true,
+            }
+        }
+    }
+    (request, missing)
+}
+
 /// The Secrets for this run: the vault, the Secrets read from it, and the reason the vault cannot be used, if it cannot.
 /// When there is a problem, nothing is saved, so the vault is never written over.
 struct VaultState {
@@ -3361,7 +3362,10 @@ impl Render for Shell {
             .on_action(cx.listener(|this: &mut Shell, _: &Save, _: &mut Window, cx: &mut Context<Shell>| this.save_workspace(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &NewRequest, _: &mut Window, cx: &mut Context<Shell>| this.add_request(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &OpenPalette, window: &mut Window, cx: &mut Context<Shell>| {
-                this.open_palette(window, cx)
+                this.open_palette(false, window, cx)
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &FindRequest, window: &mut Window, cx: &mut Context<Shell>| {
+                this.open_palette(true, window, cx)
             }))
             .on_action(cx.listener(|this: &mut Shell, _: &ClosePalette, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx)))
             .on_action(cx.listener(|this: &mut Shell, _: &CloseTab, _: &mut Window, cx: &mut Context<Shell>| {
@@ -3380,6 +3384,17 @@ impl Render for Shell {
                 this.state.step_tab(-1);
                 this.editing_environment = None;
                 this.tree_target = None;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &FocusUrl, window: &mut Window, cx: &mut Context<Shell>| {
+                if let Some(inputs) = &this.inputs {
+                    window.focus(&inputs.url.focus_handle(cx));
+                    inputs.url.update(cx, |input, cx| input.move_to_end(cx));
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this: &mut Shell, _: &SwitchEnvironment, _: &mut Window, cx: &mut Context<Shell>| {
+                this.environment_menu_open = true;
                 cx.notify();
             }))
             .on_action(cx.listener(|this: &mut Shell, _: &OpenShortcutSheet, _: &mut Window, cx: &mut Context<Shell>| {
@@ -3415,13 +3430,20 @@ impl Render for Shell {
             .children(self.palette_overlay(cx))
             .children(self.bulk_overlay(cx))
             .children(self.mock_overlay(cx))
+            .children(self.settings_overlay(cx))
+            .children(self.spec_overlay(cx))
+            .children(self.dump_choice_overlay(cx))
+            .children(self.import_report_overlay(cx))
             .children(self.shortcut_sheet_overlay())
             .children(self.outside_change_banner(cx))
     }
 }
 
 fn main() {
-    let folder = folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
+    // Crashes are written to a local log only, never sent anywhere (ADR 0088). Set up first, so early crashes are caught too.
+    ricochet_app::crash_report::install(default_personal_directory());
+
+    let folder =folder_from(std::env::args().nth(1).as_deref(), std::env::var("RICOCHET_DATA").ok().as_deref());
     let (model, store) = ShellModel::open(folder);
     let vault = open_vault();
 
@@ -3432,6 +3454,9 @@ fn main() {
             KeyBinding::new("secondary-s", Save, None),
             KeyBinding::new("secondary-n", NewRequest, None),
             KeyBinding::new("secondary-k", OpenPalette, None),
+            KeyBinding::new("secondary-p", FindRequest, None),
+            KeyBinding::new("secondary-l", FocusUrl, None),
+            KeyBinding::new("secondary-e", SwitchEnvironment, None),
             KeyBinding::new("escape", ClosePalette, None),
             KeyBinding::new("f1", OpenShortcutSheet, None),
             KeyBinding::new("secondary-w", CloseTab, None),

@@ -234,6 +234,11 @@ fn normalize_request(mut request: ApiRequest) -> ApiRequest {
     request
 }
 
+/// Mirrors `WorkspaceFolder.LooksLikeWorkspace`: the marker file exists, or the collections folder does.
+pub fn looks_like_workspace(root: &Path) -> bool {
+    root.join(MARKER_FILE_NAME).is_file() || root.join("collections").is_dir()
+}
+
 /// The shareable part of a Workspace, as one file per item. See docs/adr/0003-git-friendly-workspace-files.md.
 #[derive(Debug)]
 pub struct WorkspaceFolder {

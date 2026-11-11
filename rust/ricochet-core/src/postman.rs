@@ -2,9 +2,9 @@
 //! Collections, Environments and Globals into the models, and lists in an [`ImportResult`] anything that
 //! could not be carried over, so nothing is dropped silently.
 //!
-//! Not ported yet: the test-script translator (`PostmanTestTranslator.cs`, ADR 0037). Test scripts are
-//! therefore always kept as scripts and reported as not translated, where the C# app may turn some into
-//! Assertions. Scripts are never run.
+//! A Request's own test script is translated into Assertions where it can be (`postman_test_translator`,
+//! ADR 0037). Any other script, and a test script that is not fully understood, is kept as a script and
+//! reported as not translated. Scripts are never run.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -19,6 +19,7 @@ use crate::models::{
     ApiEnvironment, ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, StoredScript,
     auth_kinds,
 };
+use crate::postman_test_translator::try_translate;
 
 /// The most unpacked data a data dump may hold, so a small ZIP cannot fill memory.
 pub const MAX_DUMP_BYTES: u64 = 100 * 1024 * 1024;
@@ -247,7 +248,7 @@ impl CollectionReader {
         let auth = self.read_auth(root, &name, None);
         let items = self.read_items(root, &name, auth.as_ref());
         let variables = self.read_collection_variables(root, &name);
-        let scripts = self.read_scripts(root, &name, false);
+        let scripts = self.read_scripts(root, &name, None);
 
         if self.examples > 0 {
             self.issues.push(issue(
@@ -328,7 +329,7 @@ impl CollectionReader {
 
                 let auth = self.read_auth(item, &path, inherited);
                 let children = self.read_items(item, &path, auth.as_ref());
-                let scripts = self.read_scripts(item, &path, false);
+                let scripts = self.read_scripts(item, &path, None);
                 items.push(CollectionItem {
                     name,
                     children,
@@ -358,7 +359,7 @@ impl CollectionReader {
         self.examples += elements(item, "response").len();
 
         let source = &item["request"];
-        let request = if let Value::String(url) = source {
+        let mut request = if let Value::String(url) = source {
             ApiRequest {
                 name: name.clone(),
                 url: url.clone(),
@@ -370,7 +371,7 @@ impl CollectionReader {
         };
 
         self.note_dynamic_variables(&request, path);
-        let scripts = self.read_scripts(item, path, true);
+        let scripts = self.read_scripts(item, path, Some(&mut request));
         CollectionItem {
             name,
             request: Some(request),
@@ -636,13 +637,13 @@ impl CollectionReader {
         }
     }
 
-    // Only a Request's own test script is meant to be translated (ADR 0037), which is not ported yet.
-    // Every script is kept, and the ones that would have been translated are reported as not translated.
+    // Only a Request's own test script is translated (ADR 0037). Folder and Collection scripts, and any test
+    // script that is not fully understood, are kept and reported. `request` is None for those owners.
     fn read_scripts(
         &mut self,
         owner: &Value,
         location: &str,
-        is_request: bool,
+        mut request: Option<&mut ApiRequest>,
     ) -> Vec<StoredScript> {
         let mut scripts = Vec::new();
         for entry in elements(owner, "event") {
@@ -656,11 +657,20 @@ impl CollectionReader {
             }
 
             let listen = text(entry, "listen").unwrap_or_else(|| "script".to_string());
-            let detail = if is_request && listen == "test" {
-                format!("{listen}, not translated: the test translator is not ported yet")
-            } else {
-                listen.clone()
-            };
+            let mut detail = listen.clone();
+            if listen == "test"
+                && let Some(request) = request.as_deref_mut()
+            {
+                match try_translate(&source) {
+                    Ok(checks) => {
+                        let mut all = request.assertions.take().unwrap_or_default();
+                        all.extend(checks);
+                        request.assertions = Some(all);
+                        continue;
+                    }
+                    Err(reason) => detail = format!("{listen}, not translated: {reason}"),
+                }
+            }
 
             scripts.push(StoredScript { listen, source });
             self.issues
@@ -1086,4 +1096,36 @@ fn kind_of(result: &ImportResult) -> EntryKind {
     } else {
         EntryKind::Globals
     }
+}
+
+/// Imports never overwrite an existing item of the same name, so a clash gets a numbered name such as
+/// "Shop (2)". Case is ignored. Ports `WorkspaceImport.UniqueName`.
+pub fn unique_name<'a>(name: &str, existing: impl IntoIterator<Item = &'a str>) -> String {
+    let taken: std::collections::HashSet<String> = existing.into_iter().map(str::to_lowercase).collect();
+    if !taken.contains(&name.to_lowercase()) {
+        return name.to_string();
+    }
+    (2..)
+        .map(|n| format!("{name} ({n})"))
+        .find(|candidate| !taken.contains(&candidate.to_lowercase()))
+        .expect("the range is unbounded")
+}
+
+/// Adds imported globals to the existing ones. A global with the same name is replaced, and its name is listed when
+/// its value changed. Ports `WorkspaceImport.MergeGlobals`.
+pub fn merge_globals(existing: &[KeyValue], incoming: &[KeyValue]) -> (Vec<KeyValue>, Vec<String>) {
+    let mut merged = existing.to_vec();
+    let mut overwritten = Vec::new();
+    for variable in incoming {
+        match merged.iter().position(|v| v.key == variable.key) {
+            None => merged.push(variable.clone()),
+            Some(index) => {
+                if merged[index].value != variable.value {
+                    overwritten.push(variable.key.clone());
+                }
+                merged[index] = variable.clone();
+            }
+        }
+    }
+    (merged, overwritten)
 }
