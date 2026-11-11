@@ -155,6 +155,21 @@ impl AppState {
 }
 
 impl AppState {
+    /// Opens the Requests that were open last time, in their order, and shows the one that was showing, or the first
+    /// when that one is gone (ADR 0041). Ids of Requests no longer in the Workspace, and repeats, are skipped, as
+    /// `RestoreTabs` does in the C# app. Tabs already open stay open.
+    pub fn restore_tabs(&mut self, workspace: &Workspace, open_tabs: &[String], active_tab: Option<&str>) {
+        for id in open_tabs {
+            if !self.is_open(id) && crate::tree::find_request(workspace, id).is_some() {
+                self.open_tabs.push(id.clone());
+            }
+        }
+        let active = active_tab.filter(|id| self.is_open(id)).map(str::to_string).or_else(|| self.open_tabs.first().cloned());
+        if let Some(active) = active {
+            self.activate_tab(&active);
+        }
+    }
+
     /// Closes every open tab. Nothing is selected afterwards.
     pub fn close_all_tabs(&mut self) {
         self.open_tabs.clear();

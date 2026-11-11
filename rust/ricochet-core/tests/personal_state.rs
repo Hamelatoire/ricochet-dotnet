@@ -306,3 +306,41 @@ fn the_workspace_folder_is_saved_and_removed_keeping_other_keys() {
     assert!(!text.contains("workspaceFolder"), "{text}");
     assert!(text.contains("\"theme\": \"dark\""), "{text}");
 }
+
+#[test]
+fn saving_the_theme_changes_only_the_theme_key() {
+    let dir = TempDir::new("theme");
+    write_state(dir.path(), r#"{"activeEnvironmentId":"prod","futureKey":{"kept":true},"settings":{"requestTimeoutSeconds":5}}"#);
+
+    save_theme(dir.path(), Some("light")).unwrap();
+
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(saved["theme"], serde_json::json!("light"));
+    assert_eq!(saved["activeEnvironmentId"], serde_json::json!("prod"));
+    assert_eq!(saved["futureKey"], serde_json::json!({ "kept": true }));
+    assert_eq!(saved["settings"], serde_json::json!({ "requestTimeoutSeconds": 5 }));
+    assert_eq!(load(dir.path()).state.theme.as_deref(), Some("light"));
+}
+
+#[test]
+fn saving_no_theme_writes_null_so_the_system_is_followed() {
+    let dir = TempDir::new("theme-none");
+
+    save_theme(dir.path(), Some("dark")).unwrap();
+    save_theme(dir.path(), None).unwrap();
+
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(saved["theme"], serde_json::Value::Null);
+    assert_eq!(load(dir.path()).state.theme, None);
+}
+
+#[test]
+fn saving_the_theme_leaves_a_file_that_is_not_an_object_alone() {
+    let dir = TempDir::new("theme-bad");
+    write_state(dir.path(), "[1, 2]");
+
+    assert!(save_theme(dir.path(), Some("dark")).is_err());
+    assert_eq!(fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap(), "[1, 2]");
+}

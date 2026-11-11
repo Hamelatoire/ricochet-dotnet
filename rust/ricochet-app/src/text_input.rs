@@ -15,9 +15,6 @@ use unicode_segmentation::UnicodeSegmentation;
 actions!(text_input, [Backspace, Delete, Left, Right, SelectLeft, SelectRight, SelectAll, Home, End, Paste, Cut, Copy]);
 
 const KEY_CONTEXT: &str = "TextInput";
-const CARET: u32 = 0x4c8dff;
-const SELECTION: u32 = 0x4c8dff55;
-const PLACEHOLDER: u32 = 0x6b727d;
 
 /// Emitted after the text changes, by typing, deleting, cutting or pasting.
 pub struct Changed;
@@ -420,7 +417,7 @@ impl Element for TextElement {
         let is_placeholder = content.is_empty();
         let masked = input.masked;
         let (display_text, text_color): (SharedString, _) = if is_placeholder {
-            (input.placeholder.clone(), rgb(PLACEHOLDER).into())
+            (input.placeholder.clone(), rgb(crate::theme::active().placeholder).into())
         } else if masked {
             (SharedString::from(BULLET.to_string().repeat(content.chars().count())), style.color)
         } else {
@@ -459,13 +456,13 @@ impl Element for TextElement {
         let x_for = |index: usize| if is_placeholder { px(0.) } else { line.x_for_index(to_display(index)) };
         let (selection, cursor) = if selected_range.is_empty() {
             let caret = Bounds::new(point(bounds.left() + x_for(cursor), bounds.top()), size(px(1.5), bounds.bottom() - bounds.top()));
-            (None, Some(fill(caret, rgb(CARET))))
+            (None, Some(fill(caret, rgb(crate::theme::active().caret))))
         } else {
             let highlight = Bounds::from_corners(
                 point(bounds.left() + x_for(selected_range.start), bounds.top()),
                 point(bounds.left() + x_for(selected_range.end), bounds.bottom()),
             );
-            (Some(fill(highlight, rgba(SELECTION))), None)
+            (Some(fill(highlight, rgba(crate::theme::active().selection))), None)
         };
         PrepaintState { line: Some(line), cursor, selection }
     }

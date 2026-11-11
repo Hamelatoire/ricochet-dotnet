@@ -4,7 +4,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use gpui::{ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, div, prelude::*, px, rgb};
+use gpui::{ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, div, prelude::*, px};
+use ricochet_app::theme::{self, ThemeChoice, rgb};
 use ricochet_app::import_page::{self, Applied};
 use ricochet_app::settings_page::{self, TextSetting};
 use ricochet_app::shell::{self, FolderChoice, FolderStep, ShellModel};
@@ -126,6 +127,57 @@ impl Shell {
         }
 
         self.settings_panel = Some(SettingsPanel { search, query, inputs, pending_copy: None, errors: HashMap::new(), _subscriptions: subscriptions });
+        cx.notify();
+    }
+
+    /// System, Light and Dark side by side, with the one in use marked. Choosing one applies and saves it at once.
+    fn theme_control(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let mut row = div().flex().flex_row().gap_1();
+        for choice in ThemeChoice::ALL {
+            let on = choice == self.theme_choice;
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("settings-theme-{}", choice.name().to_lowercase())))
+                    .w(px(72.0))
+                    .flex()
+                    .justify_center()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(if on { ACCENT } else { BORDER }))
+                    .bg(rgb(if on { ROW_HOVER } else { FIELD_BG }))
+                    .text_xs()
+                    .text_color(rgb(if on { TEXT } else { MUTED }))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(ROW_HOVER)))
+                    .child(choice.name())
+                    .on_click(cx.listener(move |this: &mut Shell, _: &ClickEvent, window: &mut Window, cx: &mut Context<Shell>| {
+                        this.choose_theme(choice, window, cx)
+                    })),
+            );
+        }
+        row.into_any_element()
+    }
+
+    /// Uses this theme from now on and saves it in state.json, changing only the `theme` key (ADR 0013).
+    fn choose_theme(&mut self, choice: ThemeChoice, window: &mut Window, cx: &mut Context<Self>) {
+        if choice == self.theme_choice {
+            return;
+        }
+        self.theme_choice = choice;
+        if let Some(dir) = self.personal_dir.as_deref() {
+            if let Err(error) = personal_state::save_theme(dir, choice.stored()) {
+                self.notice = Some((format!("Your theme could not be saved, so it lasts only until you close Ricochet: {error}"), true));
+            }
+        }
+        self.apply_theme(window, cx);
+    }
+
+    /// Draws the window in the chosen theme. System reads the window's light or dark appearance from the system.
+    pub(super) fn apply_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let system_is_dark = matches!(window.appearance(), gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark);
+        theme::set_dark(self.theme_choice.is_dark(system_is_dark));
+        window.refresh();
         cx.notify();
     }
 
@@ -270,8 +322,24 @@ impl Shell {
             page = page.child(div().text_sm().text_color(rgb(ERROR)).child(format!("Requests cannot be sent with these settings: {problem}")));
         }
 
+        let theme_matches = theme::theme_setting_matches(&panel.query);
+        if theme_matches {
+            page = page
+                .child(div().pt_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(rgb(FAINT)).child("APPEARANCE"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .py_1()
+                        .child(div().text_sm().child(theme::THEME_SETTING_NAME))
+                        .child(div().text_xs().text_color(rgb(MUTED)).child(theme::THEME_SETTING_HELP))
+                        .child(self.theme_control(cx)),
+                );
+        }
+
         let sections = settings_page::visible_sections(&panel.query);
-        if sections.is_empty() {
+        if sections.is_empty() && !theme_matches {
             page = page.child(muted_note("No setting matches the search."));
         }
         for (section, items) in sections {
