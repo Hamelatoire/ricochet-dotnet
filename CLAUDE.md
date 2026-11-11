@@ -4,41 +4,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Ricochet
 
-A fast, native desktop HTTP client built with C#, Avalonia and Native AOT, plus a `ricochet` CLI for CI. It can take over work exported from Postman.
+A fast, native desktop HTTP client built with Rust and GPUI, plus a `ricochet` CLI for CI. It can take over work exported from Postman and Insomnia. It was rebuilt from C# ([ADR 0091](docs/adr/0091-rebuild-in-rust-with-gpui.md)), and the C# code is gone from this repository.
 
-Use the terms in `GLOSSARY.md`, such as Request, Collection, Workspace and Secret. Check `docs/adr/` before changing how something works: each ADR records why, and one marked `proposed` isn't built.
+Use the terms in `GLOSSARY.md`, such as Request, Collection, Workspace and Secret. Check `docs/adr/` before changing how something works: each ADR records why, and one marked `proposed` isn't built. ADRs written before the rebuild describe the C# code, so read them for the reasons, not the file names.
 
 ## Commands
 
 ```bash
-dotnet run --project src/Ricochet.App
-dotnet run --project src/Ricochet.Cli -- run --env Staging --xunit results.xml
-dotnet test --project tests/Ricochet.Core.Tests
-dotnet test --project tests/Ricochet.Core.Tests -- --filter-class '*VariablesInRequestsTests'
-dotnet test --project tests/Ricochet.Core.Tests -- --filter-method '*Bearer*'
-dotnet publish src/Ricochet.App -c Release -r win-x64 -o publish/win-x64
+cargo run --manifest-path rust/ricochet-app/Cargo.toml
+cargo run --manifest-path rust/ricochet-cli/Cargo.toml -- run --env Staging --xunit results.xml
+cargo test --manifest-path rust/ricochet-core/Cargo.toml
+cargo test --manifest-path rust/ricochet-core/Cargo.toml --test variables
+cargo test --manifest-path rust/ricochet-core/Cargo.toml bearer
+cargo build --release --manifest-path rust/ricochet-app/Cargo.toml
 ```
 
-- `dotnet test` needs `--project`, because `global.json` selects Microsoft.Testing.Platform. Filters go after `--`.
-- Run `dotnet publish` on the operating system you're building for, because Native AOT doesn't cross-compile. A normal build won't show AOT problems, so publish after changing anything that serializes or uses reflection.
-- If linking fails on Windows with `'vswhere.exe' is not recognized`, add `C:\Program Files (x86)\Microsoft Visual Studio\Installer` to `PATH`.
-- No linter or formatter is configured. Tests cover `Ricochet.Core` only, so check App changes in the running app.
+- The three crates under `rust/` are not a Cargo workspace, so pass `--manifest-path` or run Cargo inside the crate.
+- `ricochet-core` and `ricochet-cli` have tests, and so does `ricochet-app` for the logic behind the window. Check changes to what the window draws in the running app.
+- `.github/workflows/rust-vault.yml` tests the Secret vault on each OS, and it needs a Secret Service on Linux.
+- No linter or formatter is configured.
 
 ## Architecture
 
-`Ricochet.Core` holds all behaviour. `Ricochet.App` (Avalonia, CommunityToolkit.Mvvm, compiled bindings) and `Ricochet.Cli` are thin layers over it, and don't reference each other.
+`ricochet-core` holds all behaviour. `ricochet-app` (GPUI) and `ricochet-cli` are thin layers over it, and don't reference each other.
 
-- **Sending:** `VariableResolver` layers the scopes and replaces `{{name}}`, then `RequestSender` sends the result. Its `FindPlaceholders` lists what stayed unresolved. The app warns and still sends, while `CollectionRunner` fails the Request without sending it.
-- **Running:** `CollectionRunner` runs Requests in order and checks `Assertions`, and never changes the Workspace. Captured values stay in memory and reset for each Collection. The CLI maps results to exit codes: `0` passed, `1` a Request or check failed, `2` the run couldn't happen.
-- **Storage:** `WorkspaceStore` keeps two homes apart. `WorkspaceFolder` holds the shareable files, one JSON file per Request, and watches for outside changes such as a `git pull`. Personal `state.json` and `history.json` stay in app data, or in `RICOCHET_DATA` if set.
-- **Secrets:** `WorkspaceSecrets` takes Secrets out before saving and restores them after loading. `SecretVaults` picks the store for each OS: DPAPI, Keychain or Secret Service. Only Windows has been tested. `SecretRules` finds credentials typed in plain text, and hides them in History.
-- **Import:** `PostmanImporter` is a one-time conversion into the Core model, and reports whatever it couldn't carry over. Scripts are kept but never run.
+- **Sending:** `variables.rs` layers the scopes and replaces `{{name}}`, then `send.rs` sends the result. `find_placeholders` lists what stayed unresolved. The app warns and still sends, while `collection_runner.rs` fails the Request without sending it.
+- **Running:** `collection_runner.rs` runs Requests in order and checks `assertions.rs`, and never changes the Workspace. Captured values stay in memory and reset for each Collection. The CLI maps results to exit codes: `0` passed, `1` a Request or check failed, `2` the run couldn't happen.
+- **Storage:** `store.rs` keeps two homes apart. The Workspace folder holds the shareable files, one JSON file per Request, and the app watches for outside changes such as a `git pull`. Personal `state.json` and `history.json` stay in app data, or in `RICOCHET_DATA` if set (`personal_state.rs`, `history.rs`).
+- **Secrets:** `workspace_secrets.rs` takes Secrets out before saving and restores them after loading. `secrets_os.rs` picks the store for each OS: DPAPI, Keychain or Secret Service. Only Windows has been tested. `external_secrets.rs` handles Secrets that live in another store. Credentials typed in plain text are found and hidden in History.
+- **Import:** `postman.rs` and `insomnia.rs` are one-time conversions into the core model, and report whatever they couldn't carry over. Scripts are kept but never run.
 
 ## Rules the code depends on
 
-- **JSON uses source generation:** a new type that gets saved must be registered on `WorkspaceJsonContext` in `WorkspaceStore.cs`, or it fails under Native AOT.
-- **Saved records use `set`, not `init`:** the generator nulls init-only properties missing from a file, which bypasses their defaults.
-- **Keep file diffs small:** optional fields stay null when empty, so they add nothing to a Request's file, as `Assertions` and `Captures` do.
+- **Saved records use serde defaults:** a field missing from a file gets its default (`#[serde(default)]`), so an older file still loads. Add a default to every new field of a saved type.
+- **Keep file diffs small:** optional fields stay out of a Request's file when empty (`skip_serializing_if`), as `assertions` and `captures` do.
 - **Only touch what was understood:** a save must change or delete only files the app read successfully or wrote itself. Files with merge conflicts are reported and left alone.
 - **No traffic the user didn't ask for:** [ADR 0005](docs/adr/0005-local-first.md) rules out accounts, cloud storage, telemetry and background network calls.
 - **Secrets stay out of the Workspace and the output:** they never go in Workspace files, and the CLI masks them in its output and reports. Captured values are never written to a file.
@@ -55,7 +54,7 @@ Never test against real user data. Set `RICOCHET_DATA` to a temporary folder bef
 
 ## Pull requests
 
-- `main` only accepts pull requests. `Check win-x64`, `Check linux-x64` and `Check osx-arm64` from `.github/workflows/pr.yml` must pass, and a ruleset on GitHub requires them by name, so renaming that job means updating the ruleset.
+- `main` only accepts pull requests. `Check win-x64`, `Check linux-x64` and `Check osx-arm64` from `.github/workflows/pr.yml` must pass, and a ruleset on GitHub requires them by name, so renaming that job means updating the ruleset. They run the Rust tests and builds.
 - Every merge to `main` publishes the next patch release, including merges that only change docs. To choose the version, push a tag such as `v0.2.0`.
 - Every pull request must include screenshots of what it changes, taken from the running app. Show the page before and after when the change alters something that already exists.
 - If a pull request changes nothing visible, such as documentation or build files, say so in place of the screenshots.

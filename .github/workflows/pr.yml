@@ -33,24 +33,25 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Install the native linker
+      - name: Install the Linux libraries the window needs
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
-
-      - name: Test
-        run: dotnet test --project tests/Ricochet.Core.Tests -c Release
-
-      - name: Publish
         run: |
-          dotnet publish src/Ricochet.App -c Release -r ${{ matrix.rid }} -o out/app
-          dotnet publish src/Ricochet.Cli -c Release -r ${{ matrix.rid }} -o out/cli
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libvulkan-dev libxcb1-dev libfontconfig1-dev libasound2-dev libssl-dev
 
-      - name: Check the CLI starts
-        run: out/cli/ricochet --help
+      - name: Test the core
+        run: cargo test --locked --manifest-path rust/ricochet-core/Cargo.toml
+
+      - name: Test and build the command line
+        run: |
+          cargo test --locked --manifest-path rust/ricochet-cli/Cargo.toml
+          cargo build --release --locked --manifest-path rust/ricochet-cli/Cargo.toml
+          rust/ricochet-cli/target/release/ricochet --help
+
+      - name: Test and build the app
+        run: |
+          cargo test --locked --manifest-path rust/ricochet-app/Cargo.toml
+          cargo build --release --locked --manifest-path rust/ricochet-app/Cargo.toml
 
       # The installer is built here too, so a change that breaks it is found before it merges.
       - name: Build the Windows installer
@@ -58,6 +59,8 @@ jobs:
         env:
           MSYS_NO_PATHCONV: "1"
         run: |
-          rm -f out/app/*.pdb out/cli/*.pdb
+          mkdir -p out/app out/cli
+          cp rust/ricochet-app/target/release/ricochet-app.exe out/app/Ricochet.exe
+          cp rust/ricochet-cli/target/release/ricochet.exe out/cli/ricochet.exe
           choco install innosetup --no-progress -y
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=0.0.0" installer/ricochet.iss

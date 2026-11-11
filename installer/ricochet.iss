@@ -1,12 +1,12 @@
 ; Builds the Windows installer for Ricochet with Inno Setup 6.
 ;
-; It packages what `dotnet publish` produced, so publish first:
-;   dotnet publish src/Ricochet.App -c Release -r win-x64 -o out/app
-;   dotnet publish src/Ricochet.Cli -c Release -r win-x64 -o out/cli
+; It packages the release builds of the app and the command line, so build and copy them first:
+;   cargo build --release --manifest-path rust/ricochet-app/Cargo.toml
+;   cargo build --release --manifest-path rust/ricochet-cli/Cargo.toml
+;   copy rust\ricochet-app\target\release\ricochet-app.exe out\app\Ricochet.exe
+;   copy rust\ricochet-cli\target\release\ricochet.exe out\cli\ricochet.exe
 ;   ISCC /DAppVersion=0.2.0 /DVersionTag=v0.2.0 installer\ricochet.iss
 ;
-; The Rust beta is packed when out\rust is there (see the release workflow). It goes in a rust-beta folder, with its own
-; Start menu entry, and is skipped when out\rust is missing, so the installer builds without it.
 ; The installer is written to dist\. The release workflow does these steps, and so does the pull request check,
 ; so a change that breaks the installer is found before it merges.
 
@@ -40,7 +40,7 @@ WizardStyle=modern
 UninstallDisplayName=Ricochet
 UninstallDisplayIcon={app}\Ricochet.exe
 ; The icon of the setup program itself, and of its window.
-SetupIconFile=..\src\Ricochet.App\Assets\ricochet.ico
+SetupIconFile=..\rust\ricochet-app\assets\ricochet.ico
 ; Closes a running Ricochet while updating it, so its files can be replaced.
 CloseApplications=yes
 RestartApplications=no
@@ -58,13 +58,10 @@ Name: "addtopath"; Description: "Add the &ricochet command to my PATH, to run te
 Source: "..\out\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; The command line tool goes in its own folder, because its file name differs from the app's only by case.
 Source: "..\out\cli\*"; DestDir: "{app}\cli"; Flags: ignoreversion recursesubdirs createallsubdirs
-; The Rust beta: a separate program, in its own folder, so its file does not replace the C# app's.
-Source: "..\out\rust\*"; DestDir: "{app}\rust-beta"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\Ricochet"; Filename: "{app}\Ricochet.exe"
 Name: "{autodesktop}\Ricochet"; Filename: "{app}\Ricochet.exe"; Tasks: desktopicon
-Name: "{autoprograms}\Ricochet (Rust beta)"; Filename: "{app}\rust-beta\Ricochet-Rust-Beta.exe"; Check: RustBetaInstalled
 
 [Registry]
 ; Always the current user's PATH, so the installer never edits the system PATH.
@@ -74,12 +71,6 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; Value
 Filename: "{app}\Ricochet.exe"; Description: "Start Ricochet"; Flags: nowait postinstall skipifsilent
 
 [Code]
-// The Start menu entry for the Rust beta is only made when the beta was packed.
-function RustBetaInstalled: Boolean;
-begin
-  Result := FileExists(ExpandConstant('{app}\rust-beta\Ricochet-Rust-Beta.exe'));
-end;
-
 // True when the folder isn't already on the current user's PATH, so installing twice adds it once.
 function NeedsAddPath(Folder: string): Boolean;
 var
