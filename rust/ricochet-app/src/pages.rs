@@ -444,12 +444,15 @@ impl Shell {
                 .child(title("Import"))
                 .child(muted_note("The imported items are not on disk yet. Save to keep them."))
                 .child(div().text_xs().font_family(MONO).text_color(rgb(TEXT)).children(report.lines().map(|line| div().min_h(px(14.0)).child(line.to_string()))))
-                .child(Shell::small_button(SharedString::from("import-report-close"), "Close".to_string()).on_click(cx.listener(
-                    |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                        this.import_report = None;
-                        cx.notify();
-                    },
-                ))),
+                // In a row, so the dialog's column does not stretch the button across it.
+                .child(div().flex().flex_row().child(
+                    Shell::small_button(SharedString::from("import-report-close"), "Close".to_string()).on_click(cx.listener(
+                        |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                            this.import_report = None;
+                            cx.notify();
+                        },
+                    )),
+                )),
         )
     }
 
