@@ -49,16 +49,24 @@ impl BulkItemResult {
     }
 }
 
-/// The run cannot start, because it was asked for no threads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why the run cannot start. Nothing has been sent when one of these is returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BulkRunError {
+    /// It was asked for no threads.
     NoThreads,
+    /// The Request never uses the placeholder, so every id would send the same request.
+    PlaceholderUnused(String),
 }
 
 impl fmt::Display for BulkRunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoThreads => f.write_str("At least one thread is needed."),
+            Self::PlaceholderUnused(placeholder) => write!(
+                f,
+                "Not started: the request doesn't use {{{{{placeholder}}}}}, so every id would send the same request. \
+                 Put {{{{{placeholder}}}}} in the URL, body or headers, or set the placeholder to the variable it uses."
+            ),
         }
     }
 }
@@ -119,7 +127,8 @@ impl<'a> BulkRunner<'a> {
     /// Returns true when every id was sent, and false when the run was stopped first.
     ///
     /// # Errors
-    /// Returns `BulkRunError::NoThreads` when `max_parallel` is zero.
+    /// Returns `BulkRunError::NoThreads` when `max_parallel` is zero, and `BulkRunError::PlaceholderUnused` when the
+    /// id would change nothing in the request, such as a placeholder of `id` for a URL that uses `{{productId}}`.
     pub fn run<F>(&self, run: &BulkRun<'_>, stop: &AtomicBool, on_result: F) -> Result<bool, BulkRunError>
     where
         F: FnMut(BulkItemResult) + Send,
@@ -129,6 +138,13 @@ impl<'a> BulkRunner<'a> {
         }
 
         let folder_scope = variables::folder_scope(run.collection, run.item_id);
+        // Two different ids must give two different requests. Checked through every scope, so a placeholder reached
+        // through another Variable, such as productId = {{id}}, counts as used.
+        let first = variables::apply(run.template, &Self::scope_for(run, &folder_scope, "ricochet-bulk-check-a"));
+        let second = variables::apply(run.template, &Self::scope_for(run, &folder_scope, "ricochet-bulk-check-b"));
+        if first == second {
+            return Err(BulkRunError::PlaceholderUnused(run.placeholder.to_string()));
+        }
         let next = AtomicUsize::new(0);
         let sent = AtomicUsize::new(0);
         let on_result = Mutex::new(on_result);
@@ -164,20 +180,25 @@ impl<'a> BulkRunner<'a> {
         Ok(sent.load(Ordering::SeqCst) == run.ids.len())
     }
 
-    fn run_one(&self, run: &BulkRun<'_>, folder_scope: &[KeyValue], id: &str, position: usize) -> BulkItemResult {
+    /// Every scope for one id, lowest priority first, with the id last so it wins.
+    fn scope_for(run: &BulkRun<'_>, folder_scope: &[KeyValue], id: &str) -> Vec<KeyValue> {
         let placeholder = [KeyValue::new(run.placeholder, id)];
         let environment_variables: &[KeyValue] = match run.environment {
             Some(environment) => &environment.variables,
             None => &[],
         };
-        let layered = variables::layer(&[
+        variables::layer(&[
             run.workspace.globals.as_slice(),
             run.collection.variables.as_slice(),
             folder_scope,
             environment_variables,
             run.overrides,
             placeholder.as_slice(),
-        ]);
+        ])
+    }
+
+    fn run_one(&self, run: &BulkRun<'_>, folder_scope: &[KeyValue], id: &str, position: usize) -> BulkItemResult {
+        let layered = Self::scope_for(run, folder_scope, id);
         // Secret references are read just before sending, and only the send uses the values (ADR 0025).
         let layered = match variables::resolve_references(run.template, &layered, &self.secrets) {
             Ok(with_references) => with_references,
