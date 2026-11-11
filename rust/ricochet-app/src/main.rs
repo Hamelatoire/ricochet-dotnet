@@ -953,7 +953,6 @@ impl Shell {
     }
 
     fn top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let has_environments = !self.model.workspace.environments.is_empty();
         let is_set = self.state.active_environment_id().is_some();
         let unsaved = self.state.unsaved_count();
         div()
@@ -993,12 +992,12 @@ impl Shell {
                     .border_1()
                     .border_color(rgb(BORDER))
                     .text_color(rgb(if is_set { SUCCESS } else { MUTED }))
-                    .when(has_environments, |style| style.cursor_pointer().hover(|style| style.bg(rgb(ROW_HOVER))))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(ROW_HOVER)))
                     .child(self.environment_name())
                     .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                        if !this.model.workspace.environments.is_empty() {
-                            this.environment_menu_open = !this.environment_menu_open;
-                        }
+                        // Always opens, so "+ New environment" is reachable when the Workspace has none yet.
+                        this.environment_menu_open = !this.environment_menu_open;
                         cx.notify();
                     })),
             )
