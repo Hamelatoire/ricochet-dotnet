@@ -2,15 +2,18 @@
 //! logic they use is in `ricochet_app::settings_page` and `ricochet_app::import_page`, where tests reach it.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{App, ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, div, prelude::*, px};
 use ricochet_app::theme::{self, ThemeChoice, rgb};
 use ricochet_app::import_page::{self, Applied};
 use ricochet_app::settings_page::{self, TextSetting};
+use ricochet_app::shell::{self, FolderChoice, FolderStep, ShellModel};
+use ricochet_app::state::AppState;
 use ricochet_app::text_input::{Changed, TextInput};
 use ricochet_core::openapi::{self, OpenApiResult};
 use ricochet_core::personal_state;
+use ricochet_core::store::{self, WorkspaceFolder};
 use ricochet_core::postman::{self, DumpEntry, EntryKind};
 use ricochet_core::send::RequestSender;
 use ricochet_core::{crash_log, settings_catalog::SettingItem};
@@ -25,6 +28,8 @@ pub struct SettingsPanel {
     search: Entity<TextInput>,
     query: String,
     inputs: HashMap<TextSetting, Entity<TextInput>>,
+    /// An empty folder picked with Open folder…, waiting for the person to confirm the copy (C# `PendingCopyFolder`).
+    pending_copy: Option<PathBuf>,
     /// The problem with what was typed into a field, shown beside it until the text can be used.
     errors: HashMap<TextSetting, String>,
     _subscriptions: Vec<Subscription>,
@@ -121,7 +126,7 @@ impl Shell {
             inputs.insert(field, input);
         }
 
-        self.settings_panel = Some(SettingsPanel { search, query, inputs, errors: HashMap::new(), _subscriptions: subscriptions });
+        self.settings_panel = Some(SettingsPanel { search, query, inputs, pending_copy: None, errors: HashMap::new(), _subscriptions: subscriptions });
         cx.notify();
     }
 
@@ -291,6 +296,7 @@ impl Shell {
                 column.into_any_element()
             }
             "workspace-folder" => path_text(self.model.folder_path().map(PathBuf::from)),
+            "workspace-folder" => self.workspace_folder_control(panel.pending_copy.as_deref(), cx).into_any_element(),
             _ => return None,
         })
     }
@@ -372,6 +378,189 @@ impl Shell {
             }
         }
         Some(page)
+    }
+
+    // ---- workspace folder ----
+
+    /// The Workspace folder row: the path, Open folder… and Copy to new folder…, and the copy question when one waits.
+    fn workspace_folder_control(&self, pending_copy: Option<&Path>, cx: &mut Context<Self>) -> gpui::Div {
+        let path = self.model.folder_path().map_or_else(|| "No folder is open.".to_string(), |path| path.display().to_string());
+        let buttons = div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .child(Shell::small_button(SharedString::from("settings-open-folder"), "Open folder…".to_string()).on_click(cx.listener(
+                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.pick_workspace_folder(FolderChoice::Open, cx),
+            )))
+            .child(Shell::small_button(SharedString::from("settings-copy-folder"), "Copy to new folder…".to_string()).on_click(cx.listener(
+                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.pick_workspace_folder(FolderChoice::CopyTo, cx),
+            )));
+        let mut control =
+            div().flex().flex_col().gap_2().child(div().text_xs().font_family(MONO).text_color(rgb(MUTED)).child(path)).child(buttons);
+        if let Some(target) = pending_copy {
+            control = control.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_2()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(ACCENT))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Copy workspace here?"))
+                    .child(div().text_xs().text_color(rgb(TEXT)).child(shell::pending_copy_message(target)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(Shell::small_button(SharedString::from("settings-cancel-copy"), "Cancel".to_string()).on_click(cx.listener(
+                                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                    if let Some(panel) = this.settings_panel.as_mut() {
+                                        panel.pending_copy = None;
+                                    }
+                                    cx.notify();
+                                },
+                            )))
+                            .child(Shell::small_button(SharedString::from("settings-confirm-copy"), "Copy workspace".to_string()).on_click(
+                                cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
+                                    if let Some(path) = this.settings_panel.as_mut().and_then(|panel| panel.pending_copy.take()) {
+                                        this.copy_workspace_to(&path, cx);
+                                    }
+                                }),
+                            )),
+                    ),
+            );
+        }
+        control
+    }
+
+    /// Asks for a folder with the system's folder picker, then opens it or copies this Workspace into it.
+    fn pick_workspace_folder(&mut self, choice: FolderChoice, cx: &mut Context<Self>) {
+        let prompt = match choice {
+            FolderChoice::Open => "Choose a workspace folder",
+            FolderChoice::CopyTo => "Choose an empty folder for the copy",
+        };
+        let picked =
+            cx.prompt_for_paths(gpui::PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some(prompt.into()) });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            this.update(cx, |shell, cx| shell.use_picked_folder(choice, &path, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn use_picked_folder(&mut self, choice: FolderChoice, path: &Path, cx: &mut Context<Self>) {
+        if let Some(panel) = self.settings_panel.as_mut() {
+            panel.pending_copy = None;
+        }
+        match shell::folder_step(choice, path, self.model.folder_path()) {
+            FolderStep::Open(path) => self.open_workspace_folder(&path, cx),
+            FolderStep::Copy(path) => self.copy_workspace_to(&path, cx),
+            FolderStep::ConfirmCopy(path) => {
+                if let Some(panel) = self.settings_panel.as_mut() {
+                    panel.pending_copy = Some(path);
+                }
+            }
+            FolderStep::Refuse(reason) => self.notice = Some((reason, true)),
+        }
+        cx.notify();
+    }
+
+    /// Saves unsaved changes into the folder that is open before leaving it, as C# `SwitchFolderAsync` persists first.
+    /// False, with the reason in the status bar, when they could not be saved, so nothing is lost by switching.
+    fn save_before_switching(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.state.has_unsaved() {
+            return true;
+        }
+        if self.store.is_none() {
+            let text = "No folder is open, so your changes can't be saved first. Use Copy to new folder… to keep them.";
+            self.notice = Some((text.to_string(), true));
+            return false;
+        }
+        self.save_workspace(cx);
+        if self.state.has_unsaved() {
+            let reason = self.notice.take().map(|(text, _)| text).unwrap_or_default();
+            self.notice = Some((format!("The folder was not changed, because your changes could not be saved first. {reason}"), true));
+            return false;
+        }
+        true
+    }
+
+    /// Opens the Workspace in another folder. History and settings are personal, so they stay.
+    fn open_workspace_folder(&mut self, path: &Path, cx: &mut Context<Self>) {
+        cx.notify();
+        if !self.save_before_switching(cx) {
+            return;
+        }
+        let (model, store) = ShellModel::open(Some(path.to_path_buf()));
+        let (Some(store), None) = (store, model.error.clone()) else {
+            let reason = model.error.unwrap_or_default();
+            self.notice = Some((format!("Could not open that folder. {reason}"), true));
+            return;
+        };
+        let active = self.state.active_environment_id().map(str::to_string);
+        let mut state = AppState::for_workspace(&model.workspace);
+        if let Some(id) = active.filter(|id| model.workspace.environments.iter().any(|environment| &environment.id == id)) {
+            state.set_active_environment(Some(&id));
+        }
+        let issues = model.issues.len();
+        self.switch_to(model, store, state);
+        self.notice = Some(if issues == 0 {
+            (format!("Opened {}.", path.display()), false)
+        } else {
+            (format!("Opened {}. {issues} file(s) could not be read and were left alone.", path.display()), true)
+        });
+    }
+
+    /// Copies this Workspace into an empty folder and switches to the copy. The folder it came from is left as it is.
+    fn copy_workspace_to(&mut self, path: &Path, cx: &mut Context<Self>) {
+        cx.notify();
+        if !self.save_before_switching(cx) {
+            return;
+        }
+        // Secrets live in the vault, never in the Workspace, so none are written into the new folder.
+        match store::copy_into_empty_folder(path, &self.model.workspace) {
+            Ok(store) => {
+                let branch = ricochet_app::status::read_branch(path);
+                let workspace = self.model.workspace.clone();
+                let model = ShellModel::from_parts(Some(path.to_path_buf()), workspace, Vec::new(), branch);
+                // The same items under the same ids, so the open tabs and the active Environment carry over.
+                let state = std::mem::replace(&mut self.state, AppState::for_workspace(&model.workspace));
+                self.switch_to(model, store, state);
+                self.notice = Some((format!("Your workspace was copied to {}. The previous folder was left as it was.", path.display()), false));
+            }
+            Err(error) => self.notice = Some((format!("The workspace was not copied: {error}"), true)),
+        }
+    }
+
+    /// Shows another folder's Workspace and remembers the folder in state.json for next time.
+    fn switch_to(&mut self, model: ShellModel, store: WorkspaceFolder, state: AppState) {
+        let folder = model.folder.clone();
+        self.model = model;
+        self.store = Some(store);
+        self.state = state;
+        self.sync = self.model.folder.as_deref().and_then(ricochet_app::status::read_sync);
+        self.dot_env = super::read_dot_env(&self.model);
+        self.inputs = None;
+        self.container_inputs = None;
+        self.editing_environment = None;
+        self.tree_target = None;
+        self.confirm_delete = None;
+        self.renaming = None;
+        self.reload_armed = false;
+        if let (Some(dir), Some(folder)) = (self.personal_dir.as_deref(), folder.as_deref()) {
+            let default = std::env::var("RICOCHET_DATA").ok().filter(|value| !value.trim().is_empty()).map(PathBuf::from);
+            let remembered = shell::folder_to_remember(folder, default.as_deref());
+            if let Err(error) = personal_state::save_workspace_folder(dir, remembered.as_deref()) {
+                self.notice = Some((format!("This folder will not open next time, because state.json could not be saved: {error}"), true));
+            }
+        }
     }
 
     // ---- imports ----
