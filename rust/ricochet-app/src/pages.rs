@@ -54,6 +54,7 @@ fn overlay(id: &'static str, width: f32) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .absolute()
+        .occlude()
         .top(px(56.0))
         .left(px(260.0))
         .w(px(width))
