@@ -39,16 +39,17 @@ use ricochet_core::response_examples;
 use ricochet_core::curl;
 use ricochet_core::collection_runner::{self, CollectionRunner, RunOptions};
 use ricochet_app::exports::{self, ExportFormat};
-use ricochet_app::bulk_page::{self, BulkShared};
 use ricochet_app::mock_page::{self, MockLog};
 use ricochet_core::mock_server::MockServer;
-use ricochet_core::bulk_runner;
 use ricochet_core::store::WorkspaceFolder;
 use ricochet_core::{dotenv, response_format, variables};
 use ricochet_app::text_area::{self, TextArea};
 use ricochet_app::text_input::{self, Changed, TextInput};
 
+mod bulk_panel;
 mod pages;
+
+use bulk_panel::BulkPanel;
 
 actions!(ricochet, [Save, SendRequest, NewRequest, OpenPalette, FindRequest, FocusUrl, SwitchEnvironment, ClosePalette, OpenShortcutSheet, CloseTab, NextTab, PreviousTab]);
 
@@ -329,19 +330,6 @@ struct PaletteState {
     _subscription: Subscription,
 }
 
-/// The bulk run panel while it is open: the pasted ids, and the run in progress or the last run.
-struct BulkPanel {
-    item_id: String,
-    input: Entity<TextArea>,
-    /// The progress of the latest run. None before the first run.
-    shared: Option<std::sync::Arc<BulkShared>>,
-    /// How many ids a stopped run finished, in a row from the first, so Resume can continue after them.
-    resume_offset: usize,
-    /// How many ids the latest run skipped at the start, because it was a resume.
-    run_offset: usize,
-    error: Option<String>,
-}
-
 /// The mock server page while it is open. The server itself keeps running when the page is closed.
 struct MockPanel {
     port: Entity<TextArea>,
@@ -378,8 +366,10 @@ struct Shell {
     prompt: Option<PromptDialog>,
     /// The command palette, or None while it is closed.
     palette: Option<PaletteState>,
-    /// The bulk run panel, or None while it is closed.
+    /// The bulk run panel, or None before it is first opened. It is kept while hidden, so a run keeps going.
     bulk: Option<BulkPanel>,
+    /// Where each Request's bulk run got to, from state.json (ADR 0015).
+    bulk_progress: Vec<personal_state::BulkProgress>,
     /// The mock server of the saved response examples or a loaded OpenAPI description, running or not.
     mock: MockServer,
     mock_log: MockLog,
@@ -534,6 +524,7 @@ impl Shell {
             prompt: None,
             palette: None,
             bulk: None,
+            bulk_progress: personal.bulk.clone(),
             mock: MockServer::new(),
             mock_log: MockLog::default(),
             mock_description: None,
@@ -1152,11 +1143,9 @@ impl Shell {
     fn close_palette(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.mock_panel = None;
-        // Closing the bulk panel stops a run still going; ids already in flight finish.
-        if let Some(panel) = self.bulk.take() {
-            if let Some(shared) = panel.shared {
-                shared.stop.store(true, std::sync::atomic::Ordering::SeqCst);
-            }
+        // Hiding the bulk panel leaves a run going, as closing the C# bulk page does. Stop ends it.
+        if let Some(panel) = self.bulk.as_mut() {
+            panel.hide();
         }
         self.shortcut_sheet_open = false;
         self.settings_panel = None;
@@ -1201,6 +1190,7 @@ impl Shell {
             div()
                 .id("shortcut-sheet")
                 .absolute()
+                .occlude()
                 .top(px(60.0))
                 .left(px(160.0))
                 .w(px(640.0))
@@ -1276,6 +1266,7 @@ impl Shell {
             div()
                 .id("palette")
                 .absolute()
+                .occlude()
                 .top(px(90.0))
                 .left(px(360.0))
                 .w(px(520.0))
@@ -1405,6 +1396,7 @@ impl Shell {
             div()
                 .id("outside-change")
                 .absolute()
+                .occlude()
                 .top(px(48.0))
                 .right(px(12.0))
                 .flex()
@@ -1724,6 +1716,7 @@ impl Shell {
             div()
                 .id("mock-panel")
                 .absolute()
+                .occlude()
                 .top(px(70.0))
                 .left(px(300.0))
                 .w(px(640.0))
@@ -1792,166 +1785,6 @@ impl Shell {
         )
     }
 
-    /// Opens the bulk run panel for the selected Request.
-    fn open_bulk(&mut self, cx: &mut Context<Self>) {
-        let selected = self.state.selected_item().map(str::to_string);
-        let Some(item_id) = selected.filter(|id| find_request(&self.model.workspace, id).is_some()) else {
-            self.notice = Some(("Pick a request to run it for each id.".to_string(), true));
-            cx.notify();
-            return;
-        };
-        let input = cx.new(|cx| TextArea::new(String::new(), "Paste one id per line", cx));
-        self.bulk = Some(BulkPanel { item_id, input, shared: None, resume_offset: 0, run_offset: 0, error: None });
-        cx.notify();
-    }
-
-    /// Starts the run for the pasted ids, from the first, or after the ids a stopped run finished. The run is on a
-    /// background thread, and the window refreshes while it goes. Ids are sent one after another.
-    fn start_bulk(&mut self, resume: bool, cx: &mut Context<Self>) {
-        let Some(panel) = self.bulk.as_mut() else {
-            return;
-        };
-        if panel.shared.as_ref().is_some_and(|shared| !shared.done.load(std::sync::atomic::Ordering::SeqCst)) {
-            return;
-        }
-        let all_ids = bulk_runner::parse_ids(&panel.input.read(cx).text().to_string());
-        let offset = if resume { panel.resume_offset.min(all_ids.len()) } else { 0 };
-        let ids: Vec<String> = all_ids[offset..].to_vec();
-        if ids.is_empty() {
-            panel.error = Some("Paste at least one id.".to_string());
-            cx.notify();
-            return;
-        }
-        let shared = std::sync::Arc::new(BulkShared::default());
-        panel.shared = Some(shared.clone());
-        panel.run_offset = offset;
-        panel.error = None;
-        let item_id = panel.item_id.clone();
-        let workspace = self.model.workspace.clone();
-        let environment = self.state.active_environment_id().map(str::to_string);
-        let worker = shared.clone();
-        let sender = self.sender.clone();
-        let work = cx.background_executor().spawn(async move {
-            bulk_page::run(&workspace, &item_id, environment.as_deref(), &ids, "", 1, &sender, &worker)
-        });
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
-                let done = shared.done.load(std::sync::atomic::Ordering::SeqCst);
-                this.update(cx, |_, cx| cx.notify()).ok();
-                if done {
-                    break;
-                }
-            }
-            let outcome = work.await;
-            this.update(cx, |shell, cx| {
-                if let Some(panel) = shell.bulk.as_mut() {
-                    panel.resume_offset = panel.run_offset + bulk_page::finished_prefix(&shared.results());
-                    match outcome {
-                        Err(error) => panel.error = Some(error),
-                        Ok(true) => panel.resume_offset = 0,
-                        Ok(false) => {}
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    /// The bulk run panel: the id box, the buttons, a progress line, and the latest results. None while it is closed.
-    fn bulk_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
-        let panel = self.bulk.as_ref()?;
-        let results = panel.shared.as_ref().map(|shared| shared.results()).unwrap_or_default();
-        let running = panel.shared.as_ref().is_some_and(|shared| !shared.done.load(std::sync::atomic::Ordering::SeqCst));
-        let total = bulk_runner::parse_ids(&panel.input.read(cx).text().to_string()).len();
-        let failed = bulk_page::failed(&results);
-        let summary = if panel.shared.is_some() {
-            format!("{} of {total} done, {failed} failed.", results.len() + panel.run_offset)
-        } else {
-            format!("{total} id(s) pasted.")
-        };
-        let lines: Vec<_> = results
-            .iter()
-            .rev()
-            .take(12)
-            .map(|result| {
-                div().text_xs().font_family(MONO).text_color(rgb(if result.succeeded { SUCCESS } else { ERROR })).child(result.log_line())
-            })
-            .collect();
-        let can_resume = !running && panel.resume_offset > 0;
-        Some(
-            div()
-                .id("bulk-panel")
-                .absolute()
-                .top(px(70.0))
-                .left(px(300.0))
-                .w(px(640.0))
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_4()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(BORDER))
-                .bg(rgb(CHROME_BG))
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Bulk run"))
-                .child(muted_note("Sends the request once for each id, replacing {{id}} in it. Press Escape to close."))
-                .child(
-                    div()
-                        .id("bulk-ids")
-                        .min_h(px(80.0))
-                        .max_h(px(160.0))
-                        .p_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(BORDER))
-                        .bg(rgb(FIELD_BG))
-                        .font_family(MONO)
-                        .overflow_y_scroll()
-                        .child(panel.input.clone()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(
-                            Self::small_button(SharedString::from("bulk-start"), "Start".to_string())
-                                .when(running, |button| button.opacity(0.4))
-                                .on_click(cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                                    this.start_bulk(false, cx)
-                                })),
-                        )
-                        .children(can_resume.then(|| {
-                            Self::small_button(SharedString::from("bulk-resume"), format!("Resume after {}", panel.resume_offset)).on_click(
-                                cx.listener(|this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                                    this.start_bulk(true, cx)
-                                }),
-                            )
-                        }))
-                        .children(running.then(|| {
-                            Self::small_button(SharedString::from("bulk-stop"), "Stop".to_string()).on_click(cx.listener(
-                                |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| {
-                                    if let Some(shared) = this.bulk.as_ref().and_then(|panel| panel.shared.as_ref()) {
-                                        shared.stop.store(true, std::sync::atomic::Ordering::SeqCst);
-                                    }
-                                    cx.notify();
-                                },
-                            ))
-                        }))
-                        .child(Self::small_button(SharedString::from("bulk-close"), "Close".to_string()).on_click(cx.listener(
-                            |this: &mut Shell, _: &ClickEvent, _: &mut Window, cx: &mut Context<Shell>| this.close_palette(cx),
-                        ))),
-                )
-                .child(div().text_sm().text_color(rgb(MUTED)).child(summary))
-                .children(panel.error.clone().map(|error| div().text_sm().text_color(rgb(ERROR)).child(error)))
-                .children(lines),
-        )
-    }
-
     /// Opens the dialog for the prompt Variables a send needs, each with its default filled in.
     fn open_prompt(&mut self, cx: &mut Context<Self>, id: &str, prompts: &[variables::PromptVariable]) {
         let rows = prompts
@@ -2001,6 +1834,7 @@ impl Shell {
             div()
                 .id("prompt-dialog")
                 .absolute()
+                .occlude()
                 .top(px(120.0))
                 .left(px(440.0))
                 .w(px(480.0))
@@ -3458,6 +3292,7 @@ impl Shell {
             div()
                 .id("environment-menu")
                 .absolute()
+                .occlude()
                 .top(px(44.0))
                 .right(px(12.0))
                 .w(px(240.0))
