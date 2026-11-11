@@ -16,6 +16,7 @@ pub mod openapi_export;
 pub mod duplicate;
 pub mod name_filter;
 pub mod postman;
+pub mod postman_test_translator;
 pub mod insomnia;
 pub mod store;
 pub mod openapi;
