@@ -2,8 +2,7 @@
 //! more Collections in order, checks their assertions and captures, and reports the results. It reads the
 //! Workspace and never changes it. Captured values live in memory only, and reset for each Collection.
 //!
-//! Not ported yet: cookies kept for a run (ADR 0012, the sender has none), and resolving Secret references from
-//! external managers (ADR 0025). The xUnit report is in `xunit`, data-row runs are in `data_rows`, and the CLI
+//! Secret references from external managers (ADR 0025) are read just before each send. The xUnit report is in `xunit`, data-row runs are in `data_rows`, and the CLI
 //! is in the ricochet-cli crate. The C# app stays the reference for behaviour.
 
 use std::cmp::Reverse;
@@ -11,9 +10,10 @@ use std::error::Error;
 use std::fmt;
 
 use crate::assertions::{self, AssertionResult};
+use crate::external_secrets::ExternalSecretResolver;
 use crate::folder_tags;
 use crate::models::{ApiEnvironment, ApiRequest, Collection, CollectionItem, KeyValue, RequestAuth, Workspace};
-use crate::send::RequestSender;
+use crate::send::{RequestSender, RunCookies};
 use crate::variables;
 
 /// The text that replaces a secret in output.
@@ -65,6 +65,9 @@ pub struct RunOptions {
     pub include_tags: Vec<String>,
     /// Skip Requests with any of these tags. Skipping wins over including.
     pub exclude_tags: Vec<String>,
+    /// Keep cookies between this run's Requests, as a browser does (ADR 0012). They start empty, are never written to
+    /// a file, and are dropped when the run ends, so one run never sees another run's cookies. Off by default.
+    pub keep_cookies: bool,
 }
 
 /// The outcome of one Request in a run. `captured` names the Variables it set; their values are left out.
@@ -201,6 +204,8 @@ fn count(n: usize, noun: &str) -> String {
 /// Runs Requests in order and checks their assertions. Reads the Workspace and never changes it.
 pub struct CollectionRunner<'a> {
     sender: &'a RequestSender,
+    /// Reads external Secret references just before each send (ADR 0025).
+    secrets: ExternalSecretResolver,
 }
 
 /// A Request chosen for the run, with the place it sits in the Workspace.
@@ -220,8 +225,14 @@ struct Plan<'a> {
 }
 
 impl<'a> CollectionRunner<'a> {
+    /// A runner that reads Secret references from the process environment and the system shell.
     pub fn new(sender: &'a RequestSender) -> Self {
-        Self { sender }
+        Self::with_secrets(sender, ExternalSecretResolver::system())
+    }
+
+    /// A runner that reads Secret references with `secrets`, so tests can give fixed values.
+    pub fn with_secrets(sender: &'a RequestSender, secrets: ExternalSecretResolver) -> Self {
+        Self { sender, secrets }
     }
 
     /// Runs the selected Requests and returns the report.
@@ -249,6 +260,8 @@ impl<'a> CollectionRunner<'a> {
         let mut stopped = false;
         let mut captured: Vec<KeyValue> = Vec::new();
         let mut current_collection: Option<usize> = None;
+        // None unless the run keeps cookies. Dropped at the end of the run, which drops the cookies (ADR 0012).
+        let run_cookies = options.keep_cookies.then(|| self.sender.begin_run_cookies());
         for item in &plan.planned {
             // Like other Variables, captured values belong to one Collection.
             if current_collection != Some(item.collection_index) {
@@ -256,7 +269,7 @@ impl<'a> CollectionRunner<'a> {
                 current_collection = Some(item.collection_index);
             }
 
-            let result = self.run_one(item, workspace, environment, &mut captured, options);
+            let result = self.run_one(item, workspace, environment, &mut captured, options, run_cookies.as_ref());
             on_result(&result);
             let passed = result.passed();
             results.push(result);
@@ -282,6 +295,7 @@ impl<'a> CollectionRunner<'a> {
         environment: Option<&ApiEnvironment>,
         captured: &mut Vec<KeyValue>,
         options: &RunOptions,
+        run_cookies: Option<&RunCookies>,
     ) -> RequestRunResult {
         // Lowest priority first: globals, the Collection, its Folders, the environment, captures, then the run's overrides.
         let folder = variables::folder_scope(item.collection, Some(item.item_id));
@@ -297,22 +311,34 @@ impl<'a> CollectionRunner<'a> {
             captured.as_slice(),
             options.overrides.as_slice(),
         ]);
-        let resolved = variables::apply(item.request, &layered);
-
-        let failed = |error: &str, resolved: &ApiRequest, captured: &[KeyValue]| {
-            let mask = secrets_to_mask(&layered, &options.overrides, captured, resolved);
+        let failed = |error: &str, variables: &[KeyValue], resolved: &ApiRequest, captured: &[KeyValue]| {
+            let mask = secrets_to_mask(variables, &options.overrides, captured, resolved);
             failure(item, mask_in(error, &mask))
         };
+
+        // Secret references are read just before sending, and only the send uses the values (ADR 0025).
+        let layered = match variables::resolve_references(item.request, &layered, &self.secrets) {
+            Ok(with_references) => with_references,
+            Err(message) => {
+                let resolved = variables::apply(item.request, &layered);
+                return failed(&message, &layered, &resolved, captured.as_slice());
+            }
+        };
+        let resolved = variables::apply(item.request, &layered);
 
         // Sending a literal {{token}} would fail confusingly, and could reach the wrong place.
         let missing = variables::find_placeholders(&resolved);
         if !missing.is_empty() {
             let message = format!("Not sent, because there is no value for: {}", missing.join(", "));
-            return failed(&message, &resolved, captured.as_slice());
+            return failed(&message, &layered, &resolved, captured.as_slice());
         }
 
-        match self.sender.send(&resolved) {
-            Err(error) => failed(error.message(), &resolved, captured.as_slice()),
+        let sent = match run_cookies {
+            Some(cookies) => self.sender.send_in_run(&resolved, cookies),
+            None => self.sender.send(&resolved),
+        };
+        match sent {
+            Err(error) => failed(error.message(), &layered, &resolved, captured.as_slice()),
             Ok(response) => {
                 let snapshot = response.snapshot();
                 let capture = assertions::evaluate_captures(resolved.captures.as_deref().unwrap_or(&[]), &snapshot);

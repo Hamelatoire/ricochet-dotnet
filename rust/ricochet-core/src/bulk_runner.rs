@@ -3,8 +3,8 @@
 //! results arrive in completion order, one at a time. Nothing here stores progress: the caller records each
 //! result, and uses `resume_index` to continue a run.
 //!
-//! The progress numbers (`BulkRunProgress.cs`) are in `bulk_run_progress`. Not ported yet: resolving Secret
-//! references from external managers (ADR 0025). Stopping is a shared flag, not a cancellation token. The C# app
+//! The progress numbers (`BulkRunProgress.cs`) are in `bulk_run_progress`. Secret references from external
+//! managers (ADR 0025) are read just before each send. Stopping is a shared flag, not a cancellation token. The C# app
 //! stays the reference.
 
 use std::error::Error;
@@ -14,6 +14,7 @@ use std::sync::{Mutex, PoisonError};
 use std::thread;
 
 use crate::collection_runner::{mask_in, secrets_to_mask};
+use crate::external_secrets::ExternalSecretResolver;
 use crate::models::{ApiEnvironment, ApiRequest, Collection, KeyValue, Workspace};
 use crate::send::RequestSender;
 use crate::variables;
@@ -92,14 +93,22 @@ pub struct BulkRun<'a> {
     pub max_parallel: usize,
 }
 
-/// Sends the Request for each id. Holds only the sender, and keeps no progress.
+/// Sends the Request for each id. Holds only the sender and the Secret reference reader, and keeps no progress.
 pub struct BulkRunner<'a> {
     sender: &'a RequestSender,
+    /// Reads external Secret references just before each send (ADR 0025).
+    secrets: ExternalSecretResolver,
 }
 
 impl<'a> BulkRunner<'a> {
+    /// A runner that reads Secret references from the process environment and the system shell.
     pub fn new(sender: &'a RequestSender) -> Self {
-        Self { sender }
+        Self::with_secrets(sender, ExternalSecretResolver::system())
+    }
+
+    /// A runner that reads Secret references with `secrets`, so tests can give fixed values.
+    pub fn with_secrets(sender: &'a RequestSender, secrets: ExternalSecretResolver) -> Self {
+        Self { sender, secrets }
     }
 
     /// Runs the Request for each id. Calls `on_result` for each result, one at a time, in completion order. The
@@ -169,6 +178,20 @@ impl<'a> BulkRunner<'a> {
             run.overrides,
             placeholder.as_slice(),
         ]);
+        // Secret references are read just before sending, and only the send uses the values (ADR 0025).
+        let layered = match variables::resolve_references(run.template, &layered, &self.secrets) {
+            Ok(with_references) => with_references,
+            Err(message) => {
+                return BulkItemResult {
+                    id: id.to_string(),
+                    status_code: None,
+                    succeeded: false,
+                    detail: message,
+                    elapsed_ms: 0,
+                    position,
+                };
+            }
+        };
         let resolved = variables::apply(run.template, &layered);
         let secrets = secrets_to_mask(&layered, run.overrides, &[], &resolved);
 

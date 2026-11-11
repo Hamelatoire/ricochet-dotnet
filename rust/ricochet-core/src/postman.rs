@@ -1097,3 +1097,35 @@ fn kind_of(result: &ImportResult) -> EntryKind {
         EntryKind::Globals
     }
 }
+
+/// Imports never overwrite an existing item of the same name, so a clash gets a numbered name such as
+/// "Shop (2)". Case is ignored. Ports `WorkspaceImport.UniqueName`.
+pub fn unique_name<'a>(name: &str, existing: impl IntoIterator<Item = &'a str>) -> String {
+    let taken: std::collections::HashSet<String> = existing.into_iter().map(str::to_lowercase).collect();
+    if !taken.contains(&name.to_lowercase()) {
+        return name.to_string();
+    }
+    (2..)
+        .map(|n| format!("{name} ({n})"))
+        .find(|candidate| !taken.contains(&candidate.to_lowercase()))
+        .expect("the range is unbounded")
+}
+
+/// Adds imported globals to the existing ones. A global with the same name is replaced, and its name is listed when
+/// its value changed. Ports `WorkspaceImport.MergeGlobals`.
+pub fn merge_globals(existing: &[KeyValue], incoming: &[KeyValue]) -> (Vec<KeyValue>, Vec<String>) {
+    let mut merged = existing.to_vec();
+    let mut overwritten = Vec::new();
+    for variable in incoming {
+        match merged.iter().position(|v| v.key == variable.key) {
+            None => merged.push(variable.clone()),
+            Some(index) => {
+                if merged[index].value != variable.value {
+                    overwritten.push(variable.key.clone());
+                }
+                merged[index] = variable.clone();
+            }
+        }
+    }
+    (merged, overwritten)
+}

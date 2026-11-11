@@ -6,6 +6,7 @@
 //! The port is synchronous, because the app and the CLI call it from background threads. The C# cancellation token is
 //! not ported: a command is stopped by its time limit instead.
 
+#[cfg(test)]
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Read;

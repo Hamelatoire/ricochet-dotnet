@@ -257,3 +257,35 @@ fn resolve_uses_the_app_data_folder_without_an_override() {
 fn resolve_gives_none_without_an_override_or_app_data() {
     assert_eq!(resolve_personal_directory(None, None), None);
 }
+
+#[test]
+fn settings_become_the_sender_settings_the_c_sharp_app_configures() {
+    let settings = ricochet_core::personal_state::PersonalSettings {
+        request_timeout_seconds: 15,
+        follow_redirects: false,
+        verify_tls_certificates: false,
+        max_response_megabytes: 2,
+        wrap_response: true,
+        proxy_url: "proxy.example.com:8080".to_string(),
+        client_certificate_path: "C:/certs/me.pem".to_string(),
+    };
+    let sender = settings.sender_settings();
+    assert_eq!(sender.timeout, std::time::Duration::from_secs(15));
+    assert!(!sender.follow_redirects);
+    assert!(!sender.verify_certificates);
+    assert_eq!(sender.max_body_bytes, 2 * 1024 * 1024);
+    assert_eq!(sender.proxy_url, "proxy.example.com:8080");
+    assert_eq!(sender.client_certificate_path, "C:/certs/me.pem");
+    assert!(sender.certificate_warning().is_some());
+}
+
+#[test]
+fn a_timeout_or_size_below_one_falls_back_to_the_default() {
+    let settings = ricochet_core::personal_state::PersonalSettings {
+        request_timeout_seconds: 0,
+        max_response_megabytes: -5,
+        ..Default::default()
+    };
+    let sender = settings.sender_settings();
+    assert_eq!(sender, ricochet_core::send::SenderSettings::default());
+}

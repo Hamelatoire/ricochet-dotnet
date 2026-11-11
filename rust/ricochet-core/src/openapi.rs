@@ -1,8 +1,8 @@
 //! Port of the parsing half of `src/Ricochet.Core/OpenApi.cs` (ADR 0014). Turns an OpenAPI 3 description in
 //! JSON into a Collection with one Request per operation, and reports what an update would change.
 //!
-//! Nothing here touches the network. Fetching a description, which only happens when the user asks
-//! (ADR 0005), is not ported yet, and neither are YAML and Swagger 2.0.
+//! Only `fetch` touches the network, and only when the user asks (ADR 0005). YAML and Swagger 2.0 are not
+//! supported yet.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -756,4 +756,54 @@ impl<'a> Reader<'a> {
 
         Some(element)
     }
+}
+
+/// The largest description `fetch` reads, as in the C# `OpenApiFetcher`.
+pub const MAX_FETCH_BYTES: u64 = 20 * 1024 * 1024;
+const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fetches an OpenAPI description. Called only when the user presses Fetch, never in the background (ADR 0005,
+/// ADR 0014). Ports `OpenApiFetcher.FetchAsync`. Blocks, so call it off the UI thread.
+///
+/// # Errors
+/// A message for the user: the address is not http or https, the server failed or was too slow, or the
+/// description is larger than 20 MB.
+pub fn fetch(address: &str) -> Result<String, String> {
+    use std::io::Read;
+
+    let url = url::Url::parse(address.trim())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .ok_or("Enter a web address that starts with http:// or https://.")?;
+    let too_large = || "The description is larger than 20 MB, so it was not read.".to_string();
+    let failed = |error: reqwest::Error| {
+        if error.is_timeout() {
+            "The server took too long to answer.".to_string()
+        } else {
+            format!("Could not fetch the description: {error}")
+        }
+    };
+
+    let client = reqwest::blocking::Client::builder().timeout(FETCH_TIMEOUT).build().map_err(failed)?;
+    let response = client.get(url).send().map_err(failed)?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(match status.canonical_reason() {
+            Some(reason) => format!("The server answered {} {reason}.", status.as_u16()),
+            None => format!("The server answered {}.", status.as_u16()),
+        });
+    }
+    if response.content_length().is_some_and(|length| length > MAX_FETCH_BYTES) {
+        return Err(too_large());
+    }
+
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_FETCH_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not fetch the description: {error}"))?;
+    if bytes.len() as u64 > MAX_FETCH_BYTES {
+        return Err(too_large());
+    }
+    Ok(String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_string())
 }

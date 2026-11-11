@@ -3,6 +3,7 @@
 
 pub mod bulk_page;
 pub mod mock_page;
+pub mod import_page;
 pub mod edit;
 pub mod exports;
 pub mod runner_results;
@@ -10,6 +11,7 @@ pub mod palette;
 pub mod json_color;
 pub mod request_view;
 pub mod scope;
+pub mod settings_page;
 pub mod shell;
 pub mod state;
 pub mod status;

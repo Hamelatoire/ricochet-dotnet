@@ -5,15 +5,18 @@
 //!
 //! Failures, as in C#: a missing or unreadable file gives the defaults. A file that is not valid JSON, or has a
 //! value of the wrong type, is moved beside the original as `state.json.corrupt-<timestamp>`, reported as an issue,
-//! and the defaults are used. Nothing is written back here, so a save is not part of this module yet.
+//! and the defaults are used. Saves (`save_active_environment`, `save_settings`) change only their own key.
 //!
-//! Not ported yet: writing `state.json`, and the old app's copy of `workspace.json` that the store adopts on first run.
+//! Not ported yet: the old app's copy of `workspace.json` that the store adopts on first run.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+use crate::send::SenderSettings;
 
 use crate::key_value_columns::is_saveable;
 use crate::store::WorkspaceIssue;
@@ -22,7 +25,7 @@ use crate::store::WorkspaceIssue;
 pub const STATE_FILE_NAME: &str = "state.json";
 
 /// Personal settings for this person on this machine (ADR 0007). Defaults match the C# record.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PersonalSettings {
     pub request_timeout_seconds: i32,
@@ -47,6 +50,24 @@ impl Default for PersonalSettings {
             wrap_response: true,
             proxy_url: String::new(),
             client_certificate_path: String::new(),
+        }
+    }
+}
+
+impl PersonalSettings {
+    /// The sender settings these give, as the C# `ApplySettings` passes them to `RequestSender.Configure`. A timeout
+    /// or size limit below one, which a hand-edited file could hold, falls back to the default.
+    pub fn sender_settings(&self) -> SenderSettings {
+        let defaults = Self::default();
+        let timeout = if self.request_timeout_seconds > 0 { self.request_timeout_seconds } else { defaults.request_timeout_seconds };
+        let megabytes = if self.max_response_megabytes > 0 { self.max_response_megabytes } else { defaults.max_response_megabytes };
+        SenderSettings {
+            timeout: Duration::from_secs(u64::from(timeout.unsigned_abs())),
+            follow_redirects: self.follow_redirects,
+            verify_certificates: self.verify_tls_certificates,
+            max_body_bytes: u64::from(megabytes.unsigned_abs()) * 1024 * 1024,
+            proxy_url: self.proxy_url.clone(),
+            client_certificate_path: self.client_certificate_path.clone(),
         }
     }
 }
@@ -217,6 +238,36 @@ fn app_data_directory() -> Option<PathBuf> {
 /// including ones this port does not model yet, so the C# app's settings survive. A missing file starts as an empty
 /// object. A file that is not a JSON object is an error, so it is not written over.
 pub fn save_active_environment(personal_directory: &Path, environment_id: Option<&str>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| {
+        object.insert(
+            "activeEnvironmentId".to_string(),
+            environment_id.map_or(serde_json::Value::Null, |id| serde_json::Value::String(id.to_string())),
+        );
+    })
+}
+
+/// Saves the personal settings (ADR 0007) in `state.json`, as `SaveSettings` does in the C# store. Only the
+/// `settings` key changes, and any setting this port does not model yet is kept, so the C# app's survive.
+pub fn save_settings(personal_directory: &Path, settings: &PersonalSettings) -> std::io::Result<()> {
+    let value = serde_json::to_value(settings).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    update_state(personal_directory, |object| {
+        let mut merged = match object.remove("settings") {
+            Some(serde_json::Value::Object(existing)) => existing,
+            _ => serde_json::Map::new(),
+        };
+        if let serde_json::Value::Object(fields) = value {
+            merged.extend(fields);
+        }
+        object.insert("settings".to_string(), serde_json::Value::Object(merged));
+    })
+}
+
+/// Reads `state.json` as an object, lets `change` edit it, and writes it back through a temporary file. A missing
+/// file starts as an empty object. A file that is not a JSON object is an error, so it is not written over.
+fn update_state(
+    personal_directory: &Path,
+    change: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> std::io::Result<()> {
     let path = personal_directory.join(STATE_FILE_NAME);
     let mut object = match fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
@@ -232,10 +283,7 @@ pub fn save_active_environment(personal_directory: &Path, environment_id: Option
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
         Err(error) => return Err(error),
     };
-    object.insert(
-        "activeEnvironmentId".to_string(),
-        environment_id.map_or(serde_json::Value::Null, |id| serde_json::Value::String(id.to_string())),
-    );
+    change(&mut object);
     let text = serde_json::to_string_pretty(&serde_json::Value::Object(object))
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     fs::create_dir_all(personal_directory)?;

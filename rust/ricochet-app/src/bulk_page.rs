@@ -56,9 +56,10 @@ pub fn run(
     ids: &[String],
     placeholder: &str,
     max_parallel: usize,
+    sender: &RequestSender,
     shared: &BulkShared,
 ) -> Result<bool, String> {
-    let outcome = run_inner(workspace, item_id, environment_id, ids, placeholder, max_parallel, shared);
+    let outcome = run_inner(workspace, item_id, environment_id, ids, placeholder, max_parallel, sender, shared);
     shared.done.store(true, Ordering::SeqCst);
     outcome
 }
@@ -70,6 +71,7 @@ fn run_inner(
     ids: &[String],
     placeholder: &str,
     max_parallel: usize,
+    sender: &RequestSender,
     shared: &BulkShared,
 ) -> Result<bool, String> {
     let template = find_request(workspace, item_id).ok_or("Pick a request to run it for each id.")?;
@@ -89,6 +91,5 @@ fn run_inner(
         overrides: &[],
         max_parallel,
     };
-    let sender = RequestSender::new();
-    BulkRunner::new(&sender).run(&bulk, &shared.stop, |result| shared.push(result)).map_err(|error| error.to_string())
+    BulkRunner::new(sender).run(&bulk, &shared.stop, |result| shared.push(result)).map_err(|error| error.to_string())
 }

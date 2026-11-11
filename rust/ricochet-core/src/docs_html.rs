@@ -3,8 +3,7 @@
 //! Secret values and Secret Variables are written as [`MASKED`], and every piece of text is HTML-escaped.
 //! Hidden Folders and Requests (ADR 0032) are left out.
 //!
-//! Not ported yet: the `ricochet docs` command and its file checks (refuse a file inside the Workspace,
-//! refuse an existing file unless forced). The secret rules are copied as private helpers until `SecretRules`
+//! The `ricochet docs` command and its file checks are in the ricochet-cli crate. The secret rules are copied as private helpers until `SecretRules`
 //! is ported, and they must be kept in step with the C# file.
 
 use std::collections::HashSet;

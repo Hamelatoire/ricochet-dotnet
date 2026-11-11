@@ -168,11 +168,12 @@ fn no_arguments_prints_usage_and_exits_two() {
 }
 
 #[test]
-fn commands_not_ported_yet_exit_two_and_say_so() {
-    let output = run_ok(ricochet(&["export", "Shop", "--postman", "x.json"]));
+fn export_outside_a_workspace_exits_two() {
+    let scratch = Scratch::new();
+    let output = run_ok(ricochet(&["export", "Shop", "--workspace", scratch.0.to_str().unwrap(), "--postman", "x.json"]));
 
     assert_eq!(exit_code(&output), 2);
-    assert!(stderr(&output).contains("not ported"), "stderr: {}", stderr(&output));
+    assert!(stderr(&output).contains("is not a Ricochet workspace folder."), "stderr: {}", stderr(&output));
 }
 
 #[test]
@@ -211,12 +212,13 @@ fn var_needs_name_and_value() {
 }
 
 #[test]
-fn cookies_are_refused_until_they_are_ported() {
+fn cookies_are_accepted() {
     let scratch = Scratch::new();
     let output = run_ok(ricochet(&["run", scratch.0.to_str().unwrap(), "--cookies"]));
 
+    // The option is understood, so the run gets as far as checking the folder.
     assert_eq!(exit_code(&output), 2);
-    assert!(stderr(&output).contains("--cookies is not ported"));
+    assert!(stderr(&output).contains("is not a Ricochet workspace folder."), "stderr: {}", stderr(&output));
 }
 
 #[test]

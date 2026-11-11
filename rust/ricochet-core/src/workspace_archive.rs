@@ -129,6 +129,20 @@ pub fn export(workspace_root: &Path, zip_path: &Path) -> WorkspaceArchiveResult 
     }
 }
 
+/// Ok when the file is a readable ZIP with a `ricochet.json` at its root, otherwise the reason it is not a workspace
+/// archive. Ports `ArchiveIsWorkspace` from the C# CLI.
+pub fn check_is_workspace(zip_path: &Path) -> Result<(), String> {
+    let full = std::path::absolute(zip_path).unwrap_or_else(|_| zip_path.to_path_buf());
+    let unreadable = |error: &dyn std::fmt::Display| format!("\"{}\" is not a readable ZIP file: {error}", full.display());
+    let file = File::open(zip_path).map_err(|error| unreadable(&error))?;
+    let mut archive = ZipArchive::new(BufReader::new(file)).map_err(|error| unreadable(&error))?;
+    if archive.by_name(MARKER_FILE_NAME).is_ok() {
+        Ok(())
+    } else {
+        Err(format!("\"{}\" has no {MARKER_FILE_NAME}, so it is not a workspace.", full.display()))
+    }
+}
+
 /// Imports the archive's workspace files into `target_folder`, which must not exist or must be empty. Every entry is
 /// checked before anything is written.
 pub fn import(zip_path: &Path, target_folder: &Path) -> WorkspaceArchiveResult {
