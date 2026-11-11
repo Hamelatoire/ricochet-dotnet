@@ -289,3 +289,46 @@ fn a_timeout_or_size_below_one_falls_back_to_the_default() {
     let sender = settings.sender_settings();
     assert_eq!(sender, ricochet_core::send::SenderSettings::default());
 }
+
+#[test]
+fn saving_bulk_progress_replaces_that_requests_entry_and_keeps_the_rest() {
+    let dir = TempDir::new("bulk-save");
+    write_state(
+        dir.path(),
+        r#"{"theme":"dark","bulk":[{"requestId":"a","ids":"1\n2","lastId":"1","processed":1},{"requestId":"b","ids":"x","processed":0}]}"#,
+    );
+
+    let progress = BulkProgress { request_id: "a".into(), ids: "1\n2\n3".into(), last_id: None, processed: 0 };
+    save_bulk_progress(dir.path(), &progress).unwrap();
+
+    let state = load(dir.path()).state;
+    assert_eq!(state.theme.as_deref(), Some("dark"));
+    assert_eq!(state.bulk.len(), 2);
+    assert_eq!(state.bulk.iter().find(|p| p.request_id == "a"), Some(&progress));
+    assert!(state.bulk.iter().any(|p| p.request_id == "b"));
+    // A missing last id is left out of the file, as the C# store writes it.
+    let text = fs::read_to_string(dir.path().join(STATE_FILE_NAME)).unwrap();
+    assert!(!text.contains("lastId\": null"), "{text}");
+}
+
+#[test]
+fn saving_bulk_progress_with_no_state_file_starts_one() {
+    let dir = TempDir::new("bulk-new");
+    let progress = BulkProgress { request_id: "a".into(), ids: "1".into(), last_id: Some("1".into()), processed: 1 };
+    save_bulk_progress(dir.path(), &progress).unwrap();
+    assert_eq!(load(dir.path()).state.bulk, vec![progress]);
+}
+
+#[test]
+fn bulk_log_lines_are_appended_after_a_time() {
+    let dir = TempDir::new("bulk-log");
+    append_bulk_log(dir.path(), &["a first".to_string()]).unwrap();
+    append_bulk_log(dir.path(), &["a second".to_string(), "a third".to_string()]).unwrap();
+    append_bulk_log(dir.path(), &[]).unwrap();
+    let text = fs::read_to_string(dir.path().join(BULK_LOG_FILE_NAME)).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].ends_with("  a first"), "{}", lines[0]);
+    assert!(lines[2].ends_with("  a third"));
+    assert_eq!(lines[1].len(), "yyyy-mm-dd hh:mm:ss  a second".len());
+}

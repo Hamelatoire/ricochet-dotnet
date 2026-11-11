@@ -73,11 +73,12 @@ impl PersonalSettings {
 }
 
 /// Where a bulk run stopped, so it can resume after the last id it processed.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BulkProgress {
     pub request_id: String,
     pub ids: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_id: Option<String>,
     pub processed: i32,
 }
@@ -260,6 +261,39 @@ pub fn save_settings(personal_directory: &Path, settings: &PersonalSettings) -> 
         }
         object.insert("settings".to_string(), serde_json::Value::Object(merged));
     })
+}
+
+/// Saves where a Request's bulk run got to in `state.json`, as `SetBulkProgress` does in the C# store. The entry for
+/// the same Request is replaced, and every other Request's entry and every other key is kept.
+pub fn save_bulk_progress(personal_directory: &Path, progress: &BulkProgress) -> std::io::Result<()> {
+    let value = serde_json::to_value(progress).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    update_state(personal_directory, |object| {
+        let mut entries = match object.remove("bulk") {
+            Some(serde_json::Value::Array(entries)) => entries,
+            _ => Vec::new(),
+        };
+        entries.retain(|entry| entry.get("requestId").and_then(serde_json::Value::as_str) != Some(progress.request_id.as_str()));
+        entries.push(value);
+        object.insert("bulk".to_string(), serde_json::Value::Array(entries));
+    })
+}
+
+/// The bulk run log in the personal folder. Kept on this machine only.
+pub const BULK_LOG_FILE_NAME: &str = "bulk-log.txt";
+
+/// Adds lines to `bulk-log.txt`, each after the local time, as `AppendBulkLog` does in the C# store. The file is only
+/// ever appended to.
+pub fn append_bulk_log(personal_directory: &Path, lines: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    if lines.is_empty() {
+        return Ok(());
+    }
+    fs::create_dir_all(personal_directory)?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let text: String = lines.iter().map(|line| format!("{stamp}  {line}
+")).collect();
+    let mut file = fs::OpenOptions::new().create(true).append(true).open(personal_directory.join(BULK_LOG_FILE_NAME))?;
+    file.write_all(text.as_bytes())
 }
 
 /// Reads `state.json` as an object, lets `change` edit it, and writes it back through a temporary file. A missing
