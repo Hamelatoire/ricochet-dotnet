@@ -5,7 +5,8 @@
 //!
 //! Failures, as in C#: a missing or unreadable file gives the defaults. A file that is not valid JSON, or has a
 //! value of the wrong type, is moved beside the original as `state.json.corrupt-<timestamp>`, reported as an issue,
-//! and the defaults are used. Saves (`save_active_environment`, `save_settings`) change only their own key.
+//! and the defaults are used. Saves (`save_active_environment`, `save_settings`, `save_window`, `save_panels`,
+//! `save_open_tabs`) change only their own keys.
 //!
 //! Not ported yet: the old app's copy of `workspace.json` that the store adopts on first run.
 
@@ -83,7 +84,7 @@ pub struct BulkProgress {
 }
 
 /// Where the main window was. Size and position are the normal (not maximised) bounds.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WindowPlacement {
     pub x: i32,
@@ -108,10 +109,12 @@ impl WindowPlacement {
 }
 
 /// The sidebar width and request pane height (ADR 0043). Each is optional, so one can be kept when the other is damaged.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PanelLayout {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sidebar_width: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub request_height: Option<f64>,
 }
 
@@ -260,6 +263,50 @@ pub fn save_settings(personal_directory: &Path, settings: &PersonalSettings) -> 
         }
         object.insert("settings".to_string(), serde_json::Value::Object(merged));
     })
+}
+
+/// Saves where the main window was (ADR 0068), as `SaveWindow` does in the C# store. Only the `window` key changes. A
+/// placement no real window could have is not saved, so a bad value never replaces a good one.
+pub fn save_window(personal_directory: &Path, placement: &WindowPlacement) -> std::io::Result<()> {
+    if !placement.is_reasonable() {
+        return Ok(());
+    }
+    let value = to_json(placement)?;
+    update_state(personal_directory, |object| {
+        object.insert("window".to_string(), value);
+    })
+}
+
+/// Saves the sidebar width and request pane height (ADR 0043), as `SavePanels` does in the C# store. Damaged values
+/// are dropped first, as `sanitized` decides. Only the `panels` key changes.
+pub fn save_panels(personal_directory: &Path, layout: &PanelLayout) -> std::io::Result<()> {
+    let value = to_json(&layout.sanitized())?;
+    update_state(personal_directory, |object| {
+        object.insert("panels".to_string(), value);
+    })
+}
+
+/// Saves which Requests are open as tabs, in order, and the one showing (ADR 0041), as `SetOpenTabs` does in the C#
+/// store. With no tabs open both keys are removed, as the C# store leaves them out, so they add nothing to the file.
+/// Only the `openTabs` and `activeTab` keys change.
+pub fn save_open_tabs(personal_directory: &Path, open_tabs: &[String], active_tab: Option<&str>) -> std::io::Result<()> {
+    update_state(personal_directory, |object| {
+        if open_tabs.is_empty() {
+            object.remove("openTabs");
+            object.remove("activeTab");
+            return;
+        }
+        let ids = open_tabs.iter().cloned().map(serde_json::Value::String).collect();
+        object.insert("openTabs".to_string(), serde_json::Value::Array(ids));
+        match active_tab {
+            Some(id) => object.insert("activeTab".to_string(), serde_json::Value::String(id.to_string())),
+            None => object.remove("activeTab"),
+        };
+    })
+}
+
+fn to_json(value: &impl Serialize) -> std::io::Result<serde_json::Value> {
+    serde_json::to_value(value).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
 /// Reads `state.json` as an object, lets `change` edit it, and writes it back through a temporary file. A missing
