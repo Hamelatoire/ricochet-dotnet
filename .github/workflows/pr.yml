@@ -67,7 +67,7 @@ jobs:
         run: |
           cargo test --locked --manifest-path rust/ricochet-cli/Cargo.toml
           cargo build --release --locked --manifest-path rust/ricochet-cli/Cargo.toml
-          rust/ricochet-cli/target/release/ricochet --help
+          rust/target/release/ricochet --help
 
       - name: Test and build the app
         run: |
@@ -81,7 +81,7 @@ jobs:
           MSYS_NO_PATHCONV: "1"
         run: |
           mkdir -p out/app out/cli
-          cp rust/ricochet-app/target/release/ricochet-app.exe out/app/Ricochet.exe
-          cp rust/ricochet-cli/target/release/ricochet.exe out/cli/ricochet.exe
+          cp rust/target/release/ricochet-app.exe out/app/Ricochet.exe
+          cp rust/target/release/ricochet.exe out/cli/ricochet.exe
           choco install innosetup --no-progress -y
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=0.0.0" installer/ricochet.iss
