@@ -85,13 +85,19 @@ jobs:
       - name: Check the CLI starts
         run: out/cli/ricochet --help
 
+      # Keeps compiled dependencies between runs. The crates share one build folder, rust/target (.cargo/config.toml).
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Windows'
+        with:
+          workspaces: rust/ricochet-app -> ../target
+
       # The Rust beta ships beside the C# app for now. It is built only on Windows, where the installer picks it up.
       - name: Build the Rust beta
         if: runner.os == 'Windows'
         run: |
           cargo build --release --locked --manifest-path rust/ricochet-app/Cargo.toml
           mkdir -p out/rust
-          cp rust/ricochet-app/target/release/ricochet-app.exe out/rust/Ricochet-Rust-Beta.exe
+          cp rust/target/release/ricochet-app.exe out/rust/Ricochet-Rust-Beta.exe
 
       # The app and the CLI are packaged apart: their names differ only by case,
       # so they would collide in one folder on Windows and macOS.

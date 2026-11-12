@@ -36,6 +36,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Keeps compiled dependencies between runs. The crates share one build folder, rust/target (.cargo/config.toml).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/ricochet-core -> ../target
+
       - name: Install a Secret Service and a keyring (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y gnome-keyring libsecret-1-0 libsecret-tools dbus-x11

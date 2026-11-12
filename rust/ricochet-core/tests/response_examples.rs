@@ -17,6 +17,7 @@ fn response(body: &str, headers: Vec<KeyValue>) -> ApiResponse {
         elapsed: Duration::from_millis(12),
         truncated: false,
         certificates_unverified: false,
+        redirected_to: None,
     }
 }
 
