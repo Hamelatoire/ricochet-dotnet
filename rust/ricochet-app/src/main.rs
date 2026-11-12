@@ -1527,7 +1527,7 @@ impl Shell {
         let Some(name) = self.model.workspace.collections.iter().find(|c| c.id == collection_id).map(|c| c.name.clone()) else {
             return;
         };
-        let workspace = self.model.workspace.clone();
+        let workspace = workspace_with_secrets(&self.vault.secrets, &self.model.workspace);
         self.notice = Some((format!("Running {name}…"), false));
         cx.notify();
         let sender = self.sender.clone();
@@ -3408,6 +3408,26 @@ fn fill_secrets(secrets: &BTreeMap<String, SecretValue>, mut request: ApiRequest
     (request, missing)
 }
 
+/// A copy of the Workspace with every Request's Secrets filled in, for a bulk run or a collection run. The window's
+/// Workspace holds no Secret values, which stay in the vault, so a run given it as it is would send an empty bearer
+/// token, as a single send never does. The Workspace itself is never changed.
+fn workspace_with_secrets(secrets: &BTreeMap<String, SecretValue>, workspace: &ricochet_core::models::Workspace) -> ricochet_core::models::Workspace {
+    fn fill(items: &mut [ricochet_core::models::CollectionItem], secrets: &BTreeMap<String, SecretValue>) {
+        for item in items {
+            if let Some(request) = item.request.as_mut() {
+                let stored = request.clone();
+                *request = fill_secrets(secrets, stored.clone(), &stored).0;
+            }
+            fill(&mut item.children, secrets);
+        }
+    }
+    let mut copy = workspace.clone();
+    for collection in &mut copy.collections {
+        fill(&mut collection.items, secrets);
+    }
+    copy
+}
+
 /// The Secrets for this run: the vault, the Secrets read from it, and the reason the vault cannot be used, if it cannot.
 /// When there is a problem, nothing is saved, so the vault is never written over.
 struct VaultState {
@@ -3753,4 +3773,30 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ricochet_core::models::{ApiRequest, Collection, CollectionItem, RequestAuth, Workspace, auth_kinds};
+
+    #[test]
+    fn a_run_copy_of_the_workspace_carries_the_bearer_token_from_the_vault() {
+        let request = ApiRequest {
+            id: "r1".to_string(),
+            url: "https://example.test/products/{{id}}".to_string(),
+            auth: Some(RequestAuth { kind: auth_kinds::BEARER.to_string(), ..RequestAuth::default() }),
+            ..ApiRequest::default()
+        };
+        let folder = CollectionItem { children: vec![CollectionItem { request: Some(request), ..CollectionItem::default() }], ..CollectionItem::default() };
+        let workspace = Workspace { collections: vec![Collection { items: vec![folder], ..Collection::default() }], ..Workspace::default() };
+        let mut secrets = BTreeMap::new();
+        secrets.insert(auth_key("r1", "token"), SecretValue::new("vault-token"));
+
+        let copy = workspace_with_secrets(&secrets, &workspace);
+
+        let token = |w: &Workspace| w.collections[0].items[0].children[0].request.as_ref().unwrap().auth.as_ref().unwrap().token.clone();
+        assert_eq!(token(&copy), "vault-token");
+        assert_eq!(token(&workspace), "", "the window's Workspace keeps no Secret value");
+    }
 }
