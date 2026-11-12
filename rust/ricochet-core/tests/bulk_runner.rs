@@ -236,6 +236,129 @@ fn a_run_that_asks_for_no_threads_is_refused() {
 }
 
 #[test]
+fn a_run_whose_request_never_uses_the_placeholder_sends_nothing() {
+    // The URL uses {{productId}}, which a Collection Variable sets to empty, while the ids replace {{id}}. Every id
+    // would send the same /products//sync, so the run is refused before anything is sent.
+    let site = Site::new(Vec::new());
+    let collection = Collection { variables: vec![KeyValue::new("productId", "")], ..Collection::default() };
+    let bulk_template = ApiRequest {
+        method: "GET".to_string(),
+        url: format!("http://127.0.0.1:{}/products/{{{{productId}}}}/sync", site.port),
+        ..ApiRequest::default()
+    };
+    let stop = AtomicBool::new(false);
+
+    let error = run_bulk(&bulk_template, &collection, &ids(&["p1", "p2"]), 1, &[], &stop, |_| {}).unwrap_err();
+
+    assert_eq!(error, BulkRunError::PlaceholderUnused("id".to_string()));
+    assert!(error.to_string().contains("doesn't use {{id}}"), "{error}");
+    assert_eq!(site.finish(), Vec::<String>::new());
+}
+
+#[test]
+fn a_placeholder_reached_through_another_variable_counts_as_used() {
+    let site = Site::new(product_routes(&["p1"]));
+    let collection = Collection { variables: vec![KeyValue::new("productId", "{{id}}")], ..Collection::default() };
+    let bulk_template = ApiRequest {
+        method: "GET".to_string(),
+        url: format!("http://127.0.0.1:{}/products/{{{{productId}}}}/sync", site.port),
+        ..ApiRequest::default()
+    };
+
+    let (results, finished) = collected(&bulk_template, &collection, &ids(&["p1"]), 1);
+
+    assert!(finished);
+    assert!(results[0].succeeded, "{:?}", results[0]);
+    assert_eq!(site.finish(), ["/products/p1/sync"]);
+}
+
+#[test]
+fn each_id_is_sent_with_the_bearer_token_from_the_active_environment() {
+    use std::io::{Read, Write};
+    use ricochet_core::models::{ApiEnvironment, RequestAuth, auth_kinds};
+
+    // A raw listener, because the mock server never logs headers. It answers 200 to each request and keeps the
+    // Authorization line it received.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&received);
+    let server = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+                let read = stream.read(&mut chunk).unwrap();
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+            let text = String::from_utf8_lossy(&buffer).to_string();
+            let first = text.lines().next().unwrap_or_default().to_string();
+            let auth = text.lines().find(|l| l.to_ascii_lowercase().starts_with("authorization:")).unwrap_or_default().to_string();
+            log.lock().unwrap().push((first, auth));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        }
+    });
+
+    let collection = Collection::default();
+    let environment = ApiEnvironment { variables: vec![KeyValue::new("token", "env-token-123")], ..ApiEnvironment::default() };
+    let bulk_template = ApiRequest {
+        method: "GET".to_string(),
+        url: format!("http://127.0.0.1:{port}/products/{{{{id}}}}/sync"),
+        auth: Some(RequestAuth { kind: auth_kinds::BEARER.to_string(), token: "{{token}}".to_string(), ..RequestAuth::default() }),
+        ..ApiRequest::default()
+    };
+    let list = ids(&["p1", "p2"]);
+    let workspace = Workspace::default();
+    let sender = RequestSender::new();
+    let run = BulkRun {
+        workspace: &workspace,
+        collection: &collection,
+        item_id: None,
+        environment: Some(&environment),
+        template: &bulk_template,
+        placeholder: DEFAULT_PLACEHOLDER,
+        ids: &list,
+        overrides: &[],
+        max_parallel: 1,
+    };
+    let stop = AtomicBool::new(false);
+    let mut results = Vec::new();
+
+    let finished = BulkRunner::new(&sender).run(&run, &stop, |result| results.push(result)).unwrap();
+    server.join().unwrap();
+
+    assert!(finished);
+    assert!(results.iter().all(|r| r.succeeded), "{results:?}");
+    assert_eq!(
+        *received.lock().unwrap(),
+        [
+            ("GET /products/p1/sync HTTP/1.1".to_string(), "authorization: Bearer env-token-123".to_string()),
+            ("GET /products/p2/sync HTTP/1.1".to_string(), "authorization: Bearer env-token-123".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn an_id_redirected_to_a_page_that_answers_200_is_not_ok() {
+    // As an API that sends a request it refuses to its login page: 302, then the login page answers 200.
+    let to_login = MockReply { headers: vec![KeyValue::new("Location", "/login")], ..reply(302, "") };
+    let site = Site::new(vec![MockRoute::new("GET", "/products/p1/sync", to_login), MockRoute::new("GET", "/login", reply(200, "<html>Sign in</html>"))]);
+    let collection = Collection::default();
+
+    let (results, finished) = collected(&template(&format!("http://127.0.0.1:{}", site.port)), &collection, &ids(&["p1"]), 1);
+
+    assert!(finished);
+    assert!(!results[0].succeeded, "{:?}", results[0]);
+    assert_eq!(results[0].status_code, Some(200));
+    assert_eq!(results[0].detail, format!("Redirected to http://127.0.0.1:{}/login, which answered 200", site.port));
+    assert_eq!(site.finish(), ["/products/p1/sync", "/login"]);
+}
+
+#[test]
 fn an_id_with_a_missing_variable_is_not_sent() {
     let site = Site::new(Vec::new());
     let collection = Collection::default();

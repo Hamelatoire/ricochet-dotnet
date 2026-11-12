@@ -75,6 +75,12 @@ jobs:
       - name: Test the core
         run: cargo test --locked --manifest-path rust/ricochet-core/Cargo.toml
 
+      # Keeps compiled dependencies between runs. The crates share one build folder, rust/target (.cargo/config.toml).
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Windows'
+        with:
+          workspaces: rust/ricochet-app -> ../target
+
       - name: Test and build the command line
         run: |
           cargo test --locked --manifest-path rust/ricochet-cli/Cargo.toml

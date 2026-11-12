@@ -420,6 +420,10 @@ impl Element for TextElement {
             (input.placeholder.clone(), rgb(crate::theme::active().placeholder).into())
         } else if masked {
             (SharedString::from(BULLET.to_string().repeat(content.chars().count())), style.color)
+        } else if content.contains(['\n', '\r']) {
+            // The field draws one line, and gpui panics on a line break, so each is drawn as a space. Both are one
+            // byte, so offsets in the text still match the drawn line, and the value itself is unchanged.
+            (SharedString::from(content.replace(['\n', '\r'], " ")), style.color)
         } else {
             (content.clone(), style.color)
         };

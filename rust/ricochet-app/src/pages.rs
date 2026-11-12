@@ -296,7 +296,6 @@ impl Shell {
                 }
                 column.into_any_element()
             }
-            "workspace-folder" => path_text(self.model.folder_path().map(PathBuf::from)),
             "workspace-folder" => self.workspace_folder_control(panel.pending_copy.as_deref(), cx).into_any_element(),
             _ => return None,
         })

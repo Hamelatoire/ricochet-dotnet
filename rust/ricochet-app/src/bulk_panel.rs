@@ -264,7 +264,8 @@ impl Shell {
         panel.taken = 0;
         panel.status = bulk_page::starting_status(&first, threads);
 
-        let workspace = self.model.workspace.clone();
+        // Secrets stay in the vault, not in the window's Workspace, so they are filled into the copy the run sends.
+        let workspace = super::workspace_with_secrets(&self.vault.secrets, &self.model.workspace);
         let environment = self.state.active_environment_id().map(str::to_string);
         let overrides = self.dot_env.clone();
         let sender = self.sender.clone();
