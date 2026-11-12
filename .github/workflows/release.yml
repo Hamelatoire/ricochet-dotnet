@@ -66,24 +66,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Install the native linker
+      - name: Install the Linux libraries the window needs
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
-
-      - name: Test
-        run: dotnet test --project tests/Ricochet.Core.Tests -c Release
-
-      - name: Publish
         run: |
-          dotnet publish src/Ricochet.App -c Release -r ${{ matrix.rid }} -o out/app
-          dotnet publish src/Ricochet.Cli -c Release -r ${{ matrix.rid }} -o out/cli
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libvulkan-dev libxcb1-dev libfontconfig1-dev libasound2-dev libssl-dev
 
-      - name: Check the CLI starts
-        run: out/cli/ricochet --help
+      - name: Test the core
+        run: cargo test --locked --manifest-path rust/ricochet-core/Cargo.toml
 
       # Keeps compiled dependencies between runs. The crates share one build folder, rust/target (.cargo/config.toml).
       - uses: Swatinem/rust-cache@v2
@@ -91,24 +81,29 @@ jobs:
         with:
           workspaces: rust/ricochet-app -> ../target
 
-      # The Rust beta ships beside the C# app for now. It is built only on Windows, where the installer picks it up.
-      - name: Build the Rust beta
-        if: runner.os == 'Windows'
+      - name: Test and build the command line
         run: |
-          cargo build --release --locked --manifest-path rust/ricochet-app/Cargo.toml
-          mkdir -p out/rust
-          cp rust/target/release/ricochet-app.exe out/rust/Ricochet-Rust-Beta.exe
+          cargo test --locked --manifest-path rust/ricochet-cli/Cargo.toml
+          cargo build --release --locked --manifest-path rust/ricochet-cli/Cargo.toml
+          rust/target/release/ricochet --help
 
-      # The app and the CLI are packaged apart: their names differ only by case,
-      # so they would collide in one folder on Windows and macOS.
+      - name: Test and build the app
+        run: |
+          cargo test --locked --manifest-path rust/ricochet-app/Cargo.toml
+          cargo build --release --locked --manifest-path rust/ricochet-app/Cargo.toml
+
+      # The app and the CLI are packaged apart. The Windows installer is built from the same files as the zips.
       - name: Package
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          mkdir dist
+          exe=""
+          if [ "$RUNNER_OS" = "Windows" ]; then exe=".exe"; fi
+          mkdir -p dist out/app out/cli
+          cp "rust/target/release/ricochet-app$exe" "out/app/Ricochet$exe"
+          cp "rust/target/release/ricochet$exe" "out/cli/ricochet$exe"
           for part in app cli; do
             cd "out/$part"
-            rm -rf ./*.pdb ./*.dbg ./*.dSYM
             name="ricochet-$part-$VERSION-${{ matrix.rid }}"
             if [ "$RUNNER_OS" = "Windows" ]; then
               7z a "$GITHUB_WORKSPACE/dist/$name.zip" ./*
@@ -118,15 +113,6 @@ jobs:
             cd "$GITHUB_WORKSPACE"
           done
 
-      - name: Package the Rust beta
-        if: runner.os == 'Windows'
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          cd out/rust
-          7z a "$GITHUB_WORKSPACE/dist/ricochet-rust-beta-$VERSION-win-x64.zip" ./*
-
-      # Built from the same published files as the zips, so the installer and the zips match.
       - name: Build the Windows installer
         if: runner.os == 'Windows'
         env:

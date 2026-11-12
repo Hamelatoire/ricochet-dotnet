@@ -3,6 +3,10 @@
 // argument, else the folder opened last time, else RICOCHET_DATA; the Settings page opens or copies another one.
 // The URL, method and headers can be edited and saved; the body and auth are read-only.
 
+// A release build on Windows is a GUI program, so double-clicking it opens no terminal. Debug builds keep the console,
+// so `cargo run` still shows panics and logs.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::collections::HashMap;
 
 use gpui::{
